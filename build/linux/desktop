@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=My Product
+Comment=A TimeNotes application
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/timenotes.exe %u
+Terminal=false
+Type=Application
+Icon=timenotes.exe
+Categories=Utility;
+StartupWMClass=timenotes.exe
+
+ 
