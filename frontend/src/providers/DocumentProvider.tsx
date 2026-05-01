@@ -169,6 +169,17 @@ function cloneDocument(document: NoteDocument) {
   return JSON.parse(JSON.stringify(document)) as NoteDocument;
 }
 
+function cloneDocumentForHistory(document: NoteDocument) {
+  const snapshot = cloneDocument(document);
+  // 撤销历史不能保存 base64/dataURL，否则每次拖动都会复制整包图片，WebView2 很容易 OOM。
+  return {
+    ...snapshot,
+    assets: snapshot.assets.map(stripTransientAssetData),
+    stickers: snapshot.stickers.map(stripTransientAssetData),
+    fonts: snapshot.fonts.map(stripTransientAssetData),
+  };
+}
+
 function createTab(document: NoteDocument, mode: WorkspaceTabMode, sourcePath?: string): WorkspaceTab {
   const normalized = normalizeDocument(document);
   return {
@@ -187,8 +198,27 @@ function stripTransientAssetData(asset: AssetMeta) {
   return meta;
 }
 
+function rememberResources(cache: Map<string, AssetMeta>, document: NoteDocument) {
+  [...document.assets, ...document.stickers, ...document.fonts].forEach((asset) => {
+    if (asset.id && (asset.dataBase64 || asset.dataUrl)) {
+      cache.set(asset.id, asset);
+    }
+  });
+}
+
+function hydrateResourcesFromCache(document: NoteDocument, cache: Map<string, AssetMeta>) {
+  const hydrate = (asset: AssetMeta) => hydrateAsset({ ...(cache.get(asset.id) ?? {}), ...asset });
+  return {
+    ...document,
+    assets: document.assets.map(hydrate),
+    stickers: document.stickers.map(hydrate),
+    fonts: document.fonts.map(hydrate),
+  };
+}
+
 export function DocumentProvider({ children }: { children: React.ReactNode }) {
   const yDocRef = useRef(new Y.Doc());
+  const resourceCacheRef = useRef(new Map<string, AssetMeta>());
   const initialTab = useMemo(() => createTab(createSeedDocument(), 'edit'), []);
   // 多文档编辑由工作区标签维护；每个标签保存自己的文档快照和当前页。
   const [tabs, setTabs] = useState<WorkspaceTab[]>([initialTab]);
@@ -206,6 +236,10 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
   const activeTabMode = activeTab.mode;
   const canUndo = Boolean(activeTab.history?.past.length);
   const canRedo = Boolean(activeTab.history?.future.length);
+
+  useEffect(() => {
+    rememberResources(resourceCacheRef.current, document);
+  }, [document]);
 
   const syncToYjs = useCallback((nextDocument: NoteDocument) => {
     const snapshotMap = yDocRef.current.getMap('snapshot');
@@ -238,7 +272,9 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
         if (tab.mode !== 'edit') {
           return tab;
         }
+        rememberResources(resourceCacheRef.current, tab.document);
         const next = normalizeDocument({ ...updater(tab.document), updatedAt: new Date().toISOString() });
+        rememberResources(resourceCacheRef.current, next);
         const history = tab.history ?? { past: [], future: [] };
         return {
           ...tab,
@@ -246,7 +282,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
           document: next,
           activePageId: next.pages.some((page) => page.id === tab.activePageId) ? tab.activePageId : next.pages[0]?.id ?? 'page-1',
           // 文档级撤销只记录持久化模型，不记录选择框、缩放、滚动等临时 UI 状态。
-          history: { past: [...history.past, cloneDocument(tab.document)].slice(-maxHistorySteps), future: [] },
+          history: { past: [...history.past, cloneDocumentForHistory(tab.document)].slice(-maxHistorySteps), future: [] },
         };
       });
     },
@@ -361,6 +397,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
   const replaceDocument = useCallback(
     (nextDocument: NoteDocument) => {
       const normalized = normalizeDocument(nextDocument);
+      rememberResources(resourceCacheRef.current, normalized);
       updateActiveTab((tab) => ({
         ...tab,
         mode: 'edit',
@@ -379,6 +416,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
   const loadPackage = useCallback(
     (note: NotePackage, sourcePath?: string) => {
       const normalized = normalizeDocument(note.document, note.assets ?? [], note.stickers ?? [], note.fonts ?? []);
+      rememberResources(resourceCacheRef.current, normalized);
       if (note.yjsState) {
         try {
           Y.applyUpdate(yDocRef.current, base64ToBytes(note.yjsState));
@@ -397,6 +435,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
   );
 
   const openReadTab = useCallback(() => {
+    rememberResources(resourceCacheRef.current, document);
     const tab = createTab(cloneDocument(document), 'reader');
     setTabs((current) => [...current, tab]);
     setActiveTabId(tab.id);
@@ -701,7 +740,9 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       if (!previous) {
         return tab;
       }
-      const normalized = normalizeDocument(previous);
+      rememberResources(resourceCacheRef.current, tab.document);
+      const normalized = normalizeDocument(hydrateResourcesFromCache(previous, resourceCacheRef.current));
+      rememberResources(resourceCacheRef.current, normalized);
       return {
         ...tab,
         title: normalized.title,
@@ -709,7 +750,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
         activePageId: normalized.pages.some((page) => page.id === tab.activePageId) ? tab.activePageId : normalized.pages[0]?.id ?? 'page-1',
         history: {
           past: history.past.slice(0, -1),
-          future: [cloneDocument(tab.document), ...history.future].slice(0, maxHistorySteps),
+          future: [cloneDocumentForHistory(tab.document), ...history.future].slice(0, maxHistorySteps),
         },
       };
     });
@@ -726,14 +767,16 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       if (!next) {
         return tab;
       }
-      const normalized = normalizeDocument(next);
+      rememberResources(resourceCacheRef.current, tab.document);
+      const normalized = normalizeDocument(hydrateResourcesFromCache(next, resourceCacheRef.current));
+      rememberResources(resourceCacheRef.current, normalized);
       return {
         ...tab,
         title: normalized.title,
         document: normalized,
         activePageId: normalized.pages.some((page) => page.id === tab.activePageId) ? tab.activePageId : normalized.pages[0]?.id ?? 'page-1',
         history: {
-          past: [...history.past, cloneDocument(tab.document)].slice(-maxHistorySteps),
+          past: [...history.past, cloneDocumentForHistory(tab.document)].slice(-maxHistorySteps),
           future: history.future.slice(1),
         },
       };

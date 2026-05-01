@@ -12,3 +12,12 @@ export function Frontend(level: string, message: string, fields: { [_ in string]
 export function Path(): $CancellablePromise<string> {
     return $Call.ByID(4245591640);
 }
+
+export function Paths(): $CancellablePromise<string[]> {
+    return $Call.ByID(2297849265).then(($result: any) => {
+        return $$createType0($result);
+    });
+}
+
+// Private type creation functions
+const $$createType0 = $Create.Array($Create.Any);
