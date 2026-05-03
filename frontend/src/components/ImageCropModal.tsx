@@ -14,7 +14,7 @@ export function ImageCropModal({
   src?: string;
   aspectRatio?: number;
   onClose: () => void;
-  onApply: (dataUrl: string) => void;
+  onApply: (dataUrl: string, size: { width: number; height: number; aspectRatio: number }) => void;
 }) {
   const cropperRef = useRef<any>(null);
   const [rotate, setRotate] = useState(0);
@@ -39,12 +39,14 @@ export function ImageCropModal({
       return;
     }
     // Semi Cropper 输出 canvas 后重新生成素材；这是破坏式裁剪，但保留原素材可继续在其他元素中使用。
-    onApply(canvas.toDataURL('image/png'));
+    const width = canvas.width || 1;
+    const height = canvas.height || 1;
+    onApply(canvas.toDataURL('image/png'), { width, height, aspectRatio: width / height });
   };
 
   return (
     <Modal title={title} visible={visible && Boolean(src)} onCancel={onClose} onOk={applyCrop} okText="应用裁剪" cancelText="取消" width={680}>
-      <div className="grid gap-4">
+      <div className="grid gap-4" onWheel={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
         <div className="h-[360px] w-full">
           {ready ? (
             <Cropper

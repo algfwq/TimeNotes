@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
 import { Button, Input, Modal, Tabs, Typography } from '@douyinfe/semi-ui';
 import { IconDelete, IconEdit, IconFile, IconPlus } from '@douyinfe/semi-icons';
 import { useDocument } from '../providers/DocumentProvider';
@@ -6,9 +7,12 @@ import { AssetLibrary } from './library/AssetLibrary';
 import { CollaborationPanel } from './library/CollaborationPanel';
 
 export function LeftLibrary() {
+  const [pagesHeight, setPagesHeight] = useState(260);
+
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <PagesPanel />
+      <PagesPanel height={pagesHeight} />
+      <SectionResizeHandle onResize={setPagesHeight} />
       <Tabs
         className="timenotes-left-tabs flex min-h-0 flex-1 flex-col"
         defaultActiveKey="assets"
@@ -26,10 +30,11 @@ export function LeftLibrary() {
   );
 }
 
-function PagesPanel() {
-  const { document, activePageId, setActivePage, addPage, deletePage, renamePage } = useDocument();
+function PagesPanel({ height }: { height: number }) {
+  const { document, activePageId, setActivePage, addPage, deletePage, renamePage, reorderPage } = useDocument();
   const [menu, setMenu] = useState<{ x: number; y: number; pageId: string } | null>(null);
   const [renameTarget, setRenameTarget] = useState<{ pageId: string; title: string } | null>(null);
+  const [dragPageId, setDragPageId] = useState<string | null>(null);
 
   useEffect(() => {
     const close = () => setMenu(null);
@@ -42,14 +47,14 @@ function PagesPanel() {
   }, []);
 
   return (
-    <section className="shrink-0 border-b border-black/10 px-4 py-4">
+    <section className="flex min-h-0 shrink-0 flex-col border-b border-black/10 px-4 py-4" style={{ height }}>
       <div className="mb-3 flex items-center justify-between">
         <Typography.Text strong>页面</Typography.Text>
         <Button size="small" type="primary" theme="solid" icon={<IconPlus />} onClick={addPage}>
           新建
         </Button>
       </div>
-      <div className="flex max-h-48 flex-col gap-2 overflow-auto pr-1">
+      <div className="timenotes-scrollbar flex min-h-0 flex-1 flex-col gap-2 overflow-auto pr-1">
         {document.pages.map((page, index) => {
           const active = page.id === activePageId;
           const count = document.elements.filter((element) => element.pageId === page.id).length;
@@ -60,9 +65,30 @@ function PagesPanel() {
               data-page-title={page.title}
               role="button"
               tabIndex={0}
-              className={`group flex items-center gap-3 rounded-[8px] border px-2 py-2 text-left transition ${
+              draggable
+              className={`group flex cursor-grab items-center gap-3 rounded-[8px] border px-2 py-2 text-left transition active:cursor-grabbing ${
                 active ? 'border-[#2f6fed] bg-white shadow-sm' : 'border-transparent bg-white/45 hover:bg-white/75'
-              }`}
+              } ${dragPageId === page.id ? 'opacity-45' : ''}`}
+              onDragStart={(event) => {
+                setDragPageId(page.id);
+                event.dataTransfer.effectAllowed = 'move';
+                event.dataTransfer.setData('text/timenotes-page-id', page.id);
+              }}
+              onDragOver={(event) => {
+                if (dragPageId && dragPageId !== page.id) {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = 'move';
+                }
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                const sourceId = event.dataTransfer.getData('text/timenotes-page-id') || dragPageId;
+                if (sourceId && sourceId !== page.id) {
+                  reorderPage(sourceId, page.id);
+                }
+                setDragPageId(null);
+              }}
+              onDragEnd={() => setDragPageId(null)}
               onClick={() => setActivePage(page.id)}
               onContextMenu={(event) => {
                 event.preventDefault();
@@ -131,6 +157,28 @@ function PagesPanel() {
       </Modal>
     </section>
   );
+}
+
+function SectionResizeHandle({ onResize }: { onResize: Dispatch<SetStateAction<number>> }) {
+  const startDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startY = event.clientY;
+    onResize((startHeight) => {
+      const move = (moveEvent: PointerEvent) => {
+        const delta = moveEvent.clientY - startY;
+        onResize(Math.min(520, Math.max(150, startHeight + delta)));
+      };
+      const end = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', end);
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', end);
+      return startHeight;
+    });
+  };
+
+  return <div title="拖拽调整页面和素材区域大小" className="h-1.5 shrink-0 cursor-row-resize bg-transparent hover:bg-[#2f6fed]/20" onPointerDown={startDrag} />;
 }
 
 function PageContextMenu({

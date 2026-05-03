@@ -86,7 +86,7 @@ export function CanvasStage() {
         y: 0,
         width: activePage.width,
         height: activePage.height,
-        zIndex: elements.length + 30,
+        zIndex: Math.max(0, ...elements.map((element) => element.zIndex)) + 100,
         points: currentDraft.points,
         style,
       });
@@ -347,6 +347,7 @@ function CanvasContextMenu({ state, onClose, onCrop }: { state: ContextMenuState
   }
   const style = element.style ?? {};
   const isMedia = element.type === 'image' || element.type === 'sticker';
+  const canDuplicate = element.type !== 'drawing' && element.type !== 'tape';
   return (
     <div
       className="fixed z-[900] min-w-40 rounded-[8px] border border-black/10 bg-white py-1 text-sm shadow-xl"
@@ -402,14 +403,16 @@ function CanvasContextMenu({ state, onClose, onCrop }: { state: ContextMenuState
           onClose();
         }}
       />
-      <MenuButton
-        icon={<IconCopy />}
-        label="复制"
-        onClick={() => {
-          duplicateElement(element.id);
-          onClose();
-        }}
-      />
+      {canDuplicate ? (
+        <MenuButton
+          icon={<IconCopy />}
+          label="复制"
+          onClick={() => {
+            duplicateElement(element.id);
+            onClose();
+          }}
+        />
+      ) : null}
       <div className="my-1 h-px bg-black/10" />
       <MenuButton
         danger
@@ -425,29 +428,43 @@ function CanvasContextMenu({ state, onClose, onCrop }: { state: ContextMenuState
 }
 
 function ElementCropModal({ elementId, onClose }: { elementId: string | null; onClose: () => void }) {
-  const { document, addAsset, addSticker, updateElement } = useDocument();
+  const { document, addAsset, updateElement } = useDocument();
   const element = elementId ? document.elements.find((item) => item.id === elementId) : undefined;
   const asset = element ? [...document.assets, ...document.stickers].find((item) => item.id === element.assetId) : undefined;
   const src = asset?.dataUrl ?? (asset?.dataBase64 ? `data:${asset.mimeType};base64,${asset.dataBase64}` : undefined);
-  const apply = async (dataUrl: string) => {
+  const apply = async (dataUrl: string, size: { width: number; height: number; aspectRatio: number }) => {
     if (element) {
-      const group = element.type === 'sticker' ? 'stickers' : 'assets';
-      const nextAsset = await createAssetFromDataUrl(dataUrl, `${asset?.name ?? '图片'}-裁剪.png`, group, 'image/png');
+      const nextHeight = Math.max(1, Math.round(element.width / size.aspectRatio));
       if (element.type === 'sticker') {
-        addSticker(nextAsset);
+        // 贴纸裁剪只影响当前画布元素，不写回贴纸库，避免“贴纸库”被裁剪结果污染。
+        updateElement(element.id, {
+          height: nextHeight,
+          style: {
+            ...(element.style ?? {}),
+            fit: 'contain',
+            cropDataUrl: dataUrl,
+            cropX: 50,
+            cropY: 50,
+            objectPosition: '50% 50%',
+            aspectRatio: size.aspectRatio,
+          },
+        });
       } else {
+        const nextAsset = await createAssetFromDataUrl(dataUrl, `${asset?.name ?? '图片'}-裁剪.png`, 'assets', 'image/png');
         addAsset(nextAsset);
+        updateElement(element.id, {
+          assetId: nextAsset.id,
+          style: {
+            ...(element.style ?? {}),
+            fit: 'contain',
+            cropX: 50,
+            cropY: 50,
+            objectPosition: '50% 50%',
+            aspectRatio: size.aspectRatio,
+          },
+          height: nextHeight,
+        });
       }
-      updateElement(element.id, {
-        assetId: nextAsset.id,
-        style: {
-          ...(element.style ?? {}),
-          fit: 'contain',
-          cropX: 50,
-          cropY: 50,
-          objectPosition: '50% 50%',
-        },
-      });
     }
     onClose();
   };
@@ -457,7 +474,6 @@ function ElementCropModal({ elementId, onClose }: { elementId: string | null; on
       title="裁剪图片"
       visible={Boolean(element && src)}
       src={src}
-      aspectRatio={element ? element.width / Math.max(1, element.height) : undefined}
       onClose={onClose}
       onApply={apply}
     />

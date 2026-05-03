@@ -16,7 +16,7 @@ import {
 } from '@douyinfe/semi-icons';
 import { AssetService } from '../../bindings/changeme';
 import { builtinStickers } from '../data/builtinStickers';
-import { createAssetFromDataUrl, createAssetFromFile, createAssetFromUrl } from '../lib/files';
+import { createAssetFromDataUrl, createAssetFromFile, createAssetFromUrl, getImagePlacementSize } from '../lib/files';
 import { fontDisplayName, fontFamilyForAsset } from '../lib/fonts';
 import { useDocument } from '../providers/DocumentProvider';
 import type { AssetMeta, ElementType, NoteElement, NotePage, SystemFont, ToolMode, ToolStyleState } from '../types';
@@ -56,6 +56,7 @@ export function InspectorPanel() {
   } = useDocument();
   const [renameTarget, setRenameTarget] = useState<{ id: string; title: string } | null>(null);
   const [cropElementId, setCropElementId] = useState<string | null>(null);
+  const [activePane, setActivePane] = useState('layers');
   const elements = useMemo(
     () =>
       document.elements
@@ -65,6 +66,12 @@ export function InspectorPanel() {
     [activePageId, document.elements],
   );
   const elementAssets = useMemo(() => [...document.assets, ...document.stickers], [document.assets, document.stickers]);
+
+  useEffect(() => {
+    const openControls = () => setActivePane('controls');
+    window.addEventListener('timenotes-open-controls', openControls);
+    return () => window.removeEventListener('timenotes-open-controls', openControls);
+  }, []);
 
   const importSystemFont = async (font: SystemFont) => {
     try {
@@ -86,7 +93,8 @@ export function InspectorPanel() {
     <div className="flex h-full min-h-0 flex-col">
       <Tabs
         className="timenotes-right-tabs flex h-full min-h-0 flex-col"
-        defaultActiveKey="layers"
+        activeKey={activePane}
+        onChange={(key) => setActivePane(String(key))}
         tabPaneMotion={false}
         tabBarStyle={{ padding: '0 16px', margin: 0 }}
       >
@@ -222,7 +230,9 @@ function LayerPanel({
                   <LayerIconButton label="重命名" icon={<IconEdit />} onClick={() => onRename(element)} />
                   <LayerIconButton label="上移一层" icon={<IconArrowUp />} onClick={() => onMove(element.id, 'up')} />
                   <LayerIconButton label="下移一层" icon={<IconArrowDown />} onClick={() => onMove(element.id, 'down')} />
-                  <LayerIconButton label="复制" icon={<IconCopy />} onClick={() => onDuplicate(element.id)} />
+                  {element.type === 'drawing' || element.type === 'tape' ? null : (
+                    <LayerIconButton label="复制" icon={<IconCopy />} onClick={() => onDuplicate(element.id)} />
+                  )}
                   <LayerIconButton danger label="删除" icon={<IconDelete />} onClick={() => onDelete(element.id)} />
                 </Space>
               </div>
@@ -467,7 +477,7 @@ function ElementControls({
             fontFamily: String(style.fontFamily ?? ''),
             borderColor: String(style.borderColor ?? '#2f2a24'),
             borderWidth: Number(style.borderWidth ?? 0),
-            borderStyle: String(style.borderStyle ?? 'solid'),
+            borderStyle: String(style.borderStyle ?? (Number(style.borderWidth ?? 0) > 0 ? 'solid' : 'none')),
             borderRadius: Number(style.borderRadius ?? 0),
             width: element.width,
             height: element.height,
@@ -508,13 +518,16 @@ function ElementControls({
         <StickerControls
           stickers={stickers}
           value={{ assetId: element.assetId ?? '', width: element.width, height: element.height }}
-          onPatch={(patch) =>
+          onPatch={(patch) => {
+            const nextWidth = Number(patch.width ?? element.width);
+            const nextHeight = Number(patch.height ?? element.height);
             onPatch({
               ...(patch.assetId !== undefined ? { assetId: patch.assetId } : {}),
               ...(patch.width !== undefined ? { width: patch.width } : {}),
               ...(patch.height !== undefined ? { height: patch.height } : {}),
-            })
-          }
+              ...(patch.assetId !== undefined ? { style: { ...style, cropDataUrl: '', aspectRatio: nextWidth / Math.max(1, nextHeight) } } : {}),
+            });
+          }}
           onAddSticker={onAddSticker}
           onReplaceSticker={onReplaceSticker}
           onDeleteSticker={onDeleteSticker}
@@ -643,15 +656,19 @@ function TextStyleControls({
       <label className="mt-3 block">
         <span className="mb-1 block text-xs text-black/45">边框样式</span>
         <Select
-          value={value.borderStyle || 'solid'}
+          value={value.borderStyle || 'none'}
           style={{ width: '100%' }}
           optionList={[
+            { label: '无边框', value: 'none' },
             { label: '实线', value: 'solid' },
             { label: '虚线', value: 'dashed' },
             { label: '点线', value: 'dotted' },
             { label: '双线', value: 'double' },
           ]}
-          onChange={(borderStyle) => onPatch({ borderStyle: String(borderStyle) })}
+          onChange={(borderStyle) => {
+            const nextStyle = String(borderStyle);
+            onPatch({ borderStyle: nextStyle, ...(nextStyle === 'none' ? { borderWidth: 0 } : Number(value.borderWidth ?? 0) === 0 ? { borderWidth: 1 } : {}) });
+          }}
         />
       </label>
       <FontSelector value={value.fontFamily} fonts={fonts} onChange={(fontFamily) => onPatch({ fontFamily })} onAddFont={onAddFont} onUseSystemFont={onUseSystemFont} />
@@ -699,6 +716,7 @@ function StickerControls({
   onAddSticker,
   onReplaceSticker,
   onDeleteSticker,
+  onChooseSticker,
 }: {
   stickers: AssetMeta[];
   value: ToolStyleState['sticker'];
@@ -706,12 +724,24 @@ function StickerControls({
   onAddSticker: (asset: AssetMeta) => void;
   onReplaceSticker: (oldId: string, asset: AssetMeta) => void;
   onDeleteSticker: (id: string) => void;
+  onChooseSticker?: () => void;
 }) {
   const chooseBuiltinSticker = async (url: string, name: string) => {
     try {
+      const existing = stickers.find((asset) => asset.name === name);
+      if (existing) {
+        const src = existing.dataUrl ?? (existing.dataBase64 ? `data:${existing.mimeType};base64,${existing.dataBase64}` : '');
+        const size = src ? await getImagePlacementSize(src, 142, 142).catch(() => ({ width: value.width, height: value.height, aspectRatio: value.width / Math.max(1, value.height) })) : { width: value.width, height: value.height, aspectRatio: value.width / Math.max(1, value.height) };
+        onPatch({ assetId: existing.id, width: size.width, height: size.height });
+        onChooseSticker?.();
+        return;
+      }
       const asset = await createAssetFromUrl(url, name, 'stickers');
       onAddSticker(asset);
-      onPatch({ assetId: asset.id });
+      const src = asset.dataUrl ?? (asset.dataBase64 ? `data:${asset.mimeType};base64,${asset.dataBase64}` : '');
+      const size = src ? await getImagePlacementSize(src, 142, 142).catch(() => ({ width: value.width, height: value.height, aspectRatio: value.width / Math.max(1, value.height) })) : { width: value.width, height: value.height, aspectRatio: value.width / Math.max(1, value.height) };
+      onPatch({ assetId: asset.id, width: size.width, height: size.height });
+      onChooseSticker?.();
     } catch (error) {
       Toast.error(`贴纸载入失败：${String(error)}`);
     }
@@ -723,9 +753,15 @@ function StickerControls({
     }
     const asset = await createAssetFromFile(file, 'stickers');
     onAddSticker(asset);
-    onPatch({ assetId: asset.id });
+    const size = asset.dataUrl ? await getImagePlacementSize(asset.dataUrl, 142, 142).catch(() => ({ width: value.width, height: value.height, aspectRatio: value.width / Math.max(1, value.height) })) : { width: value.width, height: value.height, aspectRatio: value.width / Math.max(1, value.height) };
+    onPatch({ assetId: asset.id, width: size.width, height: size.height });
+    onChooseSticker?.();
     Toast.success('贴纸已导入');
   };
+
+  // 早期版本把“贴纸元素裁剪结果”误写进贴纸库；这里做显示隔离，保证贴纸库只展示用户显式上传或内置导入的源贴纸。
+  const visibleStickers = stickers.filter((asset) => !isGeneratedStickerCrop(asset));
+  const visibleBuiltinStickers = builtinStickers.filter((sticker) => !visibleStickers.some((asset) => asset.name === sticker.name));
 
   return (
     <div>
@@ -747,14 +783,19 @@ function StickerControls({
         </Upload>
       </div>
       <div className="grid grid-cols-3 gap-2">
-        {stickers.map((asset) => {
+        {visibleStickers.map((asset) => {
           const src = asset.dataUrl ?? (asset.dataBase64 ? `data:${asset.mimeType};base64,${asset.dataBase64}` : undefined);
           return (
             <button
               key={asset.id}
               type="button"
               className={`group relative h-20 rounded-[8px] border bg-white p-1 ${value.assetId === asset.id ? 'border-[#2f6fed] ring-2 ring-[#2f6fed]/20' : 'border-black/10'}`}
-              onClick={() => onPatch({ assetId: asset.id })}
+              onClick={async () => {
+                const src = asset.dataUrl ?? (asset.dataBase64 ? `data:${asset.mimeType};base64,${asset.dataBase64}` : '');
+                const size = src ? await getImagePlacementSize(src, 142, 142).catch(() => ({ width: value.width, height: value.height, aspectRatio: value.width / Math.max(1, value.height) })) : { width: value.width, height: value.height, aspectRatio: value.width / Math.max(1, value.height) };
+                onPatch({ assetId: asset.id, width: size.width, height: size.height });
+                onChooseSticker?.();
+              }}
               onContextMenu={(event) => {
                 event.preventDefault();
                 onDeleteSticker(asset.id);
@@ -777,7 +818,7 @@ function StickerControls({
             </button>
           );
         })}
-        {builtinStickers.map((sticker) => (
+        {visibleBuiltinStickers.map((sticker) => (
           <button
             key={sticker.id}
             type="button"
@@ -797,6 +838,10 @@ function StickerControls({
   );
 }
 
+function isGeneratedStickerCrop(asset: AssetMeta) {
+  return /-裁剪\.(png|jpe?g|webp)$/i.test(asset.name);
+}
+
 function MediaControls({
   element,
   assets,
@@ -810,14 +855,15 @@ function MediaControls({
 }) {
   const asset = assets.find((item) => item.id === element.assetId);
   const src = asset?.dataUrl ?? (asset?.dataBase64 ? `data:${asset.mimeType};base64,${asset.dataBase64}` : undefined);
+  const aspectRatio = Number(element.style?.aspectRatio ?? 0) || element.width / Math.max(1, element.height);
   return (
     <div>
       <div className="mb-3 overflow-hidden rounded-[8px] border border-black/10 bg-white">
         {src ? <img className="h-32 w-full object-contain" src={src} alt="" /> : <Empty description="图片素材缺失" />}
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <NumberField label="宽度" value={Math.round(element.width)} min={32} max={1600} onChange={(width) => onPatch({ width })} />
-        <NumberField label="高度" value={Math.round(element.height)} min={32} max={1600} onChange={(height) => onPatch({ height })} />
+        <NumberField label="宽度" value={Math.round(element.width)} min={32} max={1600} onChange={(width) => onPatch({ width, height: Math.max(1, Math.round(width / aspectRatio)) })} />
+        <NumberField label="高度" value={Math.round(element.height)} min={32} max={1600} onChange={(height) => onPatch({ height, width: Math.max(1, Math.round(height * aspectRatio)) })} />
       </div>
       <Button className="mt-3" size="small" icon={<IconCrop />} disabled={!src} onClick={onCrop}>
         裁剪图片
@@ -868,9 +914,15 @@ function FontSelector({
   }, []);
 
   const optionList = [
-    { label: '默认字体', value: '' },
-    ...fonts.map((font) => ({ label: `已打包：${fontDisplayName(font)}`, value: fontFamilyForAsset(font) })),
-    ...systemFonts.map((font) => ({ label: `系统：${font.family}`, value: `system::${font.path}` })),
+    { label: renderFontOption('默认字体'), value: '' },
+    ...fonts.map((font) => {
+      const label = `已打包：${fontDisplayName(font)}`;
+      return { label: renderFontOption(label), value: fontFamilyForAsset(font) };
+    }),
+    ...dedupeSystemFonts(systemFonts).map((font) => {
+      const label = `系统：${systemFontLabel(font)}`;
+      return { label: renderFontOption(label), value: `system::${font.path}` };
+    }),
   ];
 
   const handleChange = async (nextValue: unknown) => {
@@ -903,6 +955,7 @@ function FontSelector({
         style={{ width: '100%' }}
         optionList={optionList}
         dropdownMatchSelectWidth={false}
+        dropdownStyle={{ width: 520, maxWidth: '82vw' }}
         onChange={handleChange}
       />
       <Upload
@@ -925,6 +978,32 @@ function FontSelector({
       </Upload>
     </div>
   );
+}
+
+function renderFontOption(label: string) {
+  return (
+    <span className="block max-w-[500px] whitespace-normal break-words leading-5" title={label}>
+      {label}
+    </span>
+  );
+}
+
+function dedupeSystemFonts(fonts: SystemFont[]) {
+  const seen = new Set<string>();
+  return fonts.filter((font) => {
+    const key = `${font.family}::${font.name}::${font.path}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function systemFontLabel(font: SystemFont) {
+  const face = font.name && font.name !== font.family ? `${font.family} / ${font.name}` : font.family;
+  const filename = font.path.split(/[\\/]/).pop();
+  return filename ? `${face} · ${filename}` : face;
 }
 
 function NumberField({
@@ -1010,24 +1089,29 @@ function ColorField({ value, onChange }: { value: string; onChange: (value: stri
 }
 
 function InspectorCropModal({ elementId, onClose }: { elementId: string | null; onClose: () => void }) {
-  const { document, addAsset, addSticker, updateElement } = useDocument();
+  const { document, addAsset, updateElement } = useDocument();
   const element = elementId ? document.elements.find((item) => item.id === elementId) : undefined;
   const asset = element ? [...document.assets, ...document.stickers].find((item) => item.id === element.assetId) : undefined;
   const src = asset?.dataUrl ?? (asset?.dataBase64 ? `data:${asset.mimeType};base64,${asset.dataBase64}` : undefined);
 
-  const apply = async (dataUrl: string) => {
+  const apply = async (dataUrl: string, size: { width: number; height: number; aspectRatio: number }) => {
     if (element) {
-      const group = element.type === 'sticker' ? 'stickers' : 'assets';
-      const nextAsset = await createAssetFromDataUrl(dataUrl, `${asset?.name ?? '图片'}-裁剪.png`, group, 'image/png');
+      const nextHeight = Math.max(1, Math.round(element.width / size.aspectRatio));
       if (element.type === 'sticker') {
-        addSticker(nextAsset);
+        // 裁剪贴纸时只替换当前元素的显示图，不把裁剪图塞回贴纸库。
+        updateElement(element.id, {
+          height: nextHeight,
+          style: { ...(element.style ?? {}), fit: 'contain', cropDataUrl: dataUrl, objectPosition: '50% 50%', aspectRatio: size.aspectRatio },
+        });
       } else {
+        const nextAsset = await createAssetFromDataUrl(dataUrl, `${asset?.name ?? '图片'}-裁剪.png`, 'assets', 'image/png');
         addAsset(nextAsset);
+        updateElement(element.id, {
+          assetId: nextAsset.id,
+          height: nextHeight,
+          style: { ...(element.style ?? {}), fit: 'contain', objectPosition: '50% 50%', aspectRatio: size.aspectRatio },
+        });
       }
-      updateElement(element.id, {
-        assetId: nextAsset.id,
-        style: { ...(element.style ?? {}), fit: 'contain', objectPosition: '50% 50%' },
-      });
     }
     onClose();
   };
@@ -1037,7 +1121,6 @@ function InspectorCropModal({ elementId, onClose }: { elementId: string | null; 
       title="裁剪图片"
       visible={Boolean(element && src)}
       src={src}
-      aspectRatio={element ? element.width / Math.max(1, element.height) : undefined}
       onClose={onClose}
       onApply={apply}
     />
@@ -1066,7 +1149,8 @@ function LayerPreview({ element, assets }: { element: NoteElement; assets: Asset
   }
   if (element.type === 'image' || element.type === 'sticker') {
     const asset = assets.find((item) => item.id === element.assetId);
-    const src = asset?.dataUrl ?? (asset?.dataBase64 ? `data:${asset.mimeType};base64,${asset.dataBase64}` : undefined);
+    const cropDataUrl = element.type === 'sticker' && typeof style.cropDataUrl === 'string' && style.cropDataUrl.startsWith('data:') ? style.cropDataUrl : undefined;
+    const src = cropDataUrl ?? asset?.dataUrl ?? (asset?.dataBase64 ? `data:${asset.mimeType};base64,${asset.dataBase64}` : undefined);
     return (
       <div className="grid h-11 w-14 shrink-0 place-items-center overflow-hidden rounded-[6px] border border-black/10 bg-transparent text-black/45">
         {src ? (

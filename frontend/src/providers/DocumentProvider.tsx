@@ -43,6 +43,7 @@ interface DocumentContextValue {
   setActivePage: (pageId: string) => void;
   addPage: () => void;
   deletePage: (pageId: string) => void;
+  reorderPage: (sourcePageId: string, targetPageId: string) => void;
   updatePage: (pageId: string, patch: Partial<NotePage>) => void;
   renamePage: (pageId: string, title: string) => void;
   selectElement: (id?: string) => void;
@@ -89,7 +90,7 @@ const defaultToolStyles: ToolStyleState = {
     fontFamily: '',
     borderColor: '#2f2a24',
     borderWidth: 0,
-    borderStyle: 'solid',
+    borderStyle: 'none',
     borderRadius: 0,
     width: 220,
     height: 120,
@@ -157,7 +158,7 @@ function normalizeDocument(
     createdAt: nextDocument.createdAt || new Date().toISOString(),
     updatedAt: nextDocument.updatedAt || new Date().toISOString(),
     pages,
-    elements,
+    elements: elements.map((element) => clampElementToPage(element, pages)),
     assets: mergeAssets(nextDocument.assets ?? [], packageAssets),
     stickers: mergeAssets(nextDocument.stickers ?? [], packageStickers),
     fonts: mergeAssets(nextDocument.fonts ?? [], packageFonts),
@@ -213,6 +214,26 @@ function hydrateResourcesFromCache(document: NoteDocument, cache: Map<string, As
     assets: document.assets.map(hydrate),
     stickers: document.stickers.map(hydrate),
     fonts: document.fonts.map(hydrate),
+  };
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function clampElementToPage(element: NoteElement, pages: NotePage[]): NoteElement {
+  const page = pages.find((item) => item.id === element.pageId);
+  if (!page || ((element.type === 'drawing' || element.type === 'tape') && element.points?.length)) {
+    return element;
+  }
+  const width = clampNumber(Math.round(Number(element.width) || 1), 1, page.width);
+  const height = clampNumber(Math.round(Number(element.height) || 1), 1, page.height);
+  return {
+    ...element,
+    width,
+    height,
+    x: clampNumber(Math.round(Number(element.x) || 0), 0, Math.max(0, page.width - width)),
+    y: clampNumber(Math.round(Number(element.y) || 0), 0, Math.max(0, page.height - height)),
   };
 }
 
@@ -497,6 +518,27 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
     [activePageId, clearSelection, document.pages, updateActiveTab, updateDocument],
   );
 
+  const reorderPage = useCallback(
+    (sourcePageId: string, targetPageId: string) => {
+      if (sourcePageId === targetPageId) {
+        return;
+      }
+      updateDocument((current) => {
+        const sourceIndex = current.pages.findIndex((page) => page.id === sourcePageId);
+        const targetIndex = current.pages.findIndex((page) => page.id === targetPageId);
+        if (sourceIndex < 0 || targetIndex < 0) {
+          return current;
+        }
+        const pages = current.pages.slice();
+        const [source] = pages.splice(sourceIndex, 1);
+        pages.splice(targetIndex, 0, source);
+        return { ...current, pages };
+      });
+      clearSelection();
+    },
+    [clearSelection, updateDocument],
+  );
+
   const updatePage = useCallback(
     (pageId: string, patch: Partial<NotePage>) => {
       updateDocument((current) => ({
@@ -535,7 +577,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
     (id: string, patch: Partial<NoteElement>) => {
       updateDocument((current) => ({
         ...current,
-        elements: current.elements.map((element) => (element.id === id ? { ...element, ...patch } : element)),
+        elements: current.elements.map((element) => (element.id === id ? clampElementToPage({ ...element, ...patch }, current.pages) : element)),
       }));
     },
     [updateDocument],
@@ -552,7 +594,9 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       const id = createId('el');
       const isStroke = (type === 'drawing' || type === 'tape') && Boolean(patch.points?.length);
       updateDocument((current) => {
-        const zIndex = Math.max(0, ...current.elements.map((element) => element.zIndex)) + 10;
+        const maxZIndex = Math.max(0, ...current.elements.map((element) => element.zIndex));
+        // 画笔和胶带是后补的批注层，默认总是压到当前页面元素之上，避免被图片或贴纸遮住。
+        const zIndex = isStroke ? maxZIndex + 100 : maxZIndex + 10;
         const assetId = patch.assetId ?? (type === 'sticker' ? toolStyles.sticker.assetId : undefined);
         const base: NoteElement = {
           id,
@@ -563,7 +607,6 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
           width: isStroke ? activePage.width : type === 'text' ? toolStyles.text.width : type === 'sticker' ? toolStyles.sticker.width : 180,
           height: isStroke ? activePage.height : type === 'text' ? toolStyles.text.height : type === 'sticker' ? toolStyles.sticker.height : 150,
           rotation: 0,
-          zIndex,
           content: type === 'text' ? '<p>新的文字</p>' : undefined,
           assetId,
           style:
@@ -586,10 +629,11 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
                     ? { ...toolStyles.drawing }
                     : {},
           ...patch,
+          zIndex: isStroke ? Math.max(Number(patch.zIndex ?? 0), zIndex) : Number(patch.zIndex ?? zIndex),
         };
         return {
           ...current,
-          elements: [...current.elements, base],
+          elements: [...current.elements, clampElementToPage(base, current.pages)],
         };
       });
       if (!isStroke) {
@@ -670,13 +714,13 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
         ...current,
         elements: [
           ...current.elements,
-          {
+          clampElementToPage({
             ...element,
             id: nextId,
             x: element.x + 24,
             y: element.y + 24,
             zIndex: Math.max(0, ...current.elements.map((item) => item.zIndex)) + 10,
-          },
+          }, current.pages),
         ],
       }));
       setSelectedElementId(nextId);
@@ -954,6 +998,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       setActivePage,
       addPage,
       deletePage,
+      reorderPage,
       updatePage,
       renamePage,
       selectElement,
@@ -1009,6 +1054,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       createPackage,
       deleteElement,
       deletePage,
+      reorderPage,
       deleteSelectedElement,
       deleteAsset,
       deleteSticker,

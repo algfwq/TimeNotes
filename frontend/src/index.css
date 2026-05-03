@@ -29,6 +29,7 @@
 html,
 #root {
   height: 100%;
+  overscroll-behavior: none;
 }
 
 body {
@@ -76,6 +77,20 @@ textarea {
 
 .moveable-control-box {
   z-index: 40 !important;
+}
+
+.timenotes-alignment-guide {
+  border-color: rgba(47, 111, 237, 0.95);
+  border-style: dashed;
+  filter: drop-shadow(0 0 2px rgba(47, 111, 237, 0.35));
+}
+
+.timenotes-alignment-guide-x {
+  border-left-width: 2px;
+}
+
+.timenotes-alignment-guide-y {
+  border-top-width: 2px;
 }
 
 .timenote-element {
@@ -140,15 +155,26 @@ textarea {
 }
 
 [data-workspace-tabs]::-webkit-scrollbar,
-.overflow-y-auto::-webkit-scrollbar {
+.overflow-y-auto::-webkit-scrollbar,
+.overflow-auto::-webkit-scrollbar,
+.timenotes-scrollbar::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 
 [data-workspace-tabs]::-webkit-scrollbar-thumb,
-.overflow-y-auto::-webkit-scrollbar-thumb {
+.overflow-y-auto::-webkit-scrollbar-thumb,
+.overflow-auto::-webkit-scrollbar-thumb,
+.timenotes-scrollbar::-webkit-scrollbar-thumb {
   border-radius: 999px;
   background: rgba(47, 42, 36, 0.28);
+}
+
+[data-workspace-tabs]::-webkit-scrollbar-track,
+.overflow-y-auto::-webkit-scrollbar-track,
+.overflow-auto::-webkit-scrollbar-track,
+.timenotes-scrollbar::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.24);
 }
 
 .semi-slider {

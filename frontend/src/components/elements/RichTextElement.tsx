@@ -53,6 +53,7 @@ export function RichTextElement({
 
   const background = String(element.style?.background ?? '');
   const borderWidth = Number(element.style?.borderWidth ?? 0);
+  const borderStyle = String(element.style?.borderStyle ?? (borderWidth > 0 ? 'solid' : 'none'));
 
   return (
     <div
@@ -62,8 +63,9 @@ export function RichTextElement({
       style={{
         color: String(element.style?.color ?? '#2f2a24'),
         background: background || 'transparent',
-        borderStyle: borderWidth > 0 ? String(element.style?.borderStyle ?? 'solid') : 'solid',
-        borderWidth,
+        boxSizing: 'border-box',
+        borderStyle: borderStyle === 'none' ? 'solid' : borderStyle,
+        borderWidth: borderStyle === 'none' ? 0 : borderWidth,
         borderColor: String(element.style?.borderColor ?? '#2f2a24'),
         borderRadius: Number(element.style?.borderRadius ?? 0),
         fontSize: Number(element.style?.fontSize ?? 22),

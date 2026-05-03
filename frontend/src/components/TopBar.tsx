@@ -118,7 +118,10 @@ export function TopBar() {
                 theme={tool === item.key ? 'solid' : 'light'}
                 icon={item.icon}
                 disabled={activeTabMode !== 'edit'}
-                onClick={() => setTool(item.key)}
+                onClick={() => {
+                  setTool(item.key);
+                  window.dispatchEvent(new Event('timenotes-open-controls'));
+                }}
               >
                 {item.label}
               </Button>

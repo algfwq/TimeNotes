@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button, Empty, Toast, Upload } from '@douyinfe/semi-ui';
 import { IconCrop, IconDelete, IconImage, IconUpload } from '@douyinfe/semi-icons';
-import { createAssetFromDataUrl, createAssetFromFile } from '../../lib/files';
+import { createAssetFromDataUrl, createAssetFromFile, getImagePlacementSize } from '../../lib/files';
 import { useDocument } from '../../providers/DocumentProvider';
 import { ImageCropModal } from '../ImageCropModal';
 import type { AssetMeta } from '../../types';
@@ -47,8 +47,10 @@ export function AssetLibrary() {
     };
   }, []);
 
-  const chooseAsset = (asset: AssetMeta) => {
-    armPlacement({ type: 'image', patch: { assetId: asset.id, width: 220, height: 160, style: { fit: 'contain' } } });
+  const chooseAsset = async (asset: AssetMeta) => {
+    const src = asset.dataUrl ?? (asset.dataBase64 ? `data:${asset.mimeType};base64,${asset.dataBase64}` : '');
+    const size = src ? await getImagePlacementSize(src, 220, 180).catch(() => ({ width: 220, height: 160, aspectRatio: 220 / 160 })) : { width: 220, height: 160, aspectRatio: 220 / 160 };
+    armPlacement({ type: 'image', patch: { assetId: asset.id, width: size.width, height: size.height, style: { fit: 'contain', aspectRatio: size.aspectRatio } } });
     Toast.info('已选择素材，请在画布上点击放置位置');
   };
 
@@ -88,7 +90,7 @@ export function AssetLibrary() {
             key={asset.id}
             className="group overflow-hidden rounded-[8px] border border-black/10 bg-white p-2 text-left shadow-sm"
             type="button"
-            onClick={() => chooseAsset(asset)}
+            onClick={() => void chooseAsset(asset)}
             onContextMenu={(event) => {
               event.preventDefault();
               event.stopPropagation();

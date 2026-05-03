@@ -2,6 +2,12 @@ import type { AssetMeta } from '../types';
 import { dataUrlToBase64 } from './base64';
 import { createId, hashText } from './ids';
 
+export interface ImageIntrinsicSize {
+  width: number;
+  height: number;
+  aspectRatio: number;
+}
+
 export function readFileAsDataURL(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -9,6 +15,33 @@ export function readFileAsDataURL(file: File): Promise<string> {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });
+}
+
+export function getImageIntrinsicSize(src: string): Promise<ImageIntrinsicSize> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      const width = image.naturalWidth || image.width;
+      const height = image.naturalHeight || image.height;
+      if (!width || !height) {
+        reject(new Error('图片尺寸不可用'));
+        return;
+      }
+      resolve({ width, height, aspectRatio: width / height });
+    };
+    image.onerror = () => reject(new Error('图片加载失败'));
+    image.src = src;
+  });
+}
+
+export async function getImagePlacementSize(src: string, maxWidth: number, maxHeight: number): Promise<ImageIntrinsicSize> {
+  const intrinsic = await getImageIntrinsicSize(src);
+  const scale = Math.min(maxWidth / intrinsic.width, maxHeight / intrinsic.height, 1);
+  return {
+    width: Math.max(1, Math.round(intrinsic.width * scale)),
+    height: Math.max(1, Math.round(intrinsic.height * scale)),
+    aspectRatio: intrinsic.aspectRatio,
+  };
 }
 
 // 前端导入图片和字体都走同一套资源结构，保存 .tnote 时后端会把 dataBase64 写入 ZIP 包。

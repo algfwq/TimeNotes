@@ -11,7 +11,7 @@ export function ElementRenderer({
   element: NoteElement;
   onContextMenu?: (event: React.MouseEvent, element: NoteElement) => void;
 }) {
-  const { document, selectedElementId, editingElementId, selectElement, startEditing, stopEditing, updateElement, zoom, tool } = useDocument();
+  const { document, activePage, selectedElementId, editingElementId, selectElement, startEditing, stopEditing, updateElement, zoom, tool } = useDocument();
   const selected = selectedElementId === element.id;
   const editing = editingElementId === element.id;
   const isStrokePath = (element.type === 'drawing' || element.type === 'tape') && Boolean(element.points?.length);
@@ -32,9 +32,10 @@ export function ElementRenderer({
   return (
     <div
       data-element-id={element.id}
+      data-page-id={element.pageId}
       data-type={element.type}
       data-editing={editing ? 'true' : 'false'}
-      className={`timenote-element absolute box-border select-none ${selected && !isStrokePath ? 'ring-2 ring-[#2f6fed]' : ''}`}
+      className="timenote-element absolute box-border select-none"
       style={baseStyle}
       onMouseDown={(event) => {
         if (tool === 'pan') {
@@ -64,18 +65,20 @@ export function ElementRenderer({
       }}
     >
       {renderElement(element, selected, editing, asset)}
-      {selected && element.type === 'text' ? <TextMoveHandle element={element} zoom={zoom} onMove={updateElement} onBegin={() => stopEditing()} /> : null}
+      {selected && element.type === 'text' ? <TextMoveHandle element={element} page={activePage} zoom={zoom} onMove={updateElement} onBegin={() => stopEditing()} /> : null}
     </div>
   );
 }
 
 function TextMoveHandle({
   element,
+  page,
   zoom,
   onMove,
   onBegin,
 }: {
   element: NoteElement;
+  page: { width: number; height: number };
   zoom: number;
   onMove: (id: string, patch: Partial<NoteElement>) => void;
   onBegin: () => void;
@@ -89,8 +92,8 @@ function TextMoveHandle({
     let nextPosition = { x: element.x, y: element.y };
     const move = (moveEvent: PointerEvent) => {
       nextPosition = {
-        x: Math.round(start.elementX + (moveEvent.clientX - start.x) / zoom),
-        y: Math.round(start.elementY + (moveEvent.clientY - start.y) / zoom),
+        x: clamp(Math.round(start.elementX + (moveEvent.clientX - start.x) / zoom), 0, Math.max(0, page.width - element.width)),
+        y: clamp(Math.round(start.elementY + (moveEvent.clientY - start.y) / zoom), 0, Math.max(0, page.height - element.height)),
       };
       if (target) {
         target.style.left = `${nextPosition.x}px`;
@@ -120,6 +123,10 @@ function TextMoveHandle({
   );
 }
 
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
 function renderElement(element: NoteElement, selected: boolean, editing: boolean, asset?: AssetMeta) {
   const style = element.style ?? {};
   if (element.type === 'text') {
@@ -129,7 +136,9 @@ function renderElement(element: NoteElement, selected: boolean, editing: boolean
     return <StrokeSvg element={element} selected={selected} />;
   }
   if (element.type === 'image' || element.type === 'sticker') {
-    const dataUrl = asset?.dataUrl ?? (asset?.dataBase64 ? `data:${asset.mimeType};base64,${asset.dataBase64}` : undefined);
+    // 贴纸裁剪结果是元素级显示数据，不能反向污染全局贴纸库。
+    const elementCropDataUrl = element.type === 'sticker' && typeof style.cropDataUrl === 'string' && style.cropDataUrl.startsWith('data:') ? style.cropDataUrl : undefined;
+    const dataUrl = elementCropDataUrl ?? asset?.dataUrl ?? (asset?.dataBase64 ? `data:${asset.mimeType};base64,${asset.dataBase64}` : undefined);
     if (dataUrl) {
       return (
         <img
