@@ -2,8 +2,8 @@
 set -e
 
 # Build configuration
-APP_NAME="timenotes.exe"
-BUNDLE_ID="com.example.timenotes"
+APP_NAME="TimeNotes"
+BUNDLE_ID="com.algfwq.timenotes"
 VERSION="0.1.0"
 BUILD_NUMBER="0.1.0"
 BUILD_DIR="build/ios"

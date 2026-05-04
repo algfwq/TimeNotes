@@ -10,13 +10,13 @@
     <Installer
         Path="timenotes.exe"
         Arguments=""
-        InstallLocation="C:\Program Files\My Company\My Product">
+        InstallLocation="C:\Program Files\ALGFWQ\TimeNotes">
     </Installer>
     <PackageInformation
-        PackageName="My Product"
-        PackageDisplayName="My Product"
-        PublisherName="CN=My Company"
-        PublisherDisplayName="My Company"
+        PackageName="TimeNotes"
+        PackageDisplayName="TimeNotes"
+        PublisherName="CN=ALGFWQ"
+        PublisherDisplayName="ALGFWQ"
         Version="0.1.0.0"
         PackageDescription="A TimeNotes application">
         <Capabilities>
@@ -25,24 +25,24 @@
         </Capabilities>
         <Applications>
             <Application
-                Id="com.example.timenotes"
+                Id="com.algfwq.timenotes"
                 Description="A TimeNotes application"
-                DisplayName="My Product"
+                DisplayName="TimeNotes"
                 ExecutableName="timenotes.exe"
                 EntryPoint="Windows.FullTrustApplication">
                 
             </Application>
         </Applications>
         <Resources>
-            <Resource Language="en-us" />
+            <Resource Language="zh-cn" />
         </Resources>
         <Dependencies>
             <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.19041.0" />
         </Dependencies>
         <Properties>
             <Framework>false</Framework>
-            <DisplayName>My Product</DisplayName>
-            <PublisherDisplayName>My Company</PublisherDisplayName>
+            <DisplayName>TimeNotes</DisplayName>
+            <PublisherDisplayName>ALGFWQ</PublisherDisplayName>
             <Description>A TimeNotes application</Description>
             <Logo>Assets\AppIcon.png</Logo>
         </Properties>

@@ -1,4 +1,4 @@
-Unicode true
+﻿Unicode true
 
 ####
 ## Please note: Template replacements don't work in this file. They are provided with default defines like
@@ -20,10 +20,10 @@ Unicode true
 ## The following information is taken from the wails_tools.nsh file, but they can be overwritten here.
 ####
 ## !define INFO_PROJECTNAME    "my-project" # Default "TimeNotes"
-## !define INFO_COMPANYNAME    "My Company" # Default "My Company"
-## !define INFO_PRODUCTNAME    "My Product Name" # Default "My Product"
+## !define INFO_COMPANYNAME    "ALGFWQ" # Default "ALGFWQ"
+## !define INFO_PRODUCTNAME    "TimeNotes" # Default "TimeNotes"
 ## !define INFO_PRODUCTVERSION "1.0.0"     # Default "0.1.0"
-## !define INFO_COPYRIGHT      "(c) Now, My Company" # Default "© 2026, My Company"
+## !define INFO_COPYRIGHT      "(c) Now, ALGFWQ" # Default "© 2026, ALGFWQ"
 ###
 ## !define PRODUCT_EXECUTABLE  "Application.exe"      # Default "${INFO_PROJECTNAME}.exe"
 ## !define UNINST_KEY_NAME     "UninstKeyInRegistry"  # Default "${INFO_COMPANYNAME}${INFO_PRODUCTNAME}"
@@ -32,7 +32,14 @@ Unicode true
 ####
 ## Include the wails tools
 ####
+!define INFO_COMPANYNAME "ALGFWQ"
+!define INFO_PRODUCTNAME "TimeNotes"
+!define INFO_COPYRIGHT "© 2026, ALGFWQ"
 !include "wails_tools.nsh"
+
+!define WAILS_WIN10_REQUIRED "本软件仅支持 Windows 10（Server 2016）及更高版本。"
+!define WAILS_ARCHITECTURE_NOT_SUPPORTED "当前 Windows 架构不支持安装本软件。支持架构：${ARCH}"
+!define WAILS_INSTALL_WEBVIEW_DETAILPRINT "正在安装：WebView2 运行时"
 
 # The version information for this two must consist of 4 parts
 VIProductVersion "${INFO_PRODUCTVERSION}.0"
@@ -54,6 +61,8 @@ ManifestDPIAware true
 !define MUI_UNICON "..\icon.ico"
 # !define MUI_WELCOMEFINISHPAGE_BITMAP "resources\leftimage.bmp" #Include this to add a bitmap on the left side of the Welcome Page. Must be a size of 164x314
 !define MUI_FINISHPAGE_NOAUTOCLOSE # Wait on the INSTFILES page so the user can take a look into the details of the installation steps
+!define MUI_FINISHPAGE_RUN "$INSTDIR\${PRODUCT_EXECUTABLE}"
+!define MUI_FINISHPAGE_RUN_TEXT "立即启动程序"
 !define MUI_ABORTWARNING # This will warn the user if they exit from the installer.
 
 !insertmacro MUI_PAGE_WELCOME # Welcome to the installer page.
@@ -64,7 +73,7 @@ ManifestDPIAware true
 
 !insertmacro MUI_UNPAGE_INSTFILES # Uninstalling page
 
-!insertmacro MUI_LANGUAGE "English" # Set the Language of the installer
+!insertmacro MUI_LANGUAGE "SimpChinese" # Set the Language of the installer
 
 ## The following two statements can be used to sign the installer and the uninstaller. The path to the binaries are provided in %1
 #!uninstfinalize 'signtool --file "%1"'

@@ -3,26 +3,26 @@
 #
 # The lines below are called `modelines`. See `:help modeline`
 
-name: "timenotes.exe"
+name: "TimeNotes"
 arch: ${GOARCH}
 platform: "linux"
 version: "0.1.0"
 section: "default"
 priority: "extra"
 maintainer: ${GIT_COMMITTER_NAME} <${GIT_COMMITTER_EMAIL}>
-description: "A TimeNotes application"
-vendor: "My Company"
+description: "TimeNotes desktop hand-journal notebook"
+vendor: "ALGFWQ"
 homepage: "https://wails.io"
 license: "MIT"
 release: "1"
 
 contents:
-  - src: "./bin/timenotes.exe"
-    dst: "/usr/local/bin/timenotes.exe"
+  - src: "./bin/TimeNotes"
+    dst: "/usr/local/bin/TimeNotes"
   - src: "./build/appicon.png"
-    dst: "/usr/share/icons/hicolor/128x128/apps/timenotes.exe.png"
-  - src: "./build/linux/timenotes.exe.desktop"
-    dst: "/usr/share/applications/timenotes.exe.desktop"
+    dst: "/usr/share/icons/hicolor/128x128/apps/TimeNotes.png"
+  - src: "./build/linux/TimeNotes.desktop"
+    dst: "/usr/share/applications/TimeNotes.desktop"
 
 # Default dependencies for Debian 12/Ubuntu 22.04+ with WebKit 4.1
 depends:
