@@ -24,7 +24,7 @@ export function LeftLibrary() {
         <Tabs.TabPane tab="素材" itemKey="assets" className="min-h-0 flex-1 overflow-hidden">
           <AssetLibrary />
         </Tabs.TabPane>
-        <Tabs.TabPane tab="协同" itemKey="collab" className="min-h-0 flex-1 overflow-hidden">
+        <Tabs.TabPane tab="协作" itemKey="collab" className="min-h-0 flex-1 overflow-hidden">
           <CollaborationPanel />
         </Tabs.TabPane>
       </Tabs>

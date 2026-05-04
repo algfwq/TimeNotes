@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Notification, Toast } from '@douyinfe/semi-ui';
+import { Modal, Notification, Toast } from '@douyinfe/semi-ui';
 import { CollaborationClient } from '../lib/collaborationClient';
 import { useDocument } from './DocumentProvider';
 import type { ChatMessage, PresenceUser } from '../types';
@@ -31,6 +31,7 @@ interface CollaborationContextValue {
   connect: (options: ConnectOptions) => void;
   disconnect: (reason?: DisconnectReason) => void;
   sendChat: (text: string) => void;
+  kickPeer: (clientId: string) => void;
   updateCursor: (cursor?: CursorPosition | null) => void;
   setForceRelay: (forceRelay: boolean) => void;
 }
@@ -101,6 +102,46 @@ export function CollaborationProvider({ children }: { children: React.ReactNode 
         onChat: (message) => setMessages((current) => [...current, message].slice(-200)),
         onLatency: setLatencyMs,
         onSelf: setLocalUser,
+        onJoinPending: () => {
+          setStatus('等待房主同意');
+        },
+        onJoinRequest: (request, respond) => {
+          Modal.confirm({
+            title: '协作者请求加入',
+            content: `${request.user.name || '协作者'} 正在请求加入当前协作房间。连接 ID：${shortClientId(request.user.id)}`,
+            okText: '同意加入',
+            cancelText: '拒绝',
+            onOk: () => respond(true),
+            onCancel: () => respond(false, '房主已拒绝加入'),
+          });
+        },
+        onJoinRejected: (reason) => {
+          Notification.warning({
+            title: '加入协作被拒绝',
+            content: reason,
+            duration: 5,
+            position: 'topRight',
+          });
+          disconnect('room-closed');
+        },
+        onJoined: (user) => {
+          if (user.role !== 'host') {
+            Notification.success({
+              title: '已成功加入协作房间',
+              content: '现在可以开始实时协作。',
+              duration: 4,
+              position: 'topRight',
+            });
+          }
+        },
+        onPeerJoined: (user) => {
+          Notification.info({
+            title: `${user.name || '协作者'} 已加入协作`,
+            content: '在线成员列表已更新。',
+            duration: 4,
+            position: 'topRight',
+          });
+        },
         onPeerLeft: (user) => {
           Notification.warning({
             title: `${user.name || '协作者'} 已退出协作`,
@@ -108,6 +149,15 @@ export function CollaborationProvider({ children }: { children: React.ReactNode 
             duration: 4,
             position: 'topRight',
           });
+        },
+        onKicked: (reason) => {
+          Notification.warning({
+            title: '已被移出协作',
+            content: reason,
+            duration: 5,
+            position: 'topRight',
+          });
+          disconnect('room-closed');
         },
         onRoomClosed: (message) => {
           Toast.warning(message);
@@ -127,6 +177,10 @@ export function CollaborationProvider({ children }: { children: React.ReactNode 
 
   const sendChat = useCallback((text: string) => {
     clientRef.current?.sendChat(text);
+  }, []);
+
+  const kickPeer = useCallback((clientId: string) => {
+    clientRef.current?.kickPeer(clientId);
   }, []);
 
   const setForceRelay = useCallback((nextForceRelay: boolean) => {
@@ -151,23 +205,24 @@ export function CollaborationProvider({ children }: { children: React.ReactNode 
       const isConnected = status === '已连接' || status === 'connected';
       const isHost = !isConnected || localUser.role === 'host';
       return {
-      status,
-      peers,
-      messages,
-      localUser,
-      latencyMs,
-      forceRelay,
-      isConnected,
-      isHost,
-      canManagePages: isHost,
-      connect,
-      disconnect,
-      sendChat,
-      updateCursor,
-      setForceRelay,
-    };
+        status,
+        peers,
+        messages,
+        localUser,
+        latencyMs,
+        forceRelay,
+        isConnected,
+        isHost,
+        canManagePages: isHost,
+        connect,
+        disconnect,
+        sendChat,
+        kickPeer,
+        updateCursor,
+        setForceRelay,
+      };
     },
-    [connect, disconnect, forceRelay, latencyMs, localUser, messages, peers, sendChat, setForceRelay, status, updateCursor],
+    [connect, disconnect, forceRelay, kickPeer, latencyMs, localUser, messages, peers, sendChat, setForceRelay, status, updateCursor],
   );
 
   return <CollaborationContext.Provider value={value}>{children}</CollaborationContext.Provider>;
@@ -189,4 +244,8 @@ function getLocalUserId() {
   const next = crypto.randomUUID ? `user-${crypto.randomUUID()}` : `user-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   window.sessionStorage.setItem(sessionUserStorageKey, next);
   return next;
+}
+
+function shortClientId(clientId: string) {
+  return clientId.slice(-8) || clientId;
 }

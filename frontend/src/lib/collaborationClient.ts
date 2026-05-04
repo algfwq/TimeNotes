@@ -57,6 +57,11 @@ interface PongPayload {
   pingId: string;
 }
 
+interface JoinRequestPayload {
+  requestId: string;
+  user: PresenceUser;
+}
+
 interface CollaborationClientOptions {
   url: string;
   roomId: string;
@@ -69,7 +74,13 @@ interface CollaborationClientOptions {
   onChat: (message: ChatMessage) => void;
   onLatency: (latencyMs?: number) => void;
   onSelf: (user: PresenceUser) => void;
+  onJoinPending: () => void;
+  onJoinRequest: (request: JoinRequestPayload, respond: (approved: boolean, reason?: string) => void) => void;
+  onJoinRejected: (reason: string) => void;
+  onJoined: (user: PresenceUser) => void;
+  onPeerJoined: (user: PresenceUser) => void;
   onPeerLeft: (user: PresenceUser) => void;
+  onKicked: (reason: string) => void;
   onRoomClosed: (message: string) => void;
   onError: (message: string) => void;
 }
@@ -98,6 +109,7 @@ export class CollaborationClient {
   private peerUsers = new Map<string, PresenceUser>();
   private seenUpdates = new Set<string>();
   private seenChats = new Set<string>();
+  private readonly connectionId = makeId('conn');
   private updateSeq = 0;
   private snapshotCounter = 0;
   private connected = false;
@@ -181,6 +193,13 @@ export class CollaborationClient {
     this.sendSocket(env);
   }
 
+  kickPeer(clientId: string, reason = '房主已将你移出协作房间') {
+    if (!clientId || !this.connected) {
+      return;
+    }
+    this.sendSocket(this.makeEnvelope('peer_kick', { clientId, reason }));
+  }
+
   private openSocket() {
     this.options.onStatus('连接中');
     const socket = new WebSocket(this.options.url);
@@ -216,11 +235,26 @@ export class CollaborationClient {
       case 'auth_ok':
         this.handleAuthOK(env.payload as AuthOKPayload);
         break;
+      case 'join_pending':
+        this.options.onStatus('等待房主同意');
+        this.options.onJoinPending();
+        break;
+      case 'join_request':
+        this.handleJoinRequest(env.payload as JoinRequestPayload);
+        break;
+      case 'join_rejected': {
+        const reason = (env.payload as { reason?: string })?.reason ?? '房主已拒绝加入协作';
+        this.options.onJoinRejected(reason);
+        break;
+      }
       case 'peer_joined':
-        this.upsertPeer(env.payload as PresenceUser);
+        this.upsertPeer(env.payload as PresenceUser, true);
         break;
       case 'peer_left':
         this.removePeer((env.payload as { clientId?: string })?.clientId ?? env.from ?? '');
+        break;
+      case 'peer_kicked':
+        this.options.onKicked((env.payload as { reason?: string })?.reason ?? '房主已将你移出协作房间');
         break;
       case 'room_closed':
         this.options.onRoomClosed((env.payload as { reason?: string })?.reason === 'host_left' ? '房主已退出协作，房间已关闭' : '协作房间已关闭');
@@ -277,6 +311,7 @@ export class CollaborationClient {
     this.peerUsers.clear();
     payload.peers?.forEach((peer) => this.upsertPeer(peer));
     this.options.onStatus('已连接');
+    this.options.onJoined(this.options.user);
     this.publishPresence();
     this.startPresenceHeartbeat();
     this.startLatencyProbe();
@@ -284,6 +319,22 @@ export class CollaborationClient {
       this.sendFullStateUpdate();
       window.setTimeout(() => this.sendSnapshot(), 800);
     }
+  }
+
+  private handleJoinRequest(payload?: JoinRequestPayload) {
+    if (!payload?.requestId || !payload.user) {
+      return;
+    }
+    this.options.onJoinRequest(payload, (approved, reason) => {
+      this.sendSocket(
+        this.makeEnvelope('join_decision', {
+          requestId: payload.requestId,
+          clientId: payload.user.id,
+          approved,
+          reason,
+        }),
+      );
+    });
   }
 
   private queueDocUpdate(update: Uint8Array) {
@@ -336,7 +387,10 @@ export class CollaborationClient {
   }
 
   private broadcastDocUpdate(update: Uint8Array) {
-    const updateId = `${this.options.user.id}:${++this.updateSeq}`;
+    // 同一个浏览器标签会复用 sessionStorage 里的 user.id。
+    // 协作者退出后重新加入时 updateSeq 会从 0 开始，如果 updateId 只用 user.id + seq，
+    // 其他客户端会把新连接的编辑误判为旧连接已处理过的 update。connectionId 用于隔离每次连接生命周期。
+    const updateId = `${this.options.user.id}:${this.connectionId}:${++this.updateSeq}`;
     this.seenUpdates.add(updateId);
     const payload: DocUpdatePayload = {
       updateId,
@@ -359,7 +413,7 @@ export class CollaborationClient {
     if (!this.connected) {
       return;
     }
-    const updateId = `${this.options.user.id}:state:${++this.updateSeq}`;
+    const updateId = `${this.options.user.id}:${this.connectionId}:state:${++this.updateSeq}`;
     this.seenUpdates.add(updateId);
     const env = this.makeEnvelope('doc_update', {
       updateId,
@@ -508,13 +562,17 @@ export class CollaborationClient {
     this.handleEnvelope({ ...env, type: payload.type, payload: payload.payload }, 'relay');
   }
 
-  private upsertPeer(peer?: PresenceUser) {
+  private upsertPeer(peer?: PresenceUser, notify = false) {
     if (!peer || peer.id === this.options.user.id) {
       return;
     }
+    const isNewPeer = !this.peerUsers.has(peer.id);
     this.peerUsers.set(peer.id, peer);
     this.ensurePeer(peer);
     this.emitPeers();
+    if (notify && isNewPeer) {
+      this.options.onPeerJoined(peer);
+    }
   }
 
   private removePeer(peerID: string) {
