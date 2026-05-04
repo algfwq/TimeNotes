@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import * as Y from 'yjs';
 import { DocumentService } from '../../bindings/changeme';
-import { base64ToBytes, bytesToBase64 } from '../lib/base64';
+import { base64ToBytes, bytesToBase64, dataUrlToBase64 } from '../lib/base64';
 import { createId } from '../lib/ids';
 import { createSeedDocument } from '../data/seed';
 import type {
@@ -55,13 +55,14 @@ interface DocumentContextValue {
   loadPackage: (note: NotePackage, sourcePath?: string) => void;
   createPackage: () => NotePackage;
   createNewDocument: () => Promise<void>;
-  updateElement: (id: string, patch: Partial<NoteElement>) => void;
+  updateElement: (id: string, patch: Partial<NoteElement>, options?: DocumentUpdateOptions) => void;
   addElement: (type: ElementType, patch?: Partial<NoteElement>) => void;
   deleteElement: (id: string) => void;
   deleteSelectedElement: () => void;
   duplicateElement: (id: string) => void;
   renameElement: (id: string, title: string) => void;
   moveElementLayer: (id: string, direction: 'up' | 'down' | 'front' | 'back') => void;
+  reorderElementLayer: (sourceElementId: string, targetElementId: string) => void;
   undo: () => void;
   redo: () => void;
   canUndo: boolean;
@@ -80,7 +81,37 @@ const DocumentContext = createContext<DocumentContextValue | null>(null);
 // v3 开始把贴纸资源从普通图片素材中拆出，避免素材栏和贴纸面板互相污染。
 const currentFormatVersion = 3;
 const localOrigin = 'timenotes-react';
+const collaborationRemoteOrigin = 'timenotes-collaboration-remote';
+const collaborationSnapshotMapName = 'snapshot';
+const collaborationResourceMapName = 'resources';
+const collaborationDocumentKeyPrefix = 'document:';
 const maxHistorySteps = 80;
+
+type ResourceGroup = 'assets' | 'stickers' | 'fonts';
+type CollaborationSnapshotScope = { type: 'document' } | { type: 'page'; pageId: string };
+
+interface DocumentUpdateOptions {
+  history?: boolean;
+  historyBase?: NoteDocument;
+  collaborationScope?: CollaborationSnapshotScope;
+}
+
+interface CollaborationResourceEntry {
+  group: ResourceGroup;
+  asset: AssetMeta;
+  signature: string;
+}
+
+interface CollaborationDocumentEntry {
+  kind: 'document';
+  clientId: string;
+  updatedAt: string;
+  activePageId?: string;
+  scope?: CollaborationSnapshotScope;
+  document: NoteDocument;
+}
+
+type CollaborationSnapshotValue = NoteDocument | CollaborationDocumentEntry;
 
 const defaultToolStyles: ToolStyleState = {
   text: {
@@ -199,6 +230,24 @@ function stripTransientAssetData(asset: AssetMeta) {
   return meta;
 }
 
+function compactResourceAsset(asset: AssetMeta) {
+  const dataBase64 = asset.dataBase64 ?? (asset.dataUrl ? dataUrlToBase64(asset.dataUrl) : undefined);
+  if (!dataBase64) {
+    return stripTransientAssetData(asset);
+  }
+  const { dataUrl, ...meta } = asset;
+  return { ...meta, dataBase64 };
+}
+
+function stripDocumentForCollaboration(document: NoteDocument): NoteDocument {
+  return {
+    ...document,
+    assets: document.assets.map(stripTransientAssetData),
+    stickers: document.stickers.map(stripTransientAssetData),
+    fonts: document.fonts.map(stripTransientAssetData),
+  };
+}
+
 function rememberResources(cache: Map<string, AssetMeta>, document: NoteDocument) {
   [...document.assets, ...document.stickers, ...document.fonts].forEach((asset) => {
     if (asset.id && (asset.dataBase64 || asset.dataUrl)) {
@@ -215,6 +264,165 @@ function hydrateResourcesFromCache(document: NoteDocument, cache: Map<string, As
     stickers: document.stickers.map(hydrate),
     fonts: document.fonts.map(hydrate),
   };
+}
+
+function resourceGroups(document: NoteDocument): Array<[ResourceGroup, AssetMeta[]]> {
+  return [
+    ['assets', document.assets],
+    ['stickers', document.stickers],
+    ['fonts', document.fonts],
+  ];
+}
+
+function resourceKey(group: ResourceGroup, id: string) {
+  return `${group}:${id}`;
+}
+
+function resourceSignature(asset: AssetMeta) {
+  return [asset.hash, asset.size, asset.mimeType, asset.dataBase64?.length ?? 0, asset.dataUrl?.length ?? 0].join(':');
+}
+
+function hydrateResourceForSync(asset: AssetMeta, cache: Map<string, AssetMeta>) {
+  const cached = cache.get(asset.id);
+  if (!cached) {
+    return hydrateAsset(asset);
+  }
+  // 协作 document 快照为了性能会剥离 dataUrl/dataBase64；这里用本地缓存把资源二进制补回来。
+  // 这样即使先收到“引用了某个字体/素材的文档”，后收到 resources map，也能在下一次同步时补发完整资源。
+  return hydrateAsset({
+    ...cached,
+    ...asset,
+    dataBase64: asset.dataBase64 ?? cached.dataBase64,
+    dataUrl: asset.dataUrl ?? cached.dataUrl,
+  });
+}
+
+function syncResourcesToYjs(resourceMap: Y.Map<CollaborationResourceEntry>, signatures: Map<string, string>, document: NoteDocument, cache: Map<string, AssetMeta>) {
+  const localKeys = new Set<string>();
+  resourceGroups(document).forEach(([group, assets]) => {
+    assets.forEach((asset) => {
+      if (!asset.id) {
+        return;
+      }
+      const key = resourceKey(group, asset.id);
+      const hydrated = hydrateResourceForSync(asset, cache);
+      if (!hydrated.dataBase64 && !hydrated.dataUrl) {
+        return;
+      }
+      localKeys.add(key);
+      const compact = compactResourceAsset(hydrated);
+      const signature = resourceSignature(compact);
+      if (signatures.get(key) === signature && resourceMap.has(key)) {
+        return;
+      }
+      signatures.set(key, signature);
+      resourceMap.set(key, { group, asset: compact, signature });
+    });
+  });
+
+  Array.from(signatures.keys()).forEach((key) => {
+    if (!localKeys.has(key)) {
+      signatures.delete(key);
+    }
+  });
+  // 不在这里按 liveKeys 删除 resourceMap。多人协作时，A 的资源二进制可能先到，
+  // A 的 document 快照后到；如果 B 在这个间隙同步本机文档并清理共享 resources，
+  // 就会把 A 刚上传的图片/字体删掉，其他客户端只能看到资源 id，无法渲染。
+}
+
+function cacheResourcesFromYjs(resourceMap: Y.Map<CollaborationResourceEntry>, cache: Map<string, AssetMeta>) {
+  resourceMap.forEach((entry) => {
+    if (entry?.asset?.id) {
+      cache.set(entry.asset.id, hydrateAsset(entry.asset));
+    }
+  });
+}
+
+function collaborationDocumentKey(yDoc: Y.Doc) {
+  return `${collaborationDocumentKeyPrefix}${yDoc.clientID}`;
+}
+
+function unwrapCollaborationSnapshot(value: CollaborationSnapshotValue | undefined) {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+  if ('kind' in value && value.kind === 'document') {
+    return {
+      document: value.document,
+      activePageId: value.activePageId,
+      scope: value.scope ?? (value.activePageId ? { type: 'page' as const, pageId: value.activePageId } : undefined),
+    };
+  }
+  if ('pages' in value && Array.isArray(value.pages) && 'elements' in value && Array.isArray(value.elements)) {
+    return { document: value as NoteDocument };
+  }
+  return undefined;
+}
+
+function pickCollaborationSnapshot(snapshotMap: Y.Map<CollaborationSnapshotValue>, changedKeys?: Iterable<string>) {
+  const keys = Array.from(changedKeys ?? snapshotMap.keys()).filter((key) => key === 'document' || key.startsWith(collaborationDocumentKeyPrefix));
+  let best: { document: NoteDocument; activePageId?: string; scope?: CollaborationSnapshotScope } | undefined;
+  let bestTime = -Infinity;
+  keys.forEach((key) => {
+    const snapshot = unwrapCollaborationSnapshot(snapshotMap.get(key));
+    if (!snapshot) {
+      return;
+    }
+    const time = Date.parse(snapshot.document.updatedAt || snapshot.document.createdAt || '') || 0;
+    if (!best || time >= bestTime) {
+      best = snapshot;
+      bestTime = time;
+    }
+  });
+  return best;
+}
+
+function pageIdentitySignature(document: NoteDocument) {
+  return document.pages.map((page) => page.id).join('|');
+}
+
+function mergeAssetList(current: AssetMeta[], incoming: AssetMeta[]) {
+  const byId = new Map(current.map((asset) => [asset.id, asset]));
+  incoming.forEach((asset) => {
+    const existing = byId.get(asset.id);
+    byId.set(
+      asset.id,
+      hydrateAsset({
+        ...(existing ?? {}),
+        ...asset,
+        dataBase64: asset.dataBase64 ?? existing?.dataBase64,
+        dataUrl: asset.dataUrl ?? existing?.dataUrl,
+      }),
+    );
+  });
+  return Array.from(byId.values());
+}
+
+function mergeCollaborationDocument(current: NoteDocument, incoming: NoteDocument, scope: CollaborationSnapshotScope | undefined, cache: Map<string, AssetMeta>) {
+  const normalizedIncoming = normalizeDocument(hydrateResourcesFromCache(incoming, cache));
+  if (!scope || scope.type === 'document') {
+    return normalizedIncoming;
+  }
+  const pageId = scope.pageId;
+  const incomingPage = normalizedIncoming.pages.find((page) => page.id === pageId);
+  if (!incomingPage || !current.pages.some((page) => page.id === pageId) || pageIdentitySignature(current) !== pageIdentitySignature(normalizedIncoming)) {
+    return normalizedIncoming;
+  }
+  const currentTime = Date.parse(current.updatedAt || current.createdAt || '') || 0;
+  const incomingTime = Date.parse(normalizedIncoming.updatedAt || normalizedIncoming.createdAt || '') || 0;
+  return normalizeDocument({
+    ...current,
+    title: incomingTime >= currentTime ? normalizedIncoming.title : current.title,
+    updatedAt: incomingTime >= currentTime ? normalizedIncoming.updatedAt : current.updatedAt,
+    assets: mergeAssetList(current.assets, normalizedIncoming.assets),
+    stickers: mergeAssetList(current.stickers, normalizedIncoming.stickers),
+    fonts: mergeAssetList(current.fonts, normalizedIncoming.fonts),
+    pages: current.pages.map((page) => (page.id === pageId ? incomingPage : page)),
+    elements: [
+      ...current.elements.filter((element) => element.pageId !== pageId),
+      ...normalizedIncoming.elements.filter((element) => element.pageId === pageId),
+    ],
+  });
 }
 
 function clampNumber(value: number, min: number, max: number) {
@@ -237,9 +445,54 @@ function clampElementToPage(element: NoteElement, pages: NotePage[]): NoteElemen
   };
 }
 
+function hasElementChanged(previous: NoteElement, next: NoteElement, patch: Partial<NoteElement>) {
+  return Object.keys(patch).some((key) => {
+    const field = key as keyof NoteElement;
+    return !shallowEqualValue(previous[field], next[field]);
+  });
+}
+
+function shallowEqualValue(first: unknown, second: unknown) {
+  if (Object.is(first, second)) {
+    return true;
+  }
+  if (Array.isArray(first) && Array.isArray(second)) {
+    return first.length === second.length && first.every((value, index) => Object.is(value, second[index]));
+  }
+  if (first && second && typeof first === 'object' && typeof second === 'object') {
+    const firstRecord = first as Record<string, unknown>;
+    const secondRecord = second as Record<string, unknown>;
+    const firstKeys = Object.keys(firstRecord);
+    const secondKeys = Object.keys(secondRecord);
+    return firstKeys.length === secondKeys.length && firstKeys.every((key) => Object.is(firstRecord[key], secondRecord[key]));
+  }
+  return false;
+}
+
 export function DocumentProvider({ children }: { children: React.ReactNode }) {
-  const yDocRef = useRef(new Y.Doc());
+  const tabYDocsRef = useRef(new Map<string, Y.Doc>());
   const resourceCacheRef = useRef(new Map<string, AssetMeta>());
+  const resourceSyncSignaturesRef = useRef(new WeakMap<Y.Doc, Map<string, string>>());
+  const pendingCollaborationScopeRef = useRef<CollaborationSnapshotScope | undefined>();
+  const activePageIdRef = useRef('');
+  const skipNextYjsSyncRef = useRef(false);
+  const skipYjsSyncUntilRef = useRef(0);
+  const ensureTabYDoc = useCallback((tabId: string) => {
+    let yDoc = tabYDocsRef.current.get(tabId);
+    if (!yDoc) {
+      yDoc = new Y.Doc();
+      tabYDocsRef.current.set(tabId, yDoc);
+    }
+    return yDoc;
+  }, []);
+  const resourceSignaturesFor = useCallback((targetYDoc: Y.Doc) => {
+    let signatures = resourceSyncSignaturesRef.current.get(targetYDoc);
+    if (!signatures) {
+      signatures = new Map<string, string>();
+      resourceSyncSignaturesRef.current.set(targetYDoc, signatures);
+    }
+    return signatures;
+  }, []);
   const initialTab = useMemo(() => createTab(createSeedDocument(), 'edit'), []);
   // 多文档编辑由工作区标签维护；每个标签保存自己的文档快照和当前页。
   const [tabs, setTabs] = useState<WorkspaceTab[]>([initialTab]);
@@ -255,23 +508,49 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
   const document = activeTab.document;
   const activePageId = activeTab.activePageId;
   const activeTabMode = activeTab.mode;
+  const activeYDoc = ensureTabYDoc(activeTab.id);
   const canUndo = Boolean(activeTab.history?.past.length);
   const canRedo = Boolean(activeTab.history?.future.length);
+
+  useEffect(() => {
+    activePageIdRef.current = activePageId;
+  }, [activePageId]);
 
   useEffect(() => {
     rememberResources(resourceCacheRef.current, document);
   }, [document]);
 
-  const syncToYjs = useCallback((nextDocument: NoteDocument) => {
-    const snapshotMap = yDocRef.current.getMap('snapshot');
-    yDocRef.current.transact(() => {
-      snapshotMap.set('document', nextDocument);
+  const syncToYjs = useCallback((nextDocument: NoteDocument, targetYDoc: Y.Doc, scope: CollaborationSnapshotScope, currentActivePageId: string) => {
+    const snapshotMap = targetYDoc.getMap<CollaborationSnapshotValue>(collaborationSnapshotMapName);
+    const resourceMap = targetYDoc.getMap<CollaborationResourceEntry>(collaborationResourceMapName);
+    targetYDoc.transact(() => {
+      // 高频画布编辑只同步轻量 document；图片、贴纸、字体二进制单独进入 resources map。
+      // 日志里 35MB 的重复 doc_update 正是因为每次拖动都把素材 dataURL/base64 一起写进 document。
+      syncResourcesToYjs(resourceMap, resourceSignaturesFor(targetYDoc), nextDocument, resourceCacheRef.current);
+      // 每个客户端写独立槽位，避免多个协作者同时 set 同一个 Y.Map key 时被 Yjs 冲突合并规则吞掉更新。
+      snapshotMap.set(collaborationDocumentKey(targetYDoc), {
+        kind: 'document',
+        clientId: String(targetYDoc.clientID),
+        updatedAt: nextDocument.updatedAt,
+        activePageId: scope.type === 'page' ? scope.pageId : currentActivePageId,
+        scope,
+        document: stripDocumentForCollaboration(nextDocument),
+      });
     }, localOrigin);
-  }, []);
+  }, [resourceSignaturesFor]);
 
   useEffect(() => {
-    syncToYjs(document);
-  }, [document, syncToYjs]);
+    if (activeTabMode !== 'edit') {
+      return;
+    }
+    if (skipNextYjsSyncRef.current || Date.now() < skipYjsSyncUntilRef.current) {
+      skipNextYjsSyncRef.current = false;
+      return;
+    }
+    const scope = pendingCollaborationScopeRef.current ?? { type: 'page' as const, pageId: activePageIdRef.current };
+    pendingCollaborationScopeRef.current = undefined;
+    syncToYjs(document, activeYDoc, scope, activePageIdRef.current);
+  }, [activeTabMode, activeYDoc, document, syncToYjs]);
 
   const updateActiveTab = useCallback(
     (updater: (current: WorkspaceTab) => WorkspaceTab) => {
@@ -288,22 +567,38 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
   );
 
   const updateDocument = useCallback(
-    (updater: (current: NoteDocument) => NoteDocument) => {
+    (updater: (current: NoteDocument) => NoteDocument, options: DocumentUpdateOptions = {}) => {
       updateActiveTab((tab) => {
         if (tab.mode !== 'edit') {
           return tab;
         }
         rememberResources(resourceCacheRef.current, tab.document);
-        const next = normalizeDocument({ ...updater(tab.document), updatedAt: new Date().toISOString() });
+        const updated = updater(tab.document);
+        if (updated === tab.document && !options.historyBase) {
+          return tab;
+        }
+        const next = normalizeDocument({ ...updated, updatedAt: new Date().toISOString() });
+        if (options.collaborationScope) {
+          const previousScope = pendingCollaborationScopeRef.current;
+          pendingCollaborationScopeRef.current =
+            options.collaborationScope.type === 'document' ||
+            previousScope?.type === 'document' ||
+            (previousScope?.type === 'page' && options.collaborationScope.type === 'page' && previousScope.pageId !== options.collaborationScope.pageId)
+              ? { type: 'document' }
+              : options.collaborationScope;
+        }
         rememberResources(resourceCacheRef.current, next);
         const history = tab.history ?? { past: [], future: [] };
+        const shouldRecordHistory = options.history !== false;
         return {
           ...tab,
           title: next.title,
           document: next,
           activePageId: next.pages.some((page) => page.id === tab.activePageId) ? tab.activePageId : next.pages[0]?.id ?? 'page-1',
           // 文档级撤销只记录持久化模型，不记录选择框、缩放、滚动等临时 UI 状态。
-          history: { past: [...history.past, cloneDocumentForHistory(tab.document)].slice(-maxHistorySteps), future: [] },
+          history: shouldRecordHistory
+            ? { past: [...history.past, cloneDocumentForHistory(options.historyBase ?? tab.document)].slice(-maxHistorySteps), future: [] }
+            : history,
         };
       });
     },
@@ -311,26 +606,57 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
   );
 
   useEffect(() => {
-    const snapshotMap = yDocRef.current.getMap('snapshot');
-    const observer = (events: Y.YMapEvent<unknown>, transaction: Y.Transaction) => {
-      if (transaction.origin === localOrigin || !events.keysChanged.has('document')) {
+    const snapshotMap = activeYDoc.getMap<CollaborationSnapshotValue>(collaborationSnapshotMapName);
+    const resourceMap = activeYDoc.getMap<CollaborationResourceEntry>(collaborationResourceMapName);
+    const observer = (events: Y.YMapEvent<CollaborationSnapshotValue>, transaction: Y.Transaction) => {
+      if (transaction.origin === localOrigin) {
         return;
       }
-      const nextDocument = snapshotMap.get('document') as NoteDocument | undefined;
-      if (!nextDocument) {
+      const nextSnapshot = pickCollaborationSnapshot(snapshotMap, events.keysChanged);
+      if (!nextSnapshot) {
         return;
+      }
+      cacheResourcesFromYjs(resourceMap, resourceCacheRef.current);
+      skipNextYjsSyncRef.current = transaction.origin === collaborationRemoteOrigin;
+      if (transaction.origin === collaborationRemoteOrigin) {
+        skipYjsSyncUntilRef.current = Date.now() + 150;
       }
       updateActiveTab((tab) => {
         if (tab.mode !== 'edit') {
           return tab;
         }
-        const normalized = normalizeDocument(nextDocument);
+        const normalized = mergeCollaborationDocument(tab.document, nextSnapshot.document, nextSnapshot.scope, resourceCacheRef.current);
+        rememberResources(resourceCacheRef.current, normalized);
         return { ...tab, title: normalized.title, document: normalized };
       });
     };
     snapshotMap.observe(observer);
     return () => snapshotMap.unobserve(observer);
-  }, [updateActiveTab]);
+  }, [activeYDoc, updateActiveTab]);
+
+  useEffect(() => {
+    const resourceMap = activeYDoc.getMap<CollaborationResourceEntry>(collaborationResourceMapName);
+    const observer = (_events: Y.YMapEvent<CollaborationResourceEntry>, transaction: Y.Transaction) => {
+      if (transaction.origin === localOrigin) {
+        return;
+      }
+      cacheResourcesFromYjs(resourceMap, resourceCacheRef.current);
+      skipNextYjsSyncRef.current = transaction.origin === collaborationRemoteOrigin;
+      if (transaction.origin === collaborationRemoteOrigin) {
+        skipYjsSyncUntilRef.current = Date.now() + 150;
+      }
+      updateActiveTab((tab) => {
+        if (tab.mode !== 'edit') {
+          return tab;
+        }
+        const hydrated = normalizeDocument(hydrateResourcesFromCache(tab.document, resourceCacheRef.current));
+        return { ...tab, title: hydrated.title, document: hydrated };
+      });
+    };
+    cacheResourcesFromYjs(resourceMap, resourceCacheRef.current);
+    resourceMap.observe(observer);
+    return () => resourceMap.unobserve(observer);
+  }, [activeYDoc, updateActiveTab]);
 
   const activePage = useMemo(
     () => document.pages.find((page) => page.id === activePageId) ?? document.pages[0],
@@ -405,6 +731,11 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       }
       const index = tabs.findIndex((tab) => tab.id === tabId);
       const nextTabs = tabs.filter((tab) => tab.id !== tabId);
+      const closedYDoc = tabYDocsRef.current.get(tabId);
+      tabYDocsRef.current.delete(tabId);
+      if (tabId !== activeTabId) {
+        closedYDoc?.destroy();
+      }
       setTabs(nextTabs);
       if (activeTabId === tabId) {
         setActiveTabId(nextTabs[Math.max(0, index - 1)]?.id ?? nextTabs[0].id);
@@ -419,6 +750,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
     (nextDocument: NoteDocument) => {
       const normalized = normalizeDocument(nextDocument);
       rememberResources(resourceCacheRef.current, normalized);
+      pendingCollaborationScopeRef.current = { type: 'document' };
       updateActiveTab((tab) => ({
         ...tab,
         mode: 'edit',
@@ -438,14 +770,16 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
     (note: NotePackage, sourcePath?: string) => {
       const normalized = normalizeDocument(note.document, note.assets ?? [], note.stickers ?? [], note.fonts ?? []);
       rememberResources(resourceCacheRef.current, normalized);
+      const tab = createTab(normalized, 'edit', sourcePath);
+      const tabYDoc = new Y.Doc();
       if (note.yjsState) {
         try {
-          Y.applyUpdate(yDocRef.current, base64ToBytes(note.yjsState));
+          Y.applyUpdate(tabYDoc, base64ToBytes(note.yjsState));
         } catch {
           // document.json 是恢复源；Yjs update 损坏时不阻断用户打开文件。
         }
       }
-      const tab = createTab(normalized, 'edit', sourcePath);
+      tabYDocsRef.current.set(tab.id, tabYDoc);
       setTabs((current) => [...current, tab]);
       setActiveTabId(tab.id);
       clearSelection();
@@ -490,7 +824,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
         background: current.pages[0]?.background ?? '#fffaf0',
       };
       return { ...current, pages: [...current.pages, nextPage] };
-    });
+    }, { collaborationScope: { type: 'document' } });
     updateActiveTab((tab) => ({ ...tab, activePageId: id }));
     clearSelection();
     setToolState('select');
@@ -508,7 +842,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
           pages,
           elements: current.elements.filter((element) => element.pageId !== pageId),
         };
-      });
+      }, { collaborationScope: { type: 'document' } });
       if (activePageId === pageId) {
         const nextPageId = document.pages.find((page) => page.id !== pageId)?.id;
         updateActiveTab((tab) => ({ ...tab, activePageId: nextPageId ?? document.pages[0].id }));
@@ -533,7 +867,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
         const [source] = pages.splice(sourceIndex, 1);
         pages.splice(targetIndex, 0, source);
         return { ...current, pages };
-      });
+      }, { collaborationScope: { type: 'document' } });
       clearSelection();
     },
     [clearSelection, updateDocument],
@@ -544,7 +878,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       updateDocument((current) => ({
         ...current,
         pages: current.pages.map((page) => (page.id === pageId ? { ...page, ...patch } : page)),
-      }));
+      }), { collaborationScope: { type: 'page', pageId } });
     },
     [updateDocument],
   );
@@ -574,11 +908,25 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
   );
 
   const updateElement = useCallback(
-    (id: string, patch: Partial<NoteElement>) => {
-      updateDocument((current) => ({
-        ...current,
-        elements: current.elements.map((element) => (element.id === id ? clampElementToPage({ ...element, ...patch }, current.pages) : element)),
-      }));
+    (id: string, patch: Partial<NoteElement>, options: DocumentUpdateOptions = {}) => {
+      updateDocument((current) => {
+        let changed = false;
+        const elements = current.elements.map((element) => {
+          if (element.id !== id) {
+            return element;
+          }
+          const next = clampElementToPage({ ...element, ...patch }, current.pages);
+          if (hasElementChanged(element, next, patch)) {
+            changed = true;
+            return next;
+          }
+          return element;
+        });
+        if (!changed && !options.historyBase) {
+          return current;
+        }
+        return { ...current, elements };
+      }, options);
     },
     [updateDocument],
   );
@@ -623,11 +971,11 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
                 }
               : type === 'sticker' || type === 'image'
                 ? { fit: 'contain' }
-                : type === 'tape'
-                  ? { ...toolStyles.tape }
-                  : type === 'drawing'
-                    ? { ...toolStyles.drawing }
-                    : {},
+              : type === 'tape'
+                ? { ...toolStyles.tape }
+              : type === 'drawing'
+                ? { ...toolStyles.drawing }
+                : {},
           ...patch,
           zIndex: isStroke ? Math.max(Number(patch.zIndex ?? 0), zIndex) : Number(patch.zIndex ?? zIndex),
         };
@@ -668,8 +1016,12 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       const patch = pendingPlacement?.patch ?? {};
-      const width = Number(patch.width ?? (type === 'text' ? toolStyles.text.width : type === 'sticker' ? toolStyles.sticker.width : 220));
-      const height = Number(patch.height ?? (type === 'text' ? toolStyles.text.height : type === 'sticker' ? toolStyles.sticker.height : 160));
+      const width = Number(
+        patch.width ?? (type === 'text' ? toolStyles.text.width : type === 'sticker' ? toolStyles.sticker.width : 220),
+      );
+      const height = Number(
+        patch.height ?? (type === 'text' ? toolStyles.text.height : type === 'sticker' ? toolStyles.sticker.height : 160),
+      );
       if (type === 'sticker' && !(patch.assetId ?? toolStyles.sticker.assetId)) {
         return;
       }
@@ -774,6 +1126,43 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
     [activePageId, updateDocument],
   );
 
+  const reorderElementLayer = useCallback(
+    (sourceElementId: string, targetElementId: string) => {
+      if (sourceElementId === targetElementId) {
+        return;
+      }
+      updateDocument((current) => {
+        const ordered = current.elements
+          .filter((element) => element.pageId === activePageId)
+          .slice()
+          .sort((first, second) => second.zIndex - first.zIndex);
+        const sourceIndex = ordered.findIndex((element) => element.id === sourceElementId);
+        const targetIndex = ordered.findIndex((element) => element.id === targetElementId);
+        if (sourceIndex < 0 || targetIndex < 0) {
+          return current;
+        }
+        const [source] = ordered.splice(sourceIndex, 1);
+        ordered.splice(targetIndex, 0, source);
+        const nextZ = new Map<string, number>();
+        ordered.forEach((element, index) => {
+          // 图层列表是从上到下展示；zIndex 越大越靠上，因此按列表顺序重新分配稳定间隔。
+          nextZ.set(element.id, (ordered.length - index) * 10);
+        });
+        let changed = false;
+        const elements = current.elements.map((element) => {
+          const zIndex = nextZ.get(element.id);
+          if (zIndex === undefined || zIndex === element.zIndex) {
+            return element;
+          }
+          changed = true;
+          return { ...element, zIndex };
+        });
+        return changed ? { ...current, elements } : current;
+      });
+    },
+    [activePageId, updateDocument],
+  );
+
   const undo = useCallback(() => {
     updateActiveTab((tab) => {
       if (tab.mode !== 'edit') {
@@ -784,6 +1173,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       if (!previous) {
         return tab;
       }
+      pendingCollaborationScopeRef.current = { type: 'document' };
       rememberResources(resourceCacheRef.current, tab.document);
       const normalized = normalizeDocument(hydrateResourcesFromCache(previous, resourceCacheRef.current));
       rememberResources(resourceCacheRef.current, normalized);
@@ -811,6 +1201,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       if (!next) {
         return tab;
       }
+      pendingCollaborationScopeRef.current = { type: 'document' };
       rememberResources(resourceCacheRef.current, tab.document);
       const normalized = normalizeDocument(hydrateResourcesFromCache(next, resourceCacheRef.current));
       rememberResources(resourceCacheRef.current, normalized);
@@ -852,7 +1243,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
             element.assetId === oldId && element.type === 'image' ? { ...element, assetId: hydrated.id, style: { ...(element.style ?? {}), fit: 'contain' } } : element,
           ),
         };
-      });
+      }, { collaborationScope: { type: 'document' } });
     },
     [updateDocument],
   );
@@ -868,7 +1259,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
             : page,
         ),
         elements: current.elements.filter((element) => !(element.type === 'image' && element.assetId === id)),
-      }));
+      }), { collaborationScope: { type: 'document' } });
       setSelectedElementId((current) => {
         const selected = document.elements.find((element) => element.id === current);
         return selected?.type === 'image' && selected.assetId === id ? undefined : current;
@@ -902,7 +1293,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
             element.assetId === oldId && element.type === 'sticker' ? { ...element, assetId: hydrated.id, style: { ...(element.style ?? {}), fit: 'contain' } } : element,
           ),
         };
-      });
+      }, { collaborationScope: { type: 'document' } });
     },
     [updateDocument],
   );
@@ -913,7 +1304,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
         ...current,
         stickers: current.stickers.filter((asset) => asset.id !== id),
         elements: current.elements.filter((element) => !(element.type === 'sticker' && element.assetId === id)),
-      }));
+      }), { collaborationScope: { type: 'document' } });
     },
     [updateDocument],
   );
@@ -930,7 +1321,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
   );
 
   const createPackage = useCallback((): NotePackage => {
-    const update = Y.encodeStateAsUpdate(yDocRef.current);
+    const update = Y.encodeStateAsUpdate(activeYDoc);
     const now = new Date().toISOString();
     const normalizedDocument = normalizeDocument({ ...document, updatedAt: now });
     return {
@@ -958,7 +1349,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       fonts: normalizedDocument.fonts,
       thumbnail: '',
     };
-  }, [document]);
+  }, [activeYDoc, document]);
 
   const createNewDocument = useCallback(async () => {
     try {
@@ -987,7 +1378,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       tool: toolState,
       toolStyles,
       pendingPlacement,
-      yDoc: yDocRef.current,
+      yDoc: activeYDoc,
       setZoom,
       setTool,
       updateToolStyle,
@@ -1024,6 +1415,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       duplicateElement,
       renameElement,
       moveElementLayer,
+      reorderElementLayer,
       undo,
       redo,
       canUndo,
@@ -1041,6 +1433,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       activePageId,
       activeTabId,
       activeTabMode,
+      activeYDoc,
       addAsset,
       addElement,
       addFont,
@@ -1070,6 +1463,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       renameElement,
       renamePage,
       renameTab,
+      reorderElementLayer,
       replaceDocument,
       replaceAsset,
       replaceSticker,

@@ -101,7 +101,7 @@ export interface NotePackage {
   thumbnail: string;
 }
 
-export type ToolMode = 'select' | 'pan' | 'text' | 'image' | 'sticker' | 'tape' | 'shape' | 'drawing';
+export type ToolMode = 'select' | 'pan' | 'text' | 'image' | 'sticker' | 'tape' | 'drawing';
 
 export interface ToolStyleState {
   text: {
@@ -145,8 +145,26 @@ export interface SystemFont {
 }
 
 export interface PresenceUser {
+  id: string;
   name: string;
   color: string;
   pageId: string;
-  selectedElementId?: string;
+  cursor?: {
+    pageId: string;
+    x: number;
+    y: number;
+  } | null;
+  selectedElementId?: string | null;
+  editingElementId?: string | null;
+  transport?: 'p2p' | 'relay' | 'offline';
+  lastSeen?: string;
+  role?: 'host' | 'collaborator';
+}
+
+export interface ChatMessage {
+  id: string;
+  text: string;
+  user: PresenceUser;
+  sentAt: string;
+  local?: boolean;
 }

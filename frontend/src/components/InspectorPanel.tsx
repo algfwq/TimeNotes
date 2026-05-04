@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Button, ColorPicker, Empty, Input, Modal, Select, Space, Tabs, Toast, Tooltip, Typography, Upload } from '@douyinfe/semi-ui';
+import { useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
+import { Avatar, Badge, Button, Chat, ColorPicker, Empty, Input, Modal, Notification, Select, Space, Tabs, Tag, Toast, Tooltip, Typography, Upload } from '@douyinfe/semi-ui';
 import {
   IconArrowDown,
   IconArrowUp,
@@ -9,6 +9,7 @@ import {
   IconDelete,
   IconEdit,
   IconFont,
+  IconHandle,
   IconImage,
   IconLayers,
   IconText,
@@ -18,8 +19,9 @@ import { AssetService } from '../../bindings/changeme';
 import { builtinStickers } from '../data/builtinStickers';
 import { createAssetFromDataUrl, createAssetFromFile, createAssetFromUrl, getImagePlacementSize } from '../lib/files';
 import { fontDisplayName, fontFamilyForAsset } from '../lib/fonts';
+import { useCollaboration } from '../providers/CollaborationProvider';
 import { useDocument } from '../providers/DocumentProvider';
-import type { AssetMeta, ElementType, NoteElement, NotePage, SystemFont, ToolMode, ToolStyleState } from '../types';
+import type { AssetMeta, ChatMessage, ElementType, NoteElement, NotePage, PresenceUser, SystemFont, ToolMode, ToolStyleState } from '../types';
 import { ImageCropModal } from './ImageCropModal';
 
 const pageSwatches = ['#fffaf0', '#ffffff', '#f7f0df', '#f2f5ff', '#eef8f1', '#fff1f3', '#202124'];
@@ -29,6 +31,7 @@ const brushSwatches = ['#446f64', '#2f2a24', '#0f4c81', '#8a3f58', '#6b4b9b', '#
 const tapeSwatches = ['#f2cf72', '#f8a7b8', '#a9d8c6', '#9dc3ea', '#d5c2f0', '#f7b267'];
 
 export function InspectorPanel() {
+  const { messages, peers, sendChat } = useCollaboration();
   const {
     document,
     activePage,
@@ -43,6 +46,7 @@ export function InspectorPanel() {
     duplicateElement,
     renameElement,
     moveElementLayer,
+    reorderElementLayer,
     updatePage,
     startEditing,
     addElement,
@@ -57,6 +61,8 @@ export function InspectorPanel() {
   const [renameTarget, setRenameTarget] = useState<{ id: string; title: string } | null>(null);
   const [cropElementId, setCropElementId] = useState<string | null>(null);
   const [activePane, setActivePane] = useState('layers');
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
+  const lastNotifiedMessageIdRef = useRef<string | undefined>();
   const elements = useMemo(
     () =>
       document.elements
@@ -72,6 +78,29 @@ export function InspectorPanel() {
     window.addEventListener('timenotes-open-controls', openControls);
     return () => window.removeEventListener('timenotes-open-controls', openControls);
   }, []);
+
+  useEffect(() => {
+    if (activePane === 'chat') {
+      setUnreadChatCount(0);
+    }
+  }, [activePane]);
+
+  useEffect(() => {
+    const message = messages[messages.length - 1];
+    if (!message || message.local || message.id === lastNotifiedMessageIdRef.current) {
+      return;
+    }
+    lastNotifiedMessageIdRef.current = message.id;
+    if (activePane !== 'chat') {
+      setUnreadChatCount((count) => Math.min(99, count + 1));
+    }
+    Notification.info({
+      title: `${message.user.name || '协作者'} 发来消息`,
+      content: message.text,
+      duration: 4,
+      position: 'topRight',
+    });
+  }, [activePane, messages]);
 
   const importSystemFont = async (font: SystemFont) => {
     try {
@@ -110,6 +139,7 @@ export function InspectorPanel() {
             onSelect={selectElement}
             onRename={(element) => setRenameTarget({ id: element.id, title: layerTitle(element, elementAssets) })}
             onMove={moveElementLayer}
+            onReorder={reorderElementLayer}
             onDuplicate={duplicateElement}
             onDelete={deleteElement}
           />
@@ -136,6 +166,9 @@ export function InspectorPanel() {
             onUseSystemFont={importSystemFont}
           />
         </Tabs.TabPane>
+        <Tabs.TabPane tab={<ChatTabLabel unreadCount={unreadChatCount} />} itemKey="chat" className="min-h-0 flex-1 overflow-hidden">
+          <ChatPanel messages={messages} peers={peers} onSend={sendChat} />
+        </Tabs.TabPane>
       </Tabs>
 
       <Modal
@@ -158,6 +191,83 @@ export function InspectorPanel() {
   );
 }
 
+function ChatTabLabel({ unreadCount }: { unreadCount: number }) {
+  if (unreadCount <= 0) {
+    return <span>聊天</span>;
+  }
+  return (
+    <Badge count={unreadCount} type="danger" overflowCount={99} position="rightTop">
+      <span className="inline-block pr-2">聊天</span>
+    </Badge>
+  );
+}
+
+type SemiChatMessage = NonNullable<ComponentProps<typeof Chat>['chats']>[number];
+type SemiRoleConfig = NonNullable<ComponentProps<typeof Chat>['roleConfig']>;
+
+function ChatPanel({ messages, peers, onSend }: { messages: ChatMessage[]; peers: PresenceUser[]; onSend: (text: string) => void }) {
+  const chats = useMemo<SemiChatMessage[]>(
+    () =>
+      messages.map((message) => ({
+        role: message.local ? 'user' : `peer-${message.user.id}`,
+        id: message.id,
+        content: message.text,
+        createAt: Date.parse(message.sentAt) || Date.now(),
+        status: 'complete',
+      })),
+    [messages],
+  );
+  const roleConfig = useMemo<SemiRoleConfig>(() => {
+    const config: SemiRoleConfig = {
+      user: {
+        name: '我',
+        avatar: (
+          <Avatar size="small" style={{ background: '#2f6fed' }}>
+            我
+          </Avatar>
+        ),
+      },
+    };
+    messages.forEach((message) => {
+      if (message.local) {
+        return;
+      }
+      config[`peer-${message.user.id}`] = {
+        name: message.user.name,
+        avatar: (
+          <Avatar size="small" style={{ background: message.user.color }}>
+            {message.user.name.slice(0, 1)}
+          </Avatar>
+        ),
+      };
+    });
+    return config;
+  }, [messages]);
+
+  return (
+    <div className="flex h-full min-h-0 flex-col px-4 py-4">
+      <Chat
+        className="min-h-0 flex-1"
+        style={{ height: '100%' }}
+        align="leftRight"
+        mode="bubble"
+        chats={chats}
+        roleConfig={roleConfig}
+        enableUpload={false}
+        placeholder="输入消息"
+        topSlot={
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <Typography.Text strong>在线聊天</Typography.Text>
+            <Tag color={peers.length > 0 ? 'green' : 'grey'}>{peers.length} 位协作者</Tag>
+          </div>
+        }
+        onChatsChange={() => undefined}
+        onMessageSend={(content) => onSend(content)}
+      />
+    </div>
+  );
+}
+
 function LayerPanel({
   page,
   assets,
@@ -169,6 +279,7 @@ function LayerPanel({
   onSelect,
   onRename,
   onMove,
+  onReorder,
   onDuplicate,
   onDelete,
 }: {
@@ -182,9 +293,18 @@ function LayerPanel({
   onSelect: (id?: string) => void;
   onRename: (element: NoteElement) => void;
   onMove: (id: string, direction: 'up' | 'down' | 'front' | 'back') => void;
+  onReorder: (sourceId: string, targetId: string) => void;
   onDuplicate: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
+  const [dragElementId, setDragElementId] = useState<string | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+
+  const finishDrag = () => {
+    setDragElementId(null);
+    setDropTargetId(null);
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col px-4 py-4">
       <div className="mb-4 flex items-center justify-between">
@@ -209,11 +329,46 @@ function LayerPanel({
             return (
               <div
                 key={element.id}
+                data-layer-element-id={element.id}
                 role="button"
                 tabIndex={0}
-                className={`flex w-full items-center gap-3 rounded-[8px] border px-2 py-2 text-left transition ${
+                draggable
+                className={`flex w-full cursor-grab items-center gap-3 rounded-[8px] border px-2 py-2 text-left transition active:cursor-grabbing ${
                   selected ? 'border-[#2f6fed] bg-white shadow-sm' : 'border-transparent bg-white/55 hover:bg-white'
+                } ${dragElementId === element.id ? 'opacity-45' : ''} ${
+                  dropTargetId === element.id && dragElementId !== element.id ? 'ring-2 ring-[#2f6fed]/25' : ''
                 }`}
+                onDragStart={(event) => {
+                  if ((event.target as HTMLElement).closest('[data-layer-action]')) {
+                    event.preventDefault();
+                    return;
+                  }
+                  setDragElementId(element.id);
+                  event.dataTransfer.effectAllowed = 'move';
+                  event.dataTransfer.setData('text/timenotes-layer-id', element.id);
+                }}
+                onDragOver={(event) => {
+                  if (!dragElementId || dragElementId === element.id) {
+                    return;
+                  }
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = 'move';
+                  setDropTargetId(element.id);
+                }}
+                onDragLeave={() => {
+                  if (dropTargetId === element.id) {
+                    setDropTargetId(null);
+                  }
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  const sourceId = event.dataTransfer.getData('text/timenotes-layer-id') || dragElementId;
+                  if (sourceId && sourceId !== element.id) {
+                    onReorder(sourceId, element.id);
+                  }
+                  finishDrag();
+                }}
+                onDragEnd={finishDrag}
                 onClick={() => onSelect(element.id)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' || event.key === ' ') {
@@ -221,6 +376,7 @@ function LayerPanel({
                   }
                 }}
               >
+                <IconHandle className="shrink-0 text-black/35" />
                 <LayerPreview element={element} assets={elementAssets} />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium">{layerTitle(element, elementAssets)}</div>
@@ -248,6 +404,7 @@ function LayerIconButton({ label, icon, danger, onClick }: { label: string; icon
   return (
     <Tooltip content={label}>
       <Button
+        data-layer-action
         size="small"
         type={danger ? 'danger' : 'primary'}
         theme="borderless"

@@ -1,8 +1,10 @@
 import { useMemo } from 'react';
 import { IconHandle } from '@douyinfe/semi-icons';
 import { useDocument } from '../../providers/DocumentProvider';
-import type { AssetMeta, NoteElement } from '../../types';
+import type { AssetMeta, NoteDocument, NoteElement } from '../../types';
 import { RichTextElement } from './RichTextElement';
+
+const directDragLiveSyncIntervalMs = 120;
 
 export function ElementRenderer({
   element,
@@ -15,6 +17,7 @@ export function ElementRenderer({
   const selected = selectedElementId === element.id;
   const editing = editingElementId === element.id;
   const isStrokePath = (element.type === 'drawing' || element.type === 'tape') && Boolean(element.points?.length);
+  const drawingToolActive = tool === 'drawing' || tool === 'tape';
   const asset = useMemo(
     () => [...document.assets, ...document.stickers].find((item) => item.id === element.assetId),
     [document.assets, document.stickers, element.assetId],
@@ -26,7 +29,7 @@ export function ElementRenderer({
     height: element.height,
     transform: `rotate(${element.rotation}deg)`,
     zIndex: selected && isStrokePath ? 10000 + element.zIndex : element.zIndex,
-    pointerEvents: isStrokePath ? 'none' : undefined,
+    pointerEvents: isStrokePath || drawingToolActive ? 'none' : undefined,
   };
 
   return (
@@ -46,6 +49,15 @@ export function ElementRenderer({
           return;
         }
         selectElement(element.id);
+        if (!selected && canDirectDragElement(element, tool)) {
+          beginDirectElementDrag(event, {
+            element,
+            page: activePage,
+            zoom,
+            historyBase: document,
+            updateElement,
+          });
+        }
         if (editing && element.type !== 'text') {
           stopEditing();
         }
@@ -68,6 +80,96 @@ export function ElementRenderer({
       {selected && element.type === 'text' ? <TextMoveHandle element={element} page={activePage} zoom={zoom} onMove={updateElement} onBegin={() => stopEditing()} /> : null}
     </div>
   );
+}
+
+function canDirectDragElement(element: NoteElement, tool: string) {
+  if (tool !== 'select') {
+    return false;
+  }
+  return !((element.type === 'drawing' || element.type === 'tape') && Boolean(element.points?.length));
+}
+
+function beginDirectElementDrag(
+  event: React.MouseEvent<HTMLDivElement>,
+  {
+    element,
+    page,
+    zoom,
+    historyBase,
+    updateElement,
+  }: {
+    element: NoteElement;
+    page: { width: number; height: number };
+    zoom: number;
+    historyBase: NoteDocument;
+    updateElement: (id: string, patch: Partial<NoteElement>, options?: { history?: boolean; historyBase?: NoteDocument }) => void;
+  },
+) {
+  event.preventDefault();
+  const target = event.currentTarget;
+  const start = { x: event.clientX, y: event.clientY, elementX: element.x, elementY: element.y };
+  let moved = false;
+  let liveTimer: number | undefined;
+  let lastLiveAt = 0;
+  let pendingPosition: { x: number; y: number } | null = null;
+  let nextPosition = { x: element.x, y: element.y };
+
+  const flushLive = () => {
+    if (!pendingPosition) {
+      return;
+    }
+    const patch = pendingPosition;
+    pendingPosition = null;
+    lastLiveAt = performance.now();
+    updateElement(element.id, patch, { history: false });
+  };
+
+  const move = (moveEvent: MouseEvent) => {
+    const deltaX = moveEvent.clientX - start.x;
+    const deltaY = moveEvent.clientY - start.y;
+    if (!moved && Math.hypot(deltaX, deltaY) < 3) {
+      return;
+    }
+    moved = true;
+    nextPosition = {
+      x: clamp(Math.round(start.elementX + deltaX / zoom), 0, Math.max(0, page.width - element.width)),
+      y: clamp(Math.round(start.elementY + deltaY / zoom), 0, Math.max(0, page.height - element.height)),
+    };
+    target.style.left = `${nextPosition.x}px`;
+    target.style.top = `${nextPosition.y}px`;
+    pendingPosition = nextPosition;
+    const elapsed = performance.now() - lastLiveAt;
+    if (elapsed >= directDragLiveSyncIntervalMs) {
+      if (liveTimer) {
+        window.clearTimeout(liveTimer);
+        liveTimer = undefined;
+      }
+      flushLive();
+      return;
+    }
+    if (!liveTimer) {
+      liveTimer = window.setTimeout(() => {
+        liveTimer = undefined;
+        flushLive();
+      }, directDragLiveSyncIntervalMs - elapsed);
+    }
+  };
+
+  const end = () => {
+    if (liveTimer) {
+      window.clearTimeout(liveTimer);
+      liveTimer = undefined;
+    }
+    pendingPosition = null;
+    window.removeEventListener('mousemove', move);
+    window.removeEventListener('mouseup', end);
+    if (moved && (nextPosition.x !== element.x || nextPosition.y !== element.y)) {
+      updateElement(element.id, nextPosition, { historyBase });
+    }
+  };
+
+  window.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', end);
 }
 
 function TextMoveHandle({

@@ -14,7 +14,7 @@ export default defineConfig({
         manualChunks: {
           canvas: ["konva", "react-konva", "react-moveable"],
           editor: ["@tiptap/react", "@tiptap/starter-kit"],
-          collaboration: ["yjs", "@hocuspocus/provider"],
+          collaboration: ["yjs"],
         },
       },
     },

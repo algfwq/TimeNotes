@@ -20,6 +20,7 @@ interface SnapMatch {
 }
 
 const snapThreshold = 10;
+const liveElementSyncIntervalMs = 120;
 
 export function SelectionController({
   page,
@@ -36,6 +37,10 @@ export function SelectionController({
   const [visibleGuides, setVisibleGuides] = useState<AlignmentGuide[]>([]);
   const moveableRef = useRef<any>(null);
   const pendingPatchRef = useRef<Partial<NoteElement> | null>(null);
+  const pendingLivePatchRef = useRef<Partial<NoteElement> | null>(null);
+  const livePatchTimerRef = useRef<number | undefined>();
+  const lastLivePatchAtRef = useRef(0);
+  const interactionStartDocumentRef = useRef(noteDocument);
   const editing = Boolean(selectedElementId && selectedElementId === editingElementId);
   const keepRatio = selectedElement?.type === 'image' || selectedElement?.type === 'sticker';
   const elementRatio = Number(selectedElement?.style?.aspectRatio ?? 0) || (selectedElement ? selectedElement.width / Math.max(1, selectedElement.height) : 1);
@@ -56,6 +61,72 @@ export function SelectionController({
     const frame = window.requestAnimationFrame(() => moveableRef.current?.updateRect?.());
     return () => window.cancelAnimationFrame(frame);
   }, [selectedElement, target, zoom]);
+
+  useEffect(() => {
+    return () => {
+      if (livePatchTimerRef.current) {
+        window.clearTimeout(livePatchTimerRef.current);
+      }
+    };
+  }, []);
+
+  const beginElementInteraction = () => {
+    if (livePatchTimerRef.current) {
+      window.clearTimeout(livePatchTimerRef.current);
+      livePatchTimerRef.current = undefined;
+    }
+    interactionStartDocumentRef.current = noteDocument;
+    pendingPatchRef.current = null;
+    pendingLivePatchRef.current = null;
+    lastLivePatchAtRef.current = 0;
+    setInteracting(true);
+    setVisibleGuides([]);
+  };
+
+  const flushLivePatch = () => {
+    if (!selectedElement || !pendingLivePatchRef.current) {
+      return;
+    }
+    const patch = pendingLivePatchRef.current;
+    pendingLivePatchRef.current = null;
+    lastLivePatchAtRef.current = performance.now();
+    updateElement(selectedElement.id, patch, { history: false });
+  };
+
+  const queueLivePatch = (patch: Partial<NoteElement>) => {
+    pendingPatchRef.current = patch;
+    pendingLivePatchRef.current = patch;
+    const elapsed = performance.now() - lastLivePatchAtRef.current;
+    if (elapsed >= liveElementSyncIntervalMs) {
+      if (livePatchTimerRef.current) {
+        window.clearTimeout(livePatchTimerRef.current);
+        livePatchTimerRef.current = undefined;
+      }
+      flushLivePatch();
+      return;
+    }
+    if (!livePatchTimerRef.current) {
+      livePatchTimerRef.current = window.setTimeout(() => {
+        livePatchTimerRef.current = undefined;
+        flushLivePatch();
+      }, liveElementSyncIntervalMs - elapsed);
+    }
+  };
+
+  const finishElementInteraction = () => {
+    setInteracting(false);
+    setVisibleGuides([]);
+    if (livePatchTimerRef.current) {
+      window.clearTimeout(livePatchTimerRef.current);
+      livePatchTimerRef.current = undefined;
+    }
+    const finalPatch = pendingPatchRef.current;
+    pendingPatchRef.current = null;
+    pendingLivePatchRef.current = null;
+    if (selectedElement && finalPatch) {
+      updateElement(selectedElement.id, finalPatch, { historyBase: interactionStartDocumentRef.current });
+    }
+  };
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -114,22 +185,16 @@ export function SelectionController({
         elementGuidelines={elementGuidelines}
         snapDirections={{ left: true, right: true, top: true, bottom: true, center: true, middle: true }}
         elementSnapDirections={{ left: true, right: true, top: true, bottom: true, center: true, middle: true }}
-        onDragStart={() => {
-          setInteracting(true);
-          setVisibleGuides([]);
-        }}
+        onDragStart={beginElementInteraction}
         onDrag={({ target: dragTarget, left, top }: any) => {
           const clamped = clampBox({ x: left, y: top, width: selectedElement.width, height: selectedElement.height }, page);
           const snapped = snapBox(clamped, snapReferences, page);
           dragTarget.style.left = `${snapped.box.x}px`;
           dragTarget.style.top = `${snapped.box.y}px`;
           setVisibleGuides(snapped.guides);
-          pendingPatchRef.current = { x: snapped.box.x, y: snapped.box.y };
+          queueLivePatch({ x: snapped.box.x, y: snapped.box.y });
         }}
-        onResizeStart={() => {
-          setInteracting(true);
-          setVisibleGuides([]);
-        }}
+        onResizeStart={beginElementInteraction}
         onResize={({ target: resizeTarget, width, height, drag }: any) => {
           const clamped = clampBox({ x: drag.left, y: drag.top, width, height }, page, keepRatio ? elementRatio : undefined);
           const snapped = snapBox(clamped, snapReferences, page);
@@ -138,45 +203,21 @@ export function SelectionController({
           resizeTarget.style.left = `${snapped.box.x}px`;
           resizeTarget.style.top = `${snapped.box.y}px`;
           setVisibleGuides(snapped.guides);
-          pendingPatchRef.current = {
+          queueLivePatch({
             width: snapped.box.width,
             height: snapped.box.height,
             x: snapped.box.x,
             y: snapped.box.y,
-          };
+          });
         }}
-        onRotateStart={() => {
-          setInteracting(true);
-          setVisibleGuides([]);
-        }}
+        onRotateStart={beginElementInteraction}
         onRotate={({ target: rotateTarget, rotate }: any) => {
           rotateTarget.style.transform = `rotate(${rotate}deg)`;
-          pendingPatchRef.current = { rotation: Math.round(rotate) };
+          queueLivePatch({ rotation: Math.round(rotate) });
         }}
-        onDragEnd={() => {
-          setInteracting(false);
-          setVisibleGuides([]);
-          if (pendingPatchRef.current) {
-            updateElement(selectedElement.id, pendingPatchRef.current);
-            pendingPatchRef.current = null;
-          }
-        }}
-        onResizeEnd={() => {
-          setInteracting(false);
-          setVisibleGuides([]);
-          if (pendingPatchRef.current) {
-            updateElement(selectedElement.id, pendingPatchRef.current);
-            pendingPatchRef.current = null;
-          }
-        }}
-        onRotateEnd={() => {
-          setInteracting(false);
-          setVisibleGuides([]);
-          if (pendingPatchRef.current) {
-            updateElement(selectedElement.id, pendingPatchRef.current);
-            pendingPatchRef.current = null;
-          }
-        }}
+        onDragEnd={finishElementInteraction}
+        onResizeEnd={finishElementInteraction}
+        onRotateEnd={finishElementInteraction}
       />
     </>
   );

@@ -3,7 +3,8 @@ import { Stage, Layer, Line } from 'react-konva';
 import type Konva from 'konva';
 import { IconArrowDown, IconArrowUp, IconCopy, IconCrop, IconDelete, IconEdit, IconImage } from '@douyinfe/semi-icons';
 import { useDocument } from '../providers/DocumentProvider';
-import type { NoteElement, NotePage } from '../types';
+import { useCollaboration } from '../providers/CollaborationProvider';
+import type { NoteElement, NotePage, PresenceUser } from '../types';
 import { createAssetFromDataUrl } from '../lib/files';
 import { ImageCropModal } from './ImageCropModal';
 import { PageBackground } from './PageBackground';
@@ -18,9 +19,12 @@ interface ContextMenuState {
 
 export function CanvasStage() {
   const { document, activePage, zoom, setZoom, tool, toolStyles, addElement, selectElement, stopEditing, placePendingElement } = useDocument();
+  const { peers, updateCursor } = useCollaboration();
   const paperRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const panStartRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  const lastCursorAtRef = useRef(0);
+  const cursorInsidePageRef = useRef(false);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [cropElementId, setCropElementId] = useState<string | null>(null);
@@ -106,6 +110,7 @@ export function CanvasStage() {
   };
 
   const movePan = (event: React.MouseEvent) => {
+    publishCursor(event);
     if (!panStartRef.current) {
       return;
     }
@@ -113,6 +118,33 @@ export function CanvasStage() {
     const nextY = panStartRef.current.panY + event.clientY - panStartRef.current.y;
     setPan({ x: nextX, y: nextY });
   };
+
+  const publishCursor = (event: React.MouseEvent) => {
+    const now = performance.now();
+    const point = getDomPagePoint(event, paperRef.current, zoom);
+    if (!point || point.x < 0 || point.y < 0 || point.x > activePage.width || point.y > activePage.height) {
+      if (cursorInsidePageRef.current) {
+        cursorInsidePageRef.current = false;
+        lastCursorAtRef.current = now;
+        updateCursor(undefined);
+      }
+      return;
+    }
+    if (now - lastCursorAtRef.current < 80) {
+      return;
+    }
+    lastCursorAtRef.current = now;
+    cursorInsidePageRef.current = true;
+    updateCursor({ pageId: activePage.id, x: point.x, y: point.y });
+  };
+
+  const hideRemoteCursor = useCallback(() => {
+    if (!cursorInsidePageRef.current) {
+      return;
+    }
+    cursorInsidePageRef.current = false;
+    updateCursor(undefined);
+  }, [updateCursor]);
 
   const endPan = () => {
     panStartRef.current = null;
@@ -167,6 +199,10 @@ export function CanvasStage() {
     };
   }, []);
 
+  useEffect(() => {
+    hideRemoteCursor();
+  }, [activePage.id, hideRemoteCursor]);
+
   return (
     <div
       ref={viewportRef}
@@ -182,7 +218,10 @@ export function CanvasStage() {
       }}
       onMouseMove={movePan}
       onMouseUp={endPan}
-      onMouseLeave={endPan}
+      onMouseLeave={() => {
+        endPan();
+        hideRemoteCursor();
+      }}
       onWheel={handleWheel}
     >
       <div
@@ -203,6 +242,7 @@ export function CanvasStage() {
               transform: `scale(${zoom})`,
               background: activePage.background,
             }}
+            onMouseLeave={hideRemoteCursor}
           >
             {/* 背景图在所有元素下方，纸张纹理保持为轻量叠加层。 */}
             <PageBackground page={activePage} assets={document.assets} />
@@ -217,6 +257,7 @@ export function CanvasStage() {
               onMouseUp={endDrawing}
             />
             <PageRenderer page={activePage} elements={elements} onElementContextMenu={openElementContextMenu} />
+            <RemoteCollaborationOverlay page={activePage} elements={elements} peers={peers} />
           </div>
           <SelectionController page={activePage} paperRef={paperRef} />
         </div>
@@ -246,9 +287,85 @@ function getDomPagePoint(event: React.MouseEvent, paper: HTMLDivElement | null, 
     return null;
   }
   return {
-    x: Math.max(0, Math.round((event.clientX - rect.left) / zoom)),
-    y: Math.max(0, Math.round((event.clientY - rect.top) / zoom)),
+    x: Math.round((event.clientX - rect.left) / zoom),
+    y: Math.round((event.clientY - rect.top) / zoom),
   };
+}
+
+function RemoteCollaborationOverlay({ page, elements, peers }: { page: NotePage; elements: NoteElement[]; peers: PresenceUser[] }) {
+  const activePeers = peers.filter((peer) => peer.pageId === page.id || peer.cursor?.pageId === page.id);
+  if (activePeers.length === 0) {
+    return null;
+  }
+  return (
+    <div className="pointer-events-none absolute inset-0 z-[100000]" style={{ width: page.width, height: page.height }}>
+      {activePeers.map((peer) => {
+        const selected = peer.selectedElementId ? elements.find((element) => element.id === peer.selectedElementId) : undefined;
+        return (
+          <div key={peer.id}>
+            {selected && selected.type !== 'drawing' && selected.type !== 'tape' ? (
+              <div
+                data-remote-selection-id={peer.id}
+                className="absolute rounded-[6px] transition-[left,top,width,height,transform] duration-150"
+                style={{
+                  left: selected.x,
+                  top: selected.y,
+                  width: selected.width,
+                  height: selected.height,
+                  transform: `rotate(${selected.rotation}deg)`,
+                  border: `2px dashed ${peer.color}`,
+                  background: `${peer.color}12`,
+                  boxShadow: `0 0 0 2px ${peer.color}22, 0 10px 24px rgba(0,0,0,.08)`,
+                }}
+              >
+                {peer.editingElementId === selected.id ? (
+                  <div className="absolute -right-2 -top-7 rounded-full px-2 py-1 text-[11px] font-medium text-white shadow" style={{ background: peer.color }}>
+                    编辑中
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {peer.cursor?.pageId === page.id ? (
+              <div
+                data-remote-cursor-id={peer.id}
+                className="absolute transition-transform duration-100 ease-linear"
+                style={{ transform: `translate3d(${peer.cursor.x}px, ${peer.cursor.y}px, 0)`, color: peer.color }}
+              >
+                <div
+                  className="relative h-6 w-5"
+                  style={{
+                    filter: 'drop-shadow(0 1px 2px rgba(0,0,0,.25))',
+                  }}
+                >
+                  <div
+                    className="absolute left-0 top-0 h-6 w-5"
+                    style={{
+                      background: 'currentColor',
+                      clipPath: 'polygon(0 0, 0 21px, 6px 15px, 10px 24px, 15px 22px, 11px 13px, 20px 13px)',
+                    }}
+                  />
+                  <div
+                    className="absolute left-[3px] top-[3px] h-[14px] w-[12px]"
+                    style={{
+                      background: 'rgba(255,255,255,.92)',
+                      clipPath: 'polygon(0 0, 0 13px, 4px 9px, 7px 15px, 9px 14px, 6px 8px, 12px 8px)',
+                    }}
+                  />
+                </div>
+                <div
+                  className="mt-1 max-w-36 translate-x-2 truncate rounded-full border border-white/70 px-2.5 py-1 text-[11px] font-medium text-white shadow-lg"
+                  style={{ background: peer.color }}
+                >
+                  {peer.name}
+                  {peer.editingElementId ? <span className="ml-1 opacity-80">编辑中</span> : null}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function DrawingLayer({
@@ -270,7 +387,7 @@ function DrawingLayer({
 }) {
   return (
     <Stage
-      className={`absolute inset-0 ${drawingEnabled ? 'z-[60]' : 'z-[2]'}`}
+      className={`absolute inset-0 ${drawingEnabled ? 'z-[100500]' : 'z-[2]'}`}
       width={page.width}
       height={page.height}
       style={{ pointerEvents: drawingEnabled ? 'auto' : 'none' }}

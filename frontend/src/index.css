@@ -55,6 +55,11 @@ textarea {
   outline: none;
 }
 
+.timenotes-rich-text .ProseMirror,
+.timenotes-rich-text .ProseMirror * {
+  font-family: var(--timenotes-text-font-family, inherit) !important;
+}
+
 .ProseMirror h1 {
   margin: 0 0 8px;
   font-size: 1.25em;
