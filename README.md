@@ -1,12 +1,27 @@
-# TimeNotes
-
 <p align="center">
-  <img src="./frontend/src/assets/timenotes-logo.png" alt="TimeNotes Logo" width="120" />
+  <img src="./frontend/src/assets/timenotes-logo.png" alt="TimeNotes Logo" width="128" />
 </p>
 
-TimeNotes 是一款基于 Wails3 的桌面手账式笔记软件。它把每一页笔记当作纸张画布，文本、图片、贴纸、胶带笔迹、画笔笔迹等内容都作为独立元素放置在画布上，支持拖拽、缩放、旋转、图层管理、多页编辑、阅读预览和 `.tnote` 单文件保存。
+<h1 align="center">TimeNotes</h1>
 
-![TimeNotes 软件截图](./image.png)
+<p align="center">
+  本地优先的桌面手账式笔记软件，把每一页笔记当作可自由排版的纸张画布。
+</p>
+
+<p align="center">
+  <img alt="Wails3" src="https://img.shields.io/badge/Wails3-Desktop-5B8DEF?style=flat-square" />
+  <img alt="React" src="https://img.shields.io/badge/React-TypeScript-149ECA?style=flat-square" />
+  <img alt="Semi Design" src="https://img.shields.io/badge/Semi%20Design-UI-00B578?style=flat-square" />
+  <img alt="Local First" src="https://img.shields.io/badge/Local--First-.tnote-7B61FF?style=flat-square" />
+</p>
+
+<p align="center">
+  文本、图片、贴纸、胶带笔迹和画笔笔迹都作为独立元素放置在画布上，支持拖拽、缩放、旋转、图层管理、多页编辑、阅读预览、`.tnote` 单文件保存和多人实时协作。
+</p>
+
+<p align="center">
+  <img src="./image.png" alt="TimeNotes 软件截图" />
+</p>
 
 ## 当前能力
 
