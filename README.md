@@ -1,5 +1,9 @@
 # TimeNotes
 
+<p align="center">
+  <img src="./frontend/src/assets/timenotes-logo.png" alt="TimeNotes Logo" width="120" />
+</p>
+
 TimeNotes 是一款基于 Wails3 的桌面手账式笔记软件。它把每一页笔记当作纸张画布，文本、图片、贴纸、胶带笔迹、画笔笔迹等内容都作为独立元素放置在画布上，支持拖拽、缩放、旋转、图层管理、多页编辑、阅读预览和 `.tnote` 单文件保存。
 
 ![TimeNotes 软件截图](./image.png)
