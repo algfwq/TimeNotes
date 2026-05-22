@@ -331,6 +331,7 @@ function syncResourcesToYjs(resourceMap: Y.Map<CollaborationResourceEntry>, sign
 }
 
 function cacheResourcesFromYjs(resourceMap: Y.Map<CollaborationResourceEntry>, cache: Map<string, AssetMeta>) {
+  // resources map 是协作中的二进制素材池；缓存到内存后，document 快照只需要引用 assetId。
   resourceMap.forEach((entry) => {
     if (entry?.asset?.id) {
       cache.set(entry.asset.id, hydrateAsset(entry.asset));
@@ -339,10 +340,12 @@ function cacheResourcesFromYjs(resourceMap: Y.Map<CollaborationResourceEntry>, c
 }
 
 function collaborationDocumentKey(yDoc: Y.Doc) {
+  // 每个 Y.Doc 客户端写自己的 document 槽位，避免多人同时更新同一个 key 时被覆盖。
   return `${collaborationDocumentKeyPrefix}${yDoc.clientID}`;
 }
 
 function unwrapCollaborationSnapshot(value: CollaborationSnapshotValue | undefined) {
+  // 兼容旧的裸 NoteDocument 快照和新的带 scope 包装快照，保证历史房间仍能打开。
   if (!value || typeof value !== 'object') {
     return undefined;
   }
@@ -360,6 +363,7 @@ function unwrapCollaborationSnapshot(value: CollaborationSnapshotValue | undefin
 }
 
 function pickCollaborationSnapshot(snapshotMap: Y.Map<CollaborationSnapshotValue>, changedKeys?: Iterable<string>) {
+  // 多客户端槽位同时存在时，选择更新时间最新的一份作为当前可见文档基线。
   const keys = Array.from(changedKeys ?? snapshotMap.keys()).filter((key) => key === 'document' || key.startsWith(collaborationDocumentKeyPrefix));
   let best: { document: NoteDocument; activePageId?: string; scope?: CollaborationSnapshotScope } | undefined;
   let bestTime = -Infinity;
@@ -382,6 +386,7 @@ function pageIdentitySignature(document: NoteDocument) {
 }
 
 function mergeAssetList(current: AssetMeta[], incoming: AssetMeta[]) {
+  // 素材合并优先保留已有二进制字段，避免对端只发轻量 metadata 时把本机缓存清空。
   const byId = new Map(current.map((asset) => [asset.id, asset]));
   incoming.forEach((asset) => {
     const existing = byId.get(asset.id);
@@ -399,6 +404,7 @@ function mergeAssetList(current: AssetMeta[], incoming: AssetMeta[]) {
 }
 
 function mergeCollaborationDocument(current: NoteDocument, incoming: NoteDocument, scope: CollaborationSnapshotScope | undefined, cache: Map<string, AssetMeta>) {
+  // 页面级协同只替换当前页和该页元素；如果页面结构变化或 scope 缺失，退回整文档替换。
   const normalizedIncoming = normalizeDocument(hydrateResourcesFromCache(incoming, cache));
   if (!scope || scope.type === 'document') {
     return normalizedIncoming;
@@ -430,6 +436,7 @@ function clampNumber(value: number, min: number, max: number) {
 }
 
 function clampElementToPage(element: NoteElement, pages: NotePage[]): NoteElement {
+  // 普通元素持久化页面坐标并限制在纸张内；自由绘制和胶带使用 points，不按矩形裁剪。
   const page = pages.find((item) => item.id === element.pageId);
   if (!page || ((element.type === 'drawing' || element.type === 'tape') && element.points?.length)) {
     return element;
@@ -446,6 +453,7 @@ function clampElementToPage(element: NoteElement, pages: NotePage[]): NoteElemen
 }
 
 function hasElementChanged(previous: NoteElement, next: NoteElement, patch: Partial<NoteElement>) {
+  // 拖拽过程中 Moveable 会频繁给出相同值，先做浅比较能减少无意义历史和 Yjs update。
   return Object.keys(patch).some((key) => {
     const field = key as keyof NoteElement;
     return !shallowEqualValue(previous[field], next[field]);
@@ -470,14 +478,18 @@ function shallowEqualValue(first: unknown, second: unknown) {
 }
 
 export function DocumentProvider({ children }: { children: React.ReactNode }) {
+  // 每个工作区标签页拥有独立 Y.Doc，避免多个打开文档之间互相同步。
   const tabYDocsRef = useRef(new Map<string, Y.Doc>());
+  // 资源缓存保存图片、贴纸、字体的二进制内容；协作 document 快照只保留轻量引用。
   const resourceCacheRef = useRef(new Map<string, AssetMeta>());
   const resourceSyncSignaturesRef = useRef(new WeakMap<Y.Doc, Map<string, string>>());
+  // 下一次同步到 Yjs 时的作用域。页面内编辑尽量只广播 page scope，页面结构变化才升级为 document scope。
   const pendingCollaborationScopeRef = useRef<CollaborationSnapshotScope | undefined>();
   const activePageIdRef = useRef('');
   const skipNextYjsSyncRef = useRef(false);
   const skipYjsSyncUntilRef = useRef(0);
   const ensureTabYDoc = useCallback((tabId: string) => {
+    // Y.Doc 不能随着 React render 反复创建；标签页首次出现时创建并缓存在 ref。
     let yDoc = tabYDocsRef.current.get(tabId);
     if (!yDoc) {
       yDoc = new Y.Doc();
@@ -486,6 +498,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
     return yDoc;
   }, []);
   const resourceSignaturesFor = useCallback((targetYDoc: Y.Doc) => {
+    // 每个 Y.Doc 单独记录资源签名，避免跨标签误判“资源已经同步过”。
     let signatures = resourceSyncSignaturesRef.current.get(targetYDoc);
     if (!signatures) {
       signatures = new Map<string, string>();
@@ -517,6 +530,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
   }, [activePageId]);
 
   useEffect(() => {
+    // 当前文档变化时持续记住资源二进制，后续保存、协作合并或撤销都可以回填素材内容。
     rememberResources(resourceCacheRef.current, document);
   }, [document]);
 
@@ -543,6 +557,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
     if (activeTabMode !== 'edit') {
       return;
     }
+    // 远端 Yjs update 刚落到 React 状态时，跳过一次本地回写，避免形成“收到后立即再广播”的回声。
     if (skipNextYjsSyncRef.current || Date.now() < skipYjsSyncUntilRef.current) {
       skipNextYjsSyncRef.current = false;
       return;
@@ -568,6 +583,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
 
   const updateDocument = useCallback(
     (updater: (current: NoteDocument) => NoteDocument, options: DocumentUpdateOptions = {}) => {
+      // 所有持久化文档变更都从这里进入：统一规范化、资源缓存、撤销栈和协作 scope。
       updateActiveTab((tab) => {
         if (tab.mode !== 'edit') {
           return tab;
@@ -579,6 +595,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
         }
         const next = normalizeDocument({ ...updated, updatedAt: new Date().toISOString() });
         if (options.collaborationScope) {
+          // 如果短时间内多个页面都发生变化，升级为 document scope，避免远端只替换其中一页造成结构不一致。
           const previousScope = pendingCollaborationScopeRef.current;
           pendingCollaborationScopeRef.current =
             options.collaborationScope.type === 'document' ||
@@ -606,6 +623,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
   );
 
   useEffect(() => {
+    // 监听协作快照 map：远端写入 snapshot 后合并进当前 React 文档状态。
     const snapshotMap = activeYDoc.getMap<CollaborationSnapshotValue>(collaborationSnapshotMapName);
     const resourceMap = activeYDoc.getMap<CollaborationResourceEntry>(collaborationResourceMapName);
     const observer = (events: Y.YMapEvent<CollaborationSnapshotValue>, transaction: Y.Transaction) => {
@@ -616,6 +634,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       if (!nextSnapshot) {
         return;
       }
+      // 先缓存资源，再合并 document；否则元素引用到的新 assetId 可能还找不到二进制数据。
       cacheResourcesFromYjs(resourceMap, resourceCacheRef.current);
       skipNextYjsSyncRef.current = transaction.origin === collaborationRemoteOrigin;
       if (transaction.origin === collaborationRemoteOrigin) {
@@ -635,6 +654,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
   }, [activeYDoc, updateActiveTab]);
 
   useEffect(() => {
+    // resources map 可能比 document 快照先到，也可能后到；单独监听可以补齐延迟到达的素材。
     const resourceMap = activeYDoc.getMap<CollaborationResourceEntry>(collaborationResourceMapName);
     const observer = (_events: Y.YMapEvent<CollaborationResourceEntry>, transaction: Y.Transaction) => {
       if (transaction.origin === localOrigin) {
@@ -768,6 +788,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
 
   const loadPackage = useCallback(
     (note: NotePackage, sourcePath?: string) => {
+      // 打开 .tnote 时优先以 document.json + 包内资源作为恢复源，Yjs state 只是协作增量的附加状态。
       const normalized = normalizeDocument(note.document, note.assets ?? [], note.stickers ?? [], note.fonts ?? []);
       rememberResources(resourceCacheRef.current, normalized);
       const tab = createTab(normalized, 'edit', sourcePath);
@@ -813,6 +834,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
   );
 
   const addPage = useCallback(() => {
+    // 页面增删重排属于文档结构变更，必须用 document scope 同步给所有协作者。
     const id = createId('page');
     updateDocument((current) => {
       const index = current.pages.length + 1;
@@ -909,6 +931,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
 
   const updateElement = useCallback(
     (id: string, patch: Partial<NoteElement>, options: DocumentUpdateOptions = {}) => {
+      // 元素更新先 clamp 到页面内，再判断是否真的变更，减少拖动时的无效历史记录。
       updateDocument((current) => {
         let changed = false;
         const elements = current.elements.map((element) => {
@@ -1095,6 +1118,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
 
   const moveElementLayer = useCallback(
     (id: string, direction: 'up' | 'down' | 'front' | 'back') => {
+      // 图层操作只在当前页元素之间调整 zIndex，不影响其他页面的元素排序。
       updateDocument((current) => {
         const pageElements = current.elements
           .filter((element) => element.pageId === activePageId)
@@ -1164,6 +1188,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
   );
 
   const undo = useCallback(() => {
+    // 撤销/重做恢复的是持久化文档快照；选择状态、工具状态和缩放不进入历史。
     updateActiveTab((tab) => {
       if (tab.mode !== 'edit') {
         return tab;

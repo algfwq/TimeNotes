@@ -17,12 +17,15 @@ interface ContextMenuState {
   elementId: string;
 }
 
+// CanvasStage 负责纸张视口、缩放平移、自由绘制和右键菜单。
+// DOM 层渲染文本/图片/贴纸等可编辑元素，Konva 只负责画笔、胶带和绘制中的草稿。
 export function CanvasStage() {
   const { document, activePage, zoom, setZoom, tool, toolStyles, addElement, selectElement, stopEditing, placePendingElement } = useDocument();
   const { peers, updateCursor } = useCollaboration();
   const paperRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const panStartRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  // 远端光标是 presence 状态，不进入文档；这里节流后交给 CollaborationProvider 广播。
   const lastCursorAtRef = useRef(0);
   const cursorInsidePageRef = useRef(false);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -33,10 +36,12 @@ export function CanvasStage() {
     [activePage.id, document.elements],
   );
   const [draft, setDraft] = useState<{ type: 'drawing' | 'tape'; points: number[] } | null>(null);
+  // draftRef 解决 Konva mouseup 和 React state 更新异步之间的竞态，确保结束绘制时拿到最新 points。
   const draftRef = useRef<{ type: 'drawing' | 'tape'; points: number[] } | null>(null);
   const isDrawingRef = useRef(false);
 
   const beginDrawing = (event: Konva.KonvaEventObject<MouseEvent>) => {
+    // 只有画笔和胶带工具会让 Konva 接管鼠标事件，其他元素仍由 DOM/Moveable 处理。
     if (tool !== 'drawing' && tool !== 'tape') {
       return;
     }
@@ -84,6 +89,7 @@ export function CanvasStage() {
     }
     isDrawingRef.current = false;
     if (currentDraft.points.length > 3) {
+      // 完成的笔迹保存为普通 NoteElement，坐标仍是页面坐标，便于导出和协作同步。
       const style = currentDraft.type === 'tape' ? { ...toolStyles.tape } : { ...toolStyles.drawing };
       addElement(currentDraft.type, {
         x: 0,
@@ -100,6 +106,7 @@ export function CanvasStage() {
   };
 
   const startPan = (event: React.MouseEvent) => {
+    // 平移是纯视口状态，不写入文档；鼠标中键始终可临时拖拽画布。
     if (tool !== 'pan' && event.button !== 1) {
       return;
     }
@@ -120,6 +127,7 @@ export function CanvasStage() {
   };
 
   const publishCursor = (event: React.MouseEvent) => {
+    // 坐标发布前从屏幕坐标还原为页面坐标，远端不同缩放比例也能显示在同一纸张位置。
     const now = performance.now();
     const point = getDomPagePoint(event, paperRef.current, zoom);
     if (!point || point.x < 0 || point.y < 0 || point.x > activePage.width || point.y > activePage.height) {
@@ -168,6 +176,7 @@ export function CanvasStage() {
   }, []);
 
   const handlePaperMouseDown = (event: React.MouseEvent) => {
+    // 点击已有元素时交给元素本身或 SelectionController，空白纸张才处理放置/取消选择。
     const target = event.target as HTMLElement;
     if (target.closest('[data-element-id]')) {
       return;
@@ -247,6 +256,7 @@ export function CanvasStage() {
             {/* 背景图在所有元素下方，纸张纹理保持为轻量叠加层。 */}
             <PageBackground page={activePage} assets={document.assets} />
             <PaperTexture page={activePage} hasImage={Boolean(activePage.backgroundAssetId)} />
+            {/* Konva 层覆盖整张纸，但只有绘制工具激活时才接收鼠标事件。 */}
             <DrawingLayer
               page={activePage}
               draft={draft}
@@ -257,6 +267,7 @@ export function CanvasStage() {
               onMouseUp={endDrawing}
             />
             <PageRenderer page={activePage} elements={elements} onElementContextMenu={openElementContextMenu} />
+            {/* 远端选择框和光标始终在最上层展示，但 pointer-events 关闭，不影响本地编辑。 */}
             <RemoteCollaborationOverlay page={activePage} elements={elements} peers={peers} />
           </div>
           <SelectionController page={activePage} paperRef={paperRef} />
@@ -292,6 +303,7 @@ function getDomPagePoint(event: React.MouseEvent, paper: HTMLDivElement | null, 
   };
 }
 
+// RemoteCollaborationOverlay 只渲染 presence，不修改本地文档；它依赖 peer.pageId/cursor.pageId 过滤当前页。
 function RemoteCollaborationOverlay({ page, elements, peers }: { page: NotePage; elements: NoteElement[]; peers: PresenceUser[] }) {
   const activePeers = peers.filter((peer) => peer.pageId === page.id || peer.cursor?.pageId === page.id);
   if (activePeers.length === 0) {
@@ -385,6 +397,7 @@ function DrawingLayer({
   onMouseMove: (event: Konva.KonvaEventObject<MouseEvent>) => void;
   onMouseUp: () => void;
 }) {
+  // Stage 的尺寸使用未缩放页面尺寸，外层 DOM scale 统一处理视觉缩放。
   return (
     <Stage
       className={`absolute inset-0 ${drawingEnabled ? 'z-[100500]' : 'z-[2]'}`}
@@ -404,6 +417,7 @@ function DrawingLayer({
 }
 
 function StrokeLine({ element, selected }: { element: NoteElement; selected: boolean }) {
+  // 胶带复用 Line，但会叠加虚线、条纹或圆点装饰；画笔保持单条线。
   const points = element.points ?? [];
   const stroke = String(element.style?.stroke ?? (element.type === 'tape' ? '#f2cf72' : '#446f64'));
   const strokeWidth = Number(element.style?.strokeWidth ?? (element.type === 'tape' ? 22 : 6));
@@ -441,6 +455,7 @@ function StrokeLine({ element, selected }: { element: NoteElement; selected: boo
 }
 
 function draftElement(page: NotePage, draft: { type: 'drawing' | 'tape'; points: number[] }, style: Record<string, string | number | boolean>): NoteElement {
+  // 草稿元素只用于渲染，不写入 document；结束绘制后 addElement 才会生成真实 id。
   return {
     id: 'draft',
     pageId: page.id,
@@ -457,6 +472,7 @@ function draftElement(page: NotePage, draft: { type: 'drawing' | 'tape'; points:
 }
 
 function CanvasContextMenu({ state, onClose, onCrop }: { state: ContextMenuState | null; onClose: () => void; onCrop: (id: string) => void }) {
+  // 右键菜单直接操作当前元素模型；裁剪需要弹窗，先把目标 id 交给外层状态。
   const { document, updateElement, deleteElement, duplicateElement, moveElementLayer, startEditing } = useDocument();
   const element = state ? document.elements.find((item) => item.id === state.elementId) : undefined;
   if (!state || !element) {

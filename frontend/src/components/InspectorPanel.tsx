@@ -30,6 +30,8 @@ const textSwatches = ['#2f2a24', '#0f4c81', '#3d6b59', '#8a3f58', '#6b4b9b', '#f
 const brushSwatches = ['#446f64', '#2f2a24', '#0f4c81', '#8a3f58', '#6b4b9b', '#f2cf72'];
 const tapeSwatches = ['#f2cf72', '#f8a7b8', '#a9d8c6', '#9dc3ea', '#d5c2f0', '#f7b267'];
 
+// InspectorPanel 是右侧工作区：图层、控制和聊天三个面板共享当前文档和协作状态。
+// 这里不直接维护文档副本，所有持久变更都回到 DocumentProvider。
 export function InspectorPanel() {
   const { messages, peers, sendChat } = useCollaboration();
   const {
@@ -64,6 +66,7 @@ export function InspectorPanel() {
   const [unreadChatCount, setUnreadChatCount] = useState(0);
   const lastNotifiedMessageIdRef = useRef<string | undefined>();
   const elements = useMemo(
+    // 图层列表从上到下展示，所以按 zIndex 倒序排列。
     () =>
       document.elements
         .filter((element) => element.pageId === activePageId)
@@ -74,18 +77,21 @@ export function InspectorPanel() {
   const elementAssets = useMemo(() => [...document.assets, ...document.stickers], [document.assets, document.stickers]);
 
   useEffect(() => {
+    // 画布或其他组件可以派发事件打开“控制”页，避免跨组件传很多 UI 状态。
     const openControls = () => setActivePane('controls');
     window.addEventListener('timenotes-open-controls', openControls);
     return () => window.removeEventListener('timenotes-open-controls', openControls);
   }, []);
 
   useEffect(() => {
+    // 聊天 tab 可见时清零未读数；不重置消息本身。
     if (activePane === 'chat') {
       setUnreadChatCount(0);
     }
   }, [activePane]);
 
   useEffect(() => {
+    // 非本机消息到达且当前不在聊天页时，增加未读计数并弹出轻量通知。
     const message = messages[messages.length - 1];
     if (!message || message.local || message.id === lastNotifiedMessageIdRef.current) {
       return;
@@ -103,6 +109,7 @@ export function InspectorPanel() {
   }, [activePane, messages]);
 
   const importSystemFont = async (font: SystemFont) => {
+    // 系统字体必须先通过后端导入成包内字体资源，保存后的 .tnote 才不会依赖本机绝对路径。
     try {
       const imported = (await (AssetService as any).ImportFonts([font.path])) as AssetMeta[];
       const asset = imported[0];
@@ -207,6 +214,7 @@ type SemiRoleConfig = NonNullable<ComponentProps<typeof Chat>['roleConfig']>;
 
 function ChatPanel({ messages, peers, onSend }: { messages: ChatMessage[]; peers: PresenceUser[]; onSend: (text: string) => void }) {
   const chats = useMemo<SemiChatMessage[]>(
+    // Semi Chat 需要 role/id/content 结构，这里把 TimeNotes 的聊天模型做一次展示层映射。
     () =>
       messages.map((message) => ({
         role: message.local ? 'user' : `peer-${message.user.id}`,
@@ -218,6 +226,7 @@ function ChatPanel({ messages, peers, onSend }: { messages: ChatMessage[]; peers
     [messages],
   );
   const roleConfig = useMemo<SemiRoleConfig>(() => {
+    // 每个协作者用自己的 presence 颜色生成头像，避免聊天气泡里出现重复身份。
     const config: SemiRoleConfig = {
       user: {
         name: '我',
@@ -301,6 +310,7 @@ function LayerPanel({
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
 
   const finishDrag = () => {
+    // HTML5 拖拽结束后统一清空视觉状态，防止拖出列表外时残留高亮。
     setDragElementId(null);
     setDropTargetId(null);
   };
@@ -339,6 +349,7 @@ function LayerPanel({
                   dropTargetId === element.id && dragElementId !== element.id ? 'ring-2 ring-[#2f6fed]/25' : ''
                 }`}
                 onDragStart={(event) => {
+                  // 图层卡片内的按钮不能触发拖拽，否则点击复制/删除会被浏览器当成拖动。
                   if ((event.target as HTMLElement).closest('[data-layer-action]')) {
                     event.preventDefault();
                     return;
@@ -435,6 +446,7 @@ function PageStylePanel({
   const backgroundSrc = backgroundAsset?.dataUrl ?? (backgroundAsset?.dataBase64 ? `data:${backgroundAsset.mimeType};base64,${backgroundAsset.dataBase64}` : undefined);
 
   const importBackground = async (file: File) => {
+    // 背景图也是普通 asset；导入后立即打开裁剪，保证页面背景适配当前纸张比例。
     if (!file.type.startsWith('image/') && !/\.(png|jpe?g|gif|webp|svg)$/i.test(file.name)) {
       return;
     }
@@ -451,6 +463,7 @@ function PageStylePanel({
   };
 
   const applyBackgroundCrop = async (dataUrl: string) => {
+    // 裁剪结果生成新 asset，不覆盖原图，方便以后扩展“恢复原图/再次裁剪”。
     const asset = await createAssetFromDataUrl(dataUrl, `${backgroundAsset?.name ?? '画布背景'}-裁剪.png`, 'assets', 'image/png');
     onAddAsset(asset);
     onPatch({ backgroundAssetId: asset.id, backgroundFit: 'cover', backgroundCropX: 50, backgroundCropY: 50 });
@@ -553,6 +566,7 @@ function ControlsPanel({
   onAddFont: (font: AssetMeta) => void;
   onUseSystemFont: (font: SystemFont) => Promise<string>;
 }) {
+  // 有选中元素时编辑元素属性；没有选中元素时编辑当前工具的预设样式。
   return (
     <div className="h-full min-h-0 overflow-y-auto overflow-x-hidden px-4 py-4">
       <div className="mb-4">

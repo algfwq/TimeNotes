@@ -28,11 +28,13 @@ export interface CreateRoomResult {
   roomKey: string;
   wsUrl: string;
   inviteUrl: string;
+  iceServers?: RTCIceServer[];
 }
 
 export interface InviteInfo {
   serverUrl: string;
   wsUrl: string;
+  iceServers: RTCIceServer[];
   roomId: string;
   roomKey: string;
 }
@@ -69,6 +71,7 @@ interface CollaborationClientOptions {
   user: PresenceUser;
   yDoc: Y.Doc;
   forceRelay: boolean;
+  iceServers?: RTCIceServer[];
   onStatus: (status: string) => void;
   onPeers: (peers: PresenceUser[]) => void;
   onChat: (message: ChatMessage) => void;
@@ -102,13 +105,20 @@ const serverPresenceMinIntervalMs = 1000;
 const latencyProbeIntervalMs = 3000;
 const maxAutomaticSnapshotBytes = 2 * 1024 * 1024;
 
+// CollaborationClient 是前端协作的网络内核：
+// - WebSocket 负责鉴权、房间成员、信令、持久化和应用层中转；
+// - WebRTC DataChannel 负责成功打洞后的 P2P 文档、在线状态和聊天传输；
+// - Yjs update 是唯一同步单元，收到远端 update 后直接应用到当前 Y.Doc。
 export class CollaborationClient {
   private options: CollaborationClientOptions;
   private socket?: WebSocket;
+  // peers 只保存已经尝试建立 WebRTC 的连接；peerUsers 保存在线成员列表和最新 presence。
   private peers = new Map<string, PeerConnection>();
   private peerUsers = new Map<string, PresenceUser>();
+  // 同一个 update/chat 会同时可能从 P2P 和服务端中转到达，必须按 id 去重。
   private seenUpdates = new Set<string>();
   private seenChats = new Set<string>();
+  // 同一浏览器用户断线重连时 user.id 可能复用，connectionId 用于隔离每次连接生命周期。
   private readonly connectionId = makeId('conn');
   private updateSeq = 0;
   private snapshotCounter = 0;
@@ -117,8 +127,10 @@ export class CollaborationClient {
   private pendingPresenceTimer?: number;
   private latencyTimer?: number;
   private pendingDocTimer?: number;
+  // 本地 Yjs 高频编辑先合并到短队列里，再统一广播，避免拖动元素时刷爆网络。
   private pendingDocUpdates: Uint8Array[] = [];
   private pendingPings = new Map<string, number>();
+  // 初次拉取服务端历史状态后，下一次本地 update 需要补发“服务端缺失的差量”。
   private nextLocalUpdateStateVector?: Uint8Array;
   private lastPresenceSentAt = 0;
   private lastServerPresenceAt = 0;
@@ -200,6 +212,7 @@ export class CollaborationClient {
     this.sendSocket(this.makeEnvelope('peer_kick', { clientId, reason }));
   }
 
+  // WebSocket 是协作房间的控制面：首帧 auth 通过房间密钥鉴权，后续承载信令和中转包。
   private openSocket() {
     this.options.onStatus('连接中');
     const socket = new WebSocket(this.options.url);
@@ -227,6 +240,7 @@ export class CollaborationClient {
     socket.addEventListener('error', () => this.options.onError('协作服务连接失败'));
   }
 
+  // 所有网络消息统一解析成 Envelope，再按 type 分发，方便 P2P 与 relay 复用同一套处理逻辑。
   private handleEnvelope(env: Envelope, source: Transport) {
     if (!env || env.v !== 1) {
       return;
@@ -285,6 +299,7 @@ export class CollaborationClient {
     }
   }
 
+  // 鉴权成功后先应用服务端持久化的 Yjs 状态，再建立成员列表、presence 心跳和 P2P 尝试。
   private handleAuthOK(payload: AuthOKPayload) {
     this.connected = true;
     this.options.user = {
@@ -321,6 +336,7 @@ export class CollaborationClient {
     }
   }
 
+  // 加入审批由服务端转发给房主，但最终决策仍回到同一条 WebSocket 控制通道。
   private handleJoinRequest(payload?: JoinRequestPayload) {
     if (!payload?.requestId || !payload.user) {
       return;
@@ -337,6 +353,7 @@ export class CollaborationClient {
     });
   }
 
+  // 本地 Yjs update 在短时间窗口内合并，降低拖拽/缩放元素时的网络帧数量。
   private queueDocUpdate(update: Uint8Array) {
     const outboundUpdate = this.nextLocalUpdateStateVector
       ? Y.encodeStateAsUpdate(this.options.yDoc, this.nextLocalUpdateStateVector)
@@ -356,6 +373,7 @@ export class CollaborationClient {
     }, docUpdateFlushMs);
   }
 
+  // 服务端已有快照时，先清理本地协作用的 snapshot/resources 槽位，避免旧本地文档再反向覆盖远端状态。
   private resetLocalCollaborationState() {
     this.options.yDoc.transact(() => {
       const snapshots = this.options.yDoc.getMap('snapshot');
@@ -369,6 +387,7 @@ export class CollaborationClient {
     }, remoteOrigin);
   }
 
+  // 用服务端 compact_state + updates 构造 state vector，让下一次本地编辑只补发真正缺失的差量。
   private makeStoredStateVector(payload: AuthOKPayload) {
     const baseline = new Y.Doc();
     try {
@@ -409,6 +428,7 @@ export class CollaborationClient {
     }
   }
 
+  // 新房间或空房间没有服务端历史时，主动发一次完整状态，保证后加入者能从 SQLite 恢复。
   private sendFullStateUpdate() {
     if (!this.connected) {
       return;
@@ -424,6 +444,7 @@ export class CollaborationClient {
     this.sendSocket(env);
   }
 
+  // Yjs update 是幂等叠加模型；这里只需要按 updateId 去重，然后交给 Yjs 合并。
   private applyDocUpdate(payload?: DocUpdatePayload) {
     if (!payload?.updateBase64 || this.seenUpdates.has(payload.updateId)) {
       return;
@@ -432,6 +453,7 @@ export class CollaborationClient {
     Y.applyUpdate(this.options.yDoc, base64ToBytes(payload.updateBase64), remoteOrigin);
   }
 
+  // 自动快照只做小文档兜底，超过阈值就继续依赖增量队列，避免大素材反复写入服务端。
   private sendSnapshot() {
     if (!this.connected) {
       return;
@@ -447,6 +469,7 @@ export class CollaborationClient {
     );
   }
 
+  // Presence 同时承担在线状态、远端光标和实际传输路径展示；P2P 未连通时仍会通过服务端低频保活。
   private publishPresence() {
     if (!this.connected) {
       return;
@@ -472,6 +495,7 @@ export class CollaborationClient {
     this.presenceTimer = window.setInterval(() => this.publishPresence(), 1500);
   }
 
+  // 光标移动比普通 presence 高频，所以 schedulePresence 会按最小间隔节流。
   private schedulePresence(delayMs: number) {
     if (!this.connected) {
       return;
@@ -494,6 +518,7 @@ export class CollaborationClient {
     }
   }
 
+  // 从 P2P 收到的 presence 比服务端中转更能证明直连成功，因此 source=p2p 会覆盖传输状态。
   private applyPresence(user?: PresenceUser, source: Transport = 'relay') {
     if (!user || user.id === this.options.user.id) {
       return;
@@ -554,6 +579,7 @@ export class CollaborationClient {
     this.options.onLatency(Math.max(0, Math.round(performance.now() - startedAt)));
   }
 
+  // 服务端 relay envelope 外层 type 固定为 relay，内层 payload.type 才是真实业务类型。
   private handleRelay(env: Envelope) {
     const payload = env.payload as { type?: string; payload?: unknown };
     if (!payload?.type) {
@@ -594,10 +620,12 @@ export class CollaborationClient {
     this.options.onPeers(Array.from(this.peerUsers.values()));
   }
 
+  // 每看到一个在线成员就尝试建立一条 WebRTC 连接；失败不会阻断协作，因为 WebSocket relay 仍在。
   private ensurePeer(user: PresenceUser) {
     if (this.options.forceRelay || this.peers.has(user.id)) {
       return;
     }
+    // iceServers 优先使用联机服务器返回的内置 STUN，再合并本地调试配置。
     const pc = new RTCPeerConnection({ iceServers: this.iceServers() });
     const peer: PeerConnection = { id: user.id, user, pc, channels: {}, timer: 0 };
     this.peers.set(user.id, peer);
@@ -608,6 +636,7 @@ export class CollaborationClient {
     };
     pc.ondatachannel = (event) => this.attachChannel(peer, event.channel);
     pc.onconnectionstatechange = () => {
+      // 这里只更新展示状态和 relay 判定；真正的数据兜底由 needsRelay/sendSocket 决定。
       const next = pc.connectionState === 'connected' ? 'p2p' : pc.connectionState === 'failed' || pc.connectionState === 'disconnected' ? 'relay' : undefined;
       if (next) {
         this.peerUsers.set(user.id, { ...(this.peerUsers.get(user.id) ?? user), transport: next });
@@ -615,6 +644,7 @@ export class CollaborationClient {
       }
     };
     dataChannelNames.forEach((name) => {
+      // 用 clientId 字典序决定谁创建 DataChannel，避免两端都主动创建出重复通道。
       if (this.options.user.id < user.id) {
         this.attachChannel(peer, pc.createDataChannel(name, channelOptions(name)));
       }
@@ -630,6 +660,7 @@ export class CollaborationClient {
     }
   }
 
+  // DataChannel 打开后，同一套 Envelope 处理逻辑会以 source=p2p 执行，方便 presence 标记真实路径。
   private attachChannel(peer: PeerConnection, channel: RTCDataChannel) {
     const label = dataChannelNames.includes(channel.label as any) ? (channel.label as keyof PeerConnection['channels']) : 'doc';
     peer.channels[label] = channel;
@@ -646,6 +677,7 @@ export class CollaborationClient {
     this.sendSocket(this.makeEnvelope('signal', { kind: 'offer', sdp: offer.sdp }, peer.id));
   }
 
+  // 信令只通过 WebSocket 交换 SDP/ICE；浏览器 ICE 过程会自行使用 STUN 探测公网映射。
   private async handleSignal(peerID: string, signal?: SignalPayload) {
     const user = this.peerUsers.get(peerID);
     if (!peerID || !signal || !user) {
@@ -689,6 +721,7 @@ export class CollaborationClient {
     }
   }
 
+  // P2P 未全部打开时，业务消息仍需要发给服务端一份，作为应用层 TURN-like 兜底。
   private needsRelay(channelName: 'doc' | 'presence' | 'chat') {
     if (this.options.forceRelay) {
       return true;
@@ -735,19 +768,13 @@ export class CollaborationClient {
     };
   }
 
+  // 标准 ICE server 列表只放浏览器能识别的 stun/turn 地址；当前项目中转不是标准 turn: 服务。
   private iceServers(): RTCIceServer[] {
-    const raw = window.localStorage.getItem('timenotes.iceServers');
-    if (!raw) {
-      return [];
-    }
-    try {
-      return JSON.parse(raw) as RTCIceServer[];
-    } catch {
-      return [];
-    }
+    return mergeIceServers(this.options.iceServers ?? [], storedIceServers());
   }
 }
 
+// 创建房间走 HTTP API；响应里的 wsUrl 用于 WebSocket，iceServers 用于 RTCPeerConnection。
 export async function createCollaborationRoom(serverAddress: string, appUrl: string): Promise<CreateRoomResult> {
   const serverUrl = normalizeHttpServerUrl(serverAddress);
   const endpoint = new URL('/api/rooms', serverUrl);
@@ -774,6 +801,7 @@ export async function createCollaborationRoom(serverAddress: string, appUrl: str
   return (await response.json()) as CreateRoomResult;
 }
 
+// UI 允许用户填 http/https/ws/wss，这里统一规整成 HTTP 基地址，供创建房间和 STUN URL 推导使用。
 export function normalizeHttpServerUrl(serverAddress: string) {
   const raw = withDefaultScheme(serverAddress.trim() || 'http://127.0.0.1:8787', 'http://');
   const url = new URL(raw);
@@ -790,6 +818,7 @@ export function normalizeHttpServerUrl(serverAddress: string) {
   return url.toString().replace(/\/$/, '');
 }
 
+// 手动加入房间不走创建接口时，需要从同一个服务地址推导 WebSocket 入口。
 export function serverAddressToWsUrl(serverAddress: string) {
   const raw = withDefaultScheme(serverAddress.trim() || 'http://127.0.0.1:8787', 'http://');
   const url = new URL(raw);
@@ -806,6 +835,16 @@ export function serverAddressToWsUrl(serverAddress: string) {
   return url.toString();
 }
 
+// 邀请链接或手动地址里没有服务端返回值时，按同主机同端口生成内置 STUN 地址。
+export function iceServersFromServerAddress(serverAddress: string): RTCIceServer[] {
+  const serverUrl = normalizeHttpServerUrl(serverAddress);
+  const url = new URL(serverUrl);
+  const port = url.port || (url.protocol === 'https:' ? '443' : '80');
+  const host = url.hostname.includes(':') && !url.hostname.startsWith('[') ? `[${url.hostname}]` : url.hostname;
+  return [{ urls: [`stun:${host}:${port}`] }];
+}
+
+// 邀请链接把 roomKey 放在 hash fragment；浏览器不会把 fragment 发给 HTTP 服务和反向代理。
 export function parseInviteLink(value: string): InviteInfo {
   const raw = value.trim();
   if (!raw) {
@@ -822,11 +861,46 @@ export function parseInviteLink(value: string): InviteInfo {
   return {
     serverUrl: normalizeHttpServerUrl(serverUrl),
     wsUrl: serverAddressToWsUrl(serverUrl),
+    iceServers: iceServersFromServerAddress(serverUrl),
     roomId,
     roomKey,
   };
 }
 
+// 本地调试覆盖入口：开发者可在 localStorage.timenotes.iceServers 放额外 STUN/TURN 配置。
+function storedIceServers(): RTCIceServer[] {
+  const raw = window.localStorage.getItem('timenotes.iceServers');
+  if (!raw) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as RTCIceServer[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+// 合并服务端 STUN 与本地覆盖配置，并按 urls/username/credential 去重。
+function mergeIceServers(...groups: RTCIceServer[][]): RTCIceServer[] {
+  const seen = new Set<string>();
+  const merged: RTCIceServer[] = [];
+  groups.flat().forEach((server) => {
+    const urls = Array.isArray(server.urls) ? server.urls.filter(Boolean) : server.urls ? [server.urls] : [];
+    if (!urls.length) {
+      return;
+    }
+    const key = `${urls.join(',')}|${server.username ?? ''}|${String(server.credential ?? '')}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    merged.push({ ...server, urls: Array.isArray(server.urls) ? urls : urls[0] });
+  });
+  return merged;
+}
+
+// presence 通道可以丢包，文档和聊天必须有序可靠。
 function channelOptions(name: 'doc' | 'presence' | 'chat'): RTCDataChannelInit {
   if (name === 'presence') {
     return { ordered: false, maxRetransmits: 0 };

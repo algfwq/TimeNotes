@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Avatar, Button, Checkbox, Input, Modal, Space, Tag, TextArea, Toast, Typography } from '@douyinfe/semi-ui';
 import { IconCloud, IconCopy, IconDelete, IconLink, IconUserGroup } from '@douyinfe/semi-icons';
-import { createCollaborationRoom, normalizeHttpServerUrl, parseInviteLink, serverAddressToWsUrl } from '../../lib/collaborationClient';
+import { createCollaborationRoom, iceServersFromServerAddress, normalizeHttpServerUrl, parseInviteLink, serverAddressToWsUrl } from '../../lib/collaborationClient';
 import { useCollaboration } from '../../providers/CollaborationProvider';
 import type { PresenceUser } from '../../types';
 
@@ -19,6 +19,7 @@ export function CollaborationPanel() {
   useEffect(() => {
     try {
       const parsed = parseInviteLink(window.location.href);
+      // App 可能直接被邀请链接唤起；启动后先把 fragment 里的房间信息回填到表单。
       setServerAddress(parsed.serverUrl);
       setRoomId(parsed.roomId);
       setRoomKey(parsed.roomKey);
@@ -41,12 +42,13 @@ export function CollaborationPanel() {
   const startRoom = async () => {
     setBusy(true);
     try {
+      // 创建房间时服务端会返回 wsUrl、inviteUrl 和内置 STUN；本地兜底再按地址推导一次 STUN。
       const created = await createCollaborationRoom(serverAddress, currentAppURL());
       setServerAddress(normalizeHttpServerUrl(serverAddress));
       setRoomId(created.roomId);
       setRoomKey(created.roomKey);
       setInviteUrl(created.inviteUrl);
-      connect({ url: created.wsUrl, roomId: created.roomId, roomKey: created.roomKey, userName, forceRelay });
+      connect({ url: created.wsUrl, roomId: created.roomId, roomKey: created.roomKey, userName, forceRelay, iceServers: created.iceServers ?? iceServersFromServerAddress(serverAddress) });
       Toast.success('协作房间已创建');
     } catch (error) {
       Toast.error(String(error instanceof Error ? error.message : error));
@@ -57,11 +59,12 @@ export function CollaborationPanel() {
 
   const joinInvite = () => {
     try {
+      // 邀请链接里的 roomKey 只在本地解析后用于 WebSocket auth，不会作为 HTTP 请求参数发送。
       const parsed = parseInviteLink(inviteInput);
       setServerAddress(parsed.serverUrl);
       setRoomId(parsed.roomId);
       setRoomKey(parsed.roomKey);
-      connect({ url: parsed.wsUrl, roomId: parsed.roomId, roomKey: parsed.roomKey, userName, forceRelay });
+      connect({ url: parsed.wsUrl, roomId: parsed.roomId, roomKey: parsed.roomKey, userName, forceRelay, iceServers: parsed.iceServers });
       Toast.success('正在加入邀请房间');
     } catch (error) {
       Toast.error(String(error instanceof Error ? error.message : error));
@@ -70,7 +73,8 @@ export function CollaborationPanel() {
 
   const connectCurrentRoom = () => {
     try {
-      connect({ url: serverAddressToWsUrl(serverAddress), roomId, roomKey, userName, forceRelay });
+      // 手动输入房间时没有创建接口响应，因此从服务器地址推导 WebSocket 和 STUN。
+      connect({ url: serverAddressToWsUrl(serverAddress), roomId, roomKey, userName, forceRelay, iceServers: iceServersFromServerAddress(serverAddress) });
     } catch (error) {
       Toast.error(String(error instanceof Error ? error.message : error));
     }
@@ -108,7 +112,8 @@ export function CollaborationPanel() {
           <Input prefix={<IconUserGroup />} value={userName} onChange={setUserName} />
         </label>
         <Checkbox checked={forceRelay} onChange={(event) => setForceRelay(Boolean(event.target.checked))}>
-          强制服务器中转
+          {/* 这是 TimeNotes 自己的 WebSocket 数据中转，不是浏览器 ICE 的标准 TURN 服务。 */}
+          强制应用层中转
         </Checkbox>
 
         <div className="grid w-full grid-cols-2 gap-2">
@@ -191,6 +196,7 @@ export function CollaborationPanel() {
       <PeerContextMenu
         state={peerMenu}
         onKick={(peer) => {
+          // 踢出操作只允许房主通过成员右键菜单触发，最终由服务端校验房主身份。
           setPeerMenu(null);
           Modal.confirm({
             title: '踢出协作者',
@@ -206,6 +212,7 @@ export function CollaborationPanel() {
 }
 
 function currentAppURL() {
+  // 桌面 WebView 下可能不是标准 http(s) 页面，邀请链接仍需要一个可落地的应用入口。
   if (window.location.protocol === 'http:' || window.location.protocol === 'https:' || window.location.protocol === 'wails:') {
     return `${window.location.origin}${window.location.pathname}`;
   }

@@ -10,6 +10,7 @@ interface ConnectOptions {
   roomKey: string;
   userName: string;
   forceRelay?: boolean;
+  iceServers?: RTCIceServer[];
 }
 
 interface CursorPosition {
@@ -43,9 +44,12 @@ type DisconnectReason = 'manual' | 'reconnect' | 'tab-change' | 'unmount' | 'roo
 const userColors = ['#2f6fed', '#2f8f68', '#c17817', '#c94d7b', '#5f5aa2'];
 const sessionUserStorageKey = 'timenotes.sessionUserId';
 
+// CollaborationProvider 是 UI 和 CollaborationClient 的边界：
+// React 状态负责展示在线成员、聊天、延迟和本机身份，真正的网络连接只保存在 clientRef。
 export function CollaborationProvider({ children }: { children: React.ReactNode }) {
   const { yDoc, activeTabId, activePageId, selectedElementId, editingElementId } = useDocument();
   const clientRef = useRef<CollaborationClient | null>(null);
+  // 协作只绑定发起联机时的编辑标签页，切换到其他文档时主动断开，避免 Y.Doc 串到错误文件。
   const collaborationTabIdRef = useRef<string | null>(null);
   const [status, setStatus] = useState('离线');
   const [peers, setPeers] = useState<PresenceUser[]>([]);
@@ -61,6 +65,7 @@ export function CollaborationProvider({ children }: { children: React.ReactNode 
   }));
 
   const disconnect = useCallback((reason: DisconnectReason = 'manual') => {
+    // 断开时要同时清理底层 socket/peer、本地 UI 列表和 presence 身份，避免下次连接继承旧状态。
     const wasConnected = Boolean(clientRef.current);
     clientRef.current?.disconnect();
     clientRef.current = null;
@@ -76,7 +81,8 @@ export function CollaborationProvider({ children }: { children: React.ReactNode 
   }, []);
 
   const connect = useCallback(
-    ({ url, roomId, roomKey, userName, forceRelay: nextForceRelay = forceRelay }: ConnectOptions) => {
+    ({ url, roomId, roomKey, userName, forceRelay: nextForceRelay = forceRelay, iceServers }: ConnectOptions) => {
+      // 新连接总是先关闭旧连接；同一页面重复点击“发起/加入”不会保留旧 peer 和计时器。
       disconnect('reconnect');
       const user = {
         ...localUser,
@@ -90,6 +96,7 @@ export function CollaborationProvider({ children }: { children: React.ReactNode 
       setMessages([]);
       setForceRelayState(nextForceRelay);
       collaborationTabIdRef.current = activeTabId;
+      // 底层客户端直接持有当前活动标签页的 Y.Doc，后续文档 update 不再经过 React props 转发。
       clientRef.current = new CollaborationClient({
         url,
         roomId,
@@ -97,6 +104,7 @@ export function CollaborationProvider({ children }: { children: React.ReactNode 
         user,
         yDoc,
         forceRelay: nextForceRelay,
+        iceServers,
         onStatus: setStatus,
         onPeers: setPeers,
         onChat: (message) => setMessages((current) => [...current, message].slice(-200)),
@@ -106,6 +114,7 @@ export function CollaborationProvider({ children }: { children: React.ReactNode 
           setStatus('等待房主同意');
         },
         onJoinRequest: (request, respond) => {
+          // 加入审批只在房主端弹出；审批结果通过 respond 写回 WebSocket 控制面。
           Modal.confirm({
             title: '协作者请求加入',
             content: `${request.user.name || '协作者'} 正在请求加入当前协作房间。连接 ID：${shortClientId(request.user.id)}`,
@@ -170,6 +179,7 @@ export function CollaborationProvider({ children }: { children: React.ReactNode 
   );
 
   const updateCursor = useCallback((cursor?: CursorPosition | null) => {
+    // 光标属于 awareness/presence，不写入文档模型；本地状态仅用于即时隐藏和展示。
     const nextCursor = cursor ?? null;
     clientRef.current?.updateCursor(nextCursor);
     setLocalUser((current) => ({ ...current, cursor: nextCursor }));
@@ -184,6 +194,7 @@ export function CollaborationProvider({ children }: { children: React.ReactNode 
   }, []);
 
   const setForceRelay = useCallback((nextForceRelay: boolean) => {
+    // 强制中转只影响 TimeNotes 应用层传输路径，不会把服务器伪装成浏览器 ICE TURN。
     setForceRelayState(nextForceRelay);
     clientRef.current?.setForceRelay(nextForceRelay);
   }, []);
@@ -193,6 +204,7 @@ export function CollaborationProvider({ children }: { children: React.ReactNode 
       disconnect('tab-change');
       return;
     }
+    // 页码、选中元素和正在编辑元素只作为 presence 广播，方便远端显示光标和选择框。
     const patch = { pageId: activePageId, selectedElementId: selectedElementId ?? null, editingElementId: editingElementId ?? null };
     setLocalUser((current) => ({ ...current, ...patch }));
     clientRef.current?.updateUser(patch);

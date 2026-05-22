@@ -22,6 +22,8 @@ interface SnapMatch {
 const snapThreshold = 10;
 const liveElementSyncIntervalMs = 120;
 
+// SelectionController 把 DOM 元素绑定到 Moveable，负责拖拽、缩放、旋转和对齐参考线。
+// 它只处理非绘制类元素；画笔和胶带由 Konva 层单独渲染与选择。
 export function SelectionController({
   page,
   paperRef,
@@ -37,6 +39,7 @@ export function SelectionController({
   const [visibleGuides, setVisibleGuides] = useState<AlignmentGuide[]>([]);
   const moveableRef = useRef<any>(null);
   const pendingPatchRef = useRef<Partial<NoteElement> | null>(null);
+  // pendingLivePatchRef 用于协作实时预览；pendingPatchRef 保存交互结束时需要写入历史的最终值。
   const pendingLivePatchRef = useRef<Partial<NoteElement> | null>(null);
   const livePatchTimerRef = useRef<number | undefined>();
   const lastLivePatchAtRef = useRef(0);
@@ -45,11 +48,13 @@ export function SelectionController({
   const keepRatio = selectedElement?.type === 'image' || selectedElement?.type === 'sticker';
   const elementRatio = Number(selectedElement?.style?.aspectRatio ?? 0) || (selectedElement ? selectedElement.width / Math.max(1, selectedElement.height) : 1);
   const snapReferences = useMemo(
+    // 对齐参考点来自页面边缘/中心和同页其他元素的边缘/中心，坐标都是页面坐标。
     () => createSnapReferences(noteDocument.elements, page, selectedElementId),
     [noteDocument.elements, page, selectedElementId],
   );
 
   useEffect(() => {
+    // 选中元素的 DOM 节点可能因为 React 重渲染被替换，因此每次 selectedElement 变化都重新查找 target。
     if (!selectedElementId) {
       setTarget(null);
       return;
@@ -58,6 +63,7 @@ export function SelectionController({
   }, [selectedElementId, selectedElement]);
 
   useEffect(() => {
+    // 缩放或元素样式更新后，Moveable 的控制框需要下一帧重新测量 DOM rect。
     const frame = window.requestAnimationFrame(() => moveableRef.current?.updateRect?.());
     return () => window.cancelAnimationFrame(frame);
   }, [selectedElement, target, zoom]);
@@ -71,6 +77,7 @@ export function SelectionController({
   }, []);
 
   const beginElementInteraction = () => {
+    // 记录交互开始时的文档快照，让一次拖拽只产生一条可撤销历史，而不是每帧一条。
     if (livePatchTimerRef.current) {
       window.clearTimeout(livePatchTimerRef.current);
       livePatchTimerRef.current = undefined;
@@ -84,6 +91,7 @@ export function SelectionController({
   };
 
   const flushLivePatch = () => {
+    // 交互中的轻量 patch 不写历史，只让本机 UI 和协作者能看到实时位置。
     if (!selectedElement || !pendingLivePatchRef.current) {
       return;
     }
@@ -94,6 +102,7 @@ export function SelectionController({
   };
 
   const queueLivePatch = (patch: Partial<NoteElement>) => {
+    // Moveable 事件可能每帧触发，节流后再写 DocumentProvider，降低 React/Yjs 压力。
     pendingPatchRef.current = patch;
     pendingLivePatchRef.current = patch;
     const elapsed = performance.now() - lastLivePatchAtRef.current;
@@ -114,6 +123,7 @@ export function SelectionController({
   };
 
   const finishElementInteraction = () => {
+    // 松手时写入最终 patch，并用交互开始前的文档作为 historyBase。
     setInteracting(false);
     setVisibleGuides([]);
     if (livePatchTimerRef.current) {
@@ -129,6 +139,7 @@ export function SelectionController({
   };
 
   useEffect(() => {
+    // react-moveable 的 elementGuidelines 需要真实 DOM 节点，延后一帧等元素渲染完成再收集。
     const frame = window.requestAnimationFrame(() => {
       const nodes = Array.from(globalThis.document.querySelectorAll<HTMLElement>('[data-element-id]')).filter((node) => {
         const elementId = node.dataset.elementId;
@@ -141,6 +152,7 @@ export function SelectionController({
   }, [noteDocument.elements, page.id, selectedElementId, zoom]);
 
   useEffect(() => {
+    // Semi 弹窗打开时暂时禁用 Moveable，避免弹窗上方仍出现选择框或拖拽手柄。
     const refresh = () => {
       const visibleModal = Array.from(document.querySelectorAll<HTMLElement>('.semi-modal, .semi-modal-mask')).some(
         (node) => {
@@ -224,6 +236,7 @@ export function SelectionController({
 }
 
 function AlignmentGuideOverlay({ page, zoom, guides }: { page: NotePage; zoom: number; guides: AlignmentGuide[] }) {
+  // 自定义参考线覆盖在纸张外层，按 zoom 放大视觉位置，但持久坐标仍保持页面坐标。
   if (guides.length === 0) {
     return null;
   }
@@ -249,6 +262,7 @@ function AlignmentGuideOverlay({ page, zoom, guides }: { page: NotePage; zoom: n
 }
 
 function createSnapReferences(elements: NoteElement[], page: NotePage, selectedElementId?: string): SnapReferences {
+  // 自由绘制和胶带没有稳定矩形边界，不参与吸附参考点。
   const vertical = [0, page.width / 2, page.width];
   const horizontal = [0, page.height / 2, page.height];
   elements.forEach((element) => {
@@ -265,6 +279,7 @@ function createSnapReferences(elements: NoteElement[], page: NotePage, selectedE
 }
 
 function snapBox(box: { x: number; y: number; width: number; height: number }, references: SnapReferences, page: NotePage) {
+  // 先对 x/y 分别找最近参考点，再统一 clamp，确保吸附后不会越出页面。
   const guides: AlignmentGuide[] = [];
   const xSnap = findBestSnap([box.x, box.x + box.width / 2, box.x + box.width], references.vertical);
   const ySnap = findBestSnap([box.y, box.y + box.height / 2, box.y + box.height], references.horizontal);
