@@ -3,6 +3,7 @@ import { Button, ButtonGroup, Input, Modal, Space, Toast, Tooltip, Typography } 
 import { Dialogs } from '@wailsio/runtime';
 import {
   IconBookOpenStroked,
+  IconCodeStroked,
   IconEdit2,
   IconFile,
   IconFolderOpen,
@@ -23,6 +24,7 @@ const toolItems: Array<{ key: ToolMode; label: string; icon: React.ReactNode }> 
   { key: 'select', label: '选择', icon: <IconHandle /> },
   { key: 'pan', label: '移动画布', icon: <IconHandle /> },
   { key: 'text', label: '文本', icon: <IconText /> },
+  { key: 'code', label: '代码块', icon: <IconCodeStroked /> },
   { key: 'sticker', label: '贴纸', icon: <IconPlus /> },
   { key: 'tape', label: '胶带笔', icon: <IconFile /> },
   { key: 'drawing', label: '画笔', icon: <IconEdit2 /> },
@@ -117,6 +119,8 @@ export function TopBar() {
                 type={tool === item.key ? 'primary' : 'tertiary'}
                 theme={tool === item.key ? 'solid' : 'light'}
                 icon={item.icon}
+                aria-label={item.label}
+                title={item.label}
                 disabled={activeTabMode !== 'edit'}
                 onClick={() => {
                   setTool(item.key);

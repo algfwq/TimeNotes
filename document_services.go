@@ -21,8 +21,8 @@ import (
 )
 
 const (
-	currentFormatVersion = 3
-	currentAppVersion    = "0.1.0"
+	currentFormatVersion = 4
+	currentAppVersion    = "2.0.0"
 )
 
 // DocumentService 暴露给前端负责 .tnote 的新建、打开和保存；这里不掺入 UI 状态。
@@ -232,10 +232,7 @@ func readAsset(path string, group string) (AssetBlob, error) {
 	hash := sha256.Sum256(raw)
 	hashString := hex.EncodeToString(hash[:])
 	ext := strings.ToLower(filepath.Ext(cleaned))
-	mimeType := mime.TypeByExtension(ext)
-	if mimeType == "" {
-		mimeType = "application/octet-stream"
-	}
+	mimeType := detectAssetMimeType(filepath.Base(cleaned), cleaned)
 	encoded := base64.StdEncoding.EncodeToString(raw)
 	return AssetBlob{
 		AssetMeta: AssetMeta{
@@ -416,7 +413,7 @@ func readNotePackage(path string) (NotePackage, error) {
 	if err := readJSON(files, documentPath, &doc); err != nil {
 		return NotePackage{}, err
 	}
-	// v1 文件没有页面背景图字段；读入后升级到当前内存模型，保存时会写回 v2 包。
+	// 旧版文件读入后升级到当前内存模型，保存时会写回当前格式版本。
 	migrateDocument(&doc, manifest.FormatVersion)
 	if len(doc.Assets) == 0 && len(manifest.Assets) > 0 {
 		doc.Assets = manifest.Assets
@@ -488,7 +485,7 @@ func writeAssetBlob(zw *zip.Writer, group string, asset AssetBlob) error {
 	}
 	ext := strings.ToLower(filepath.Ext(asset.Name))
 	if ext == "" {
-		ext = ".bin"
+		ext = extensionForMimeType(asset.MimeType)
 	}
 	path := asset.Path
 	if path == "" {
@@ -538,11 +535,16 @@ func readAssetBlobs(files map[string]*zip.File, metas []AssetMeta) ([]AssetBlob,
 			warnings = append(warnings, ServiceNote{Code: "asset_missing", Message: meta.Name + " was not found in the package"})
 			continue
 		}
+		mimeType := meta.MimeType
+		if mimeType == "" {
+			mimeType = detectAssetMimeType(meta.Name, meta.Path)
+			meta.MimeType = mimeType
+		}
 		encoded := base64.StdEncoding.EncodeToString(raw)
 		assets = append(assets, AssetBlob{
 			AssetMeta:  meta,
 			DataBase64: encoded,
-			DataURL:    "data:" + meta.MimeType + ";base64," + encoded,
+			DataURL:    "data:" + mimeType + ";base64," + encoded,
 		})
 	}
 	return assets, warnings
@@ -586,6 +588,47 @@ func assetArchivePath(group string, hash string, ext string) string {
 		ext = ".bin"
 	}
 	return filepath.ToSlash(filepath.Join(group, hash+ext))
+}
+
+func detectAssetMimeType(name string, path string) string {
+	ext := strings.ToLower(filepath.Ext(name))
+	if ext == "" {
+		ext = strings.ToLower(filepath.Ext(path))
+	}
+	if mimeType := mime.TypeByExtension(ext); mimeType != "" {
+		return mimeType
+	}
+	switch ext {
+	case ".gif":
+		return "image/gif"
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".webp":
+		return "image/webp"
+	case ".svg":
+		return "image/svg+xml"
+	default:
+		return "application/octet-stream"
+	}
+}
+
+func extensionForMimeType(mimeType string) string {
+	switch strings.ToLower(strings.TrimSpace(mimeType)) {
+	case "image/gif":
+		return ".gif"
+	case "image/png":
+		return ".png"
+	case "image/jpeg", "image/jpg":
+		return ".jpg"
+	case "image/webp":
+		return ".webp"
+	case "image/svg+xml":
+		return ".svg"
+	default:
+		return ".bin"
+	}
 }
 
 func decodeDataURL(value string) ([]byte, error) {
@@ -641,6 +684,16 @@ func renderPortableHTML(note NotePackage) string {
 		switch el.Type {
 		case "text":
 			body.WriteString(`<div class="note-element text" style="` + style + `">` + el.Content + `</div>`)
+		case "code":
+			language := "plaintext"
+			if v, ok := el.Style["language"].(string); ok && strings.TrimSpace(v) != "" {
+				language = strings.TrimSpace(v)
+			}
+			body.WriteString(`<section class="note-element codeblock" style="` + style + `"><div class="codebar"><span>` +
+				html.EscapeString(language) +
+				`</span><button type="button" class="copy-code">复制</button></div><pre><code>` +
+				html.EscapeString(el.Content) +
+				`</code></pre></section>`)
 		case "image", "sticker":
 			src := assetMap[el.AssetID]
 			body.WriteString(`<img class="note-element media" style="` + style + `" src="` + html.EscapeString(src) + `" alt="">`)
@@ -660,14 +713,14 @@ func renderPortableHTML(note NotePackage) string {
 		html.EscapeString(page.Background) +
 		`;width:` + fmt.Sprint(page.Width) + `px;height:` + fmt.Sprint(page.Height) + `px}.page-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:` +
 		fmt.Sprint(cropValue(page.BackgroundCropX)) + `% ` + fmt.Sprint(cropValue(page.BackgroundCropY)) +
-		`%;}.note-element{position:absolute;box-sizing:border-box}.text{font-size:26px;line-height:1.45;color:#2c2a26}.media{object-fit:cover;border-radius:14px}.tape{opacity:.78;border-radius:3px}.shape{border:2px solid #2c2a26;border-radius:16px}</style></head><body><div class="wrap"><main class="page">` +
+		`%;}.note-element{position:absolute;box-sizing:border-box}.text{font-size:26px;line-height:1.45;color:#2c2a26}.media{object-fit:cover;border-radius:14px}.tape{opacity:.78;border-radius:3px}.shape{border:2px solid #2c2a26;border-radius:16px}.codeblock{display:flex;flex-direction:column;overflow:hidden;border:1px solid rgba(255,255,255,.14);border-radius:8px;background:#101828;color:#d7e2f0;box-shadow:0 14px 32px rgba(15,23,42,.18)}.codebar{display:flex;height:32px;flex-shrink:0;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);padding:0 8px 0 12px;font:11px Inter,"Segoe UI",sans-serif;color:rgba(255,255,255,.72)}.copy-code{cursor:pointer;border:0;border-radius:6px;background:rgba(255,255,255,.1);color:#fff;padding:4px 8px}.codeblock pre{flex:1;min-height:0;margin:0;overflow:auto;padding:12px 14px 16px;font:14px/1.55 "Cascadia Code",Consolas,monospace;white-space:pre}</style></head><body><div class="wrap"><main class="page">` +
 		backgroundHTML +
 		body.String() +
 		`</main></div><script type="application/json" id="timenotes-document">` +
 		html.EscapeString(string(documentJSON)) +
 		`</script><script type="application/json" id="timenotes-assets">` +
 		html.EscapeString(string(assetJSON)) +
-		`</script></body></html>`
+		`</script><script>document.querySelectorAll(".copy-code").forEach(function(button){button.addEventListener("click",function(){var code=button.closest(".codeblock").querySelector("code").textContent||"";if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(code)}else{var textarea=document.createElement("textarea");textarea.value=code;document.body.appendChild(textarea);textarea.select();document.execCommand("copy");textarea.remove()}})})</script></body></html>`
 }
 
 func seedDocument(now string) NoteDocument {

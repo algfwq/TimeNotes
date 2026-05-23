@@ -78,14 +78,18 @@ interface DocumentContextValue {
 
 const DocumentContext = createContext<DocumentContextValue | null>(null);
 
-// v3 开始把贴纸资源从普通图片素材中拆出，避免素材栏和贴纸面板互相污染。
-const currentFormatVersion = 3;
+// v4 增加代码块元素；v3 开始把贴纸资源从普通图片素材中拆出。
+const currentFormatVersion = 4;
+const currentAppVersion = '2.0.0';
 const localOrigin = 'timenotes-react';
 const collaborationRemoteOrigin = 'timenotes-collaboration-remote';
 const collaborationSnapshotMapName = 'snapshot';
 const collaborationResourceMapName = 'resources';
 const collaborationDocumentKeyPrefix = 'document:';
 const maxHistorySteps = 80;
+const defaultCodeBlockContent = `function todayNote(title: string) {
+  return \`TimeNotes: \${title}\`;
+}`;
 
 type ResourceGroup = 'assets' | 'stickers' | 'fonts';
 type CollaborationSnapshotScope = { type: 'document' } | { type: 'page'; pageId: string };
@@ -125,6 +129,14 @@ const defaultToolStyles: ToolStyleState = {
     borderRadius: 0,
     width: 220,
     height: 120,
+  },
+  code: {
+    language: 'typescript',
+    fontSize: 14,
+    color: '#d7e2f0',
+    background: '#101828',
+    width: 420,
+    height: 240,
   },
   drawing: {
     stroke: '#446f64',
@@ -975,10 +987,26 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
           type,
           x: isStroke ? 0 : 180,
           y: isStroke ? 0 : 180,
-          width: isStroke ? activePage.width : type === 'text' ? toolStyles.text.width : type === 'sticker' ? toolStyles.sticker.width : 180,
-          height: isStroke ? activePage.height : type === 'text' ? toolStyles.text.height : type === 'sticker' ? toolStyles.sticker.height : 150,
+          width: isStroke
+            ? activePage.width
+            : type === 'text'
+              ? toolStyles.text.width
+              : type === 'code'
+                ? toolStyles.code.width
+                : type === 'sticker'
+                  ? toolStyles.sticker.width
+                  : 180,
+          height: isStroke
+            ? activePage.height
+            : type === 'text'
+              ? toolStyles.text.height
+              : type === 'code'
+                ? toolStyles.code.height
+                : type === 'sticker'
+                  ? toolStyles.sticker.height
+                  : 150,
           rotation: 0,
-          content: type === 'text' ? '<p>新的文字</p>' : undefined,
+          content: type === 'text' ? '<p>新的文字</p>' : type === 'code' ? defaultCodeBlockContent : undefined,
           assetId,
           style:
             type === 'text'
@@ -992,6 +1020,8 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
                   borderStyle: toolStyles.text.borderStyle,
                   borderRadius: toolStyles.text.borderRadius,
                 }
+              : type === 'code'
+                ? { ...toolStyles.code }
               : type === 'sticker' || type === 'image'
                 ? { fit: 'contain' }
               : type === 'tape'
@@ -1009,7 +1039,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       });
       if (!isStroke) {
         setSelectedElementId(id);
-        setEditingElementId(type === 'text' ? id : undefined);
+        setEditingElementId(type === 'text' || type === 'code' ? id : undefined);
         setToolState('select');
       }
     },
@@ -1034,16 +1064,16 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       }
       const type =
         pendingPlacement?.type ??
-        (toolState === 'text' || toolState === 'sticker' || toolState === 'image' ? toolState : undefined);
+        (toolState === 'text' || toolState === 'code' || toolState === 'sticker' || toolState === 'image' ? toolState : undefined);
       if (!type) {
         return;
       }
       const patch = pendingPlacement?.patch ?? {};
       const width = Number(
-        patch.width ?? (type === 'text' ? toolStyles.text.width : type === 'sticker' ? toolStyles.sticker.width : 220),
+        patch.width ?? (type === 'text' ? toolStyles.text.width : type === 'code' ? toolStyles.code.width : type === 'sticker' ? toolStyles.sticker.width : 220),
       );
       const height = Number(
-        patch.height ?? (type === 'text' ? toolStyles.text.height : type === 'sticker' ? toolStyles.sticker.height : 160),
+        patch.height ?? (type === 'text' ? toolStyles.text.height : type === 'code' ? toolStyles.code.height : type === 'sticker' ? toolStyles.sticker.height : 160),
       );
       if (type === 'sticker' && !(patch.assetId ?? toolStyles.sticker.assetId)) {
         return;
@@ -1352,7 +1382,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
     return {
       manifest: {
         formatVersion: currentFormatVersion,
-        appVersion: '0.1.0',
+        appVersion: currentAppVersion,
         title: normalizedDocument.title,
         createdAt: normalizedDocument.createdAt,
         updatedAt: now,

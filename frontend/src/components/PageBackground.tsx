@@ -1,9 +1,10 @@
 import type { AssetMeta, NotePage } from '../types';
+import { assetDataUrl } from '../lib/files';
 
 export function PageBackground({ page, assets }: { page: NotePage; assets: AssetMeta[] }) {
   // 背景图只保存 assetId 和裁剪百分比；图片二进制仍走 assets 打包进 .tnote。
   const asset = assets.find((item) => item.id === page.backgroundAssetId);
-  const src = asset?.dataUrl ?? (asset?.dataBase64 ? `data:${asset.mimeType};base64,${asset.dataBase64}` : undefined);
+  const src = assetDataUrl(asset);
   if (!src) {
     return null;
   }

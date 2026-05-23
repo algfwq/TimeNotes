@@ -120,6 +120,165 @@ textarea {
   cursor: text;
 }
 
+.timenote-element[data-type="code"] {
+  cursor: grab;
+}
+
+.timenote-element[data-type="code"][data-editing="true"] {
+  cursor: text;
+  user-select: text;
+}
+
+.timenote-element[data-type="code"][data-editing="true"]:active {
+  cursor: text;
+}
+
+.timenotes-code-block {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.18);
+}
+
+.timenotes-code-block-selected {
+  box-shadow: 0 0 0 2px rgba(47, 111, 237, 0.24), 0 14px 32px rgba(15, 23, 42, 0.18);
+}
+
+.timenotes-code-header {
+  display: flex;
+  height: 32px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 0 8px 0 12px;
+  color: rgba(255, 255, 255, 0.68);
+  font-family: Inter, "Segoe UI", sans-serif;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.timenotes-code-language {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timenotes-code-copy {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  cursor: pointer;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.timenotes-code-copy:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+
+.timenotes-code-pre,
+.timenotes-code-editor {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  overflow: auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-family: "Cascadia Code", "Fira Code", Consolas, "SFMono-Regular", monospace;
+  font-size: inherit;
+  line-height: 1.55;
+  tab-size: 2;
+}
+
+.timenotes-code-pre {
+  padding: 12px 14px 16px;
+  white-space: pre;
+}
+
+.timenotes-code-pre code {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.timenotes-code-editor {
+  resize: none;
+  padding: 12px 14px 16px;
+  outline: none;
+  white-space: pre;
+}
+
+.timenotes-code-block .token.comment,
+.timenotes-code-block .token.prolog,
+.timenotes-code-block .token.doctype,
+.timenotes-code-block .token.cdata {
+  color: #8ea0b8;
+}
+
+.timenotes-code-block .token.punctuation {
+  color: #c7d2e0;
+}
+
+.timenotes-code-block .token.property,
+.timenotes-code-block .token.tag,
+.timenotes-code-block .token.boolean,
+.timenotes-code-block .token.number,
+.timenotes-code-block .token.constant,
+.timenotes-code-block .token.symbol {
+  color: #f8c471;
+}
+
+.timenotes-code-block .token.selector,
+.timenotes-code-block .token.attr-name,
+.timenotes-code-block .token.string,
+.timenotes-code-block .token.char,
+.timenotes-code-block .token.builtin,
+.timenotes-code-block .token.inserted {
+  color: #9ae6b4;
+}
+
+.timenotes-code-block .token.operator,
+.timenotes-code-block .token.entity,
+.timenotes-code-block .token.url,
+.timenotes-code-block .token.variable {
+  color: #d7e2f0;
+}
+
+.timenotes-code-block .token.atrule,
+.timenotes-code-block .token.attr-value,
+.timenotes-code-block .token.function,
+.timenotes-code-block .token.class-name {
+  color: #93c5fd;
+}
+
+.timenotes-code-block .token.keyword {
+  color: #c4b5fd;
+}
+
+.timenotes-code-block .token.regex,
+.timenotes-code-block .token.important {
+  color: #fda4af;
+}
+
+.timenotes-code-block .token.deleted {
+  color: #f87171;
+}
+
 .semi-modal,
 .semi-modal-mask {
   z-index: 1000;

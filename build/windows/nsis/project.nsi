@@ -22,7 +22,7 @@
 ## !define INFO_PROJECTNAME    "my-project" # Default "TimeNotes"
 ## !define INFO_COMPANYNAME    "ALGFWQ" # Default "ALGFWQ"
 ## !define INFO_PRODUCTNAME    "TimeNotes" # Default "TimeNotes"
-## !define INFO_PRODUCTVERSION "1.0.0"     # Default "0.1.0"
+## !define INFO_PRODUCTVERSION "1.0.0"     # Default "2.0.0"
 ## !define INFO_COPYRIGHT      "(c) Now, ALGFWQ" # Default "© 2026, ALGFWQ"
 ###
 ## !define PRODUCT_EXECUTABLE  "Application.exe"      # Default "${INFO_PROJECTNAME}.exe"

@@ -7,6 +7,7 @@ const toolLabels: Record<ToolMode, string> = {
   select: '选择',
   pan: '移动画布',
   text: '文本',
+  code: '代码块',
   image: '图片',
   sticker: '贴纸',
   tape: '胶带笔',

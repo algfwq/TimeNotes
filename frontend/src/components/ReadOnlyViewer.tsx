@@ -4,7 +4,9 @@ import { Button, Pagination, Slider, Typography } from '@douyinfe/semi-ui';
 import { IconRefresh } from '@douyinfe/semi-icons';
 import { useDocument } from '../providers/DocumentProvider';
 import type { AssetMeta, NoteElement, NotePage } from '../types';
+import { assetDataUrl } from '../lib/files';
 import { PageBackground } from './PageBackground';
+import { CodeBlockPreview } from './elements/CodeBlockElement';
 
 export function ReadOnlyViewer() {
   const { document, activePage, setActivePage } = useDocument();
@@ -244,9 +246,17 @@ function ReadOnlyElement({
     );
   }
 
+  if (element.type === 'code') {
+    return (
+      <div style={base}>
+        <CodeBlockPreview element={element} readOnly />
+      </div>
+    );
+  }
+
   if (element.type === 'image' || element.type === 'sticker') {
     const asset = assets.find((item) => item.id === element.assetId);
-    const src = asset?.dataUrl ?? (asset?.dataBase64 ? `data:${asset.mimeType};base64,${asset.dataBase64}` : undefined);
+    const src = assetDataUrl(asset);
     return src ? (
       <img
         alt=""

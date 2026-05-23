@@ -2,6 +2,8 @@ import { useMemo } from 'react';
 import { IconHandle } from '@douyinfe/semi-icons';
 import { useDocument } from '../../providers/DocumentProvider';
 import type { AssetMeta, NoteDocument, NoteElement } from '../../types';
+import { assetDataUrl, isGifAsset } from '../../lib/files';
+import { CodeBlockElement } from './CodeBlockElement';
 import { RichTextElement } from './RichTextElement';
 
 const directDragLiveSyncIntervalMs = 120;
@@ -58,14 +60,14 @@ export function ElementRenderer({
             updateElement,
           });
         }
-        if (editing && element.type !== 'text') {
+        if (editing && element.type !== 'text' && element.type !== 'code') {
           stopEditing();
         }
       }}
       onDoubleClick={(event) => {
         event.stopPropagation();
         selectElement(element.id);
-        if (element.type === 'text') {
+        if (element.type === 'text' || element.type === 'code') {
           startEditing(element.id);
         }
       }}
@@ -234,13 +236,19 @@ function renderElement(element: NoteElement, selected: boolean, editing: boolean
   if (element.type === 'text') {
     return <RichTextElement element={element} selected={selected} editing={editing} />;
   }
+  if (element.type === 'code') {
+    return <CodeBlockElement element={element} selected={selected} editing={editing} />;
+  }
   if ((element.type === 'drawing' || element.type === 'tape') && element.points?.length) {
     return <StrokeSvg element={element} selected={selected} />;
   }
   if (element.type === 'image' || element.type === 'sticker') {
     // 贴纸裁剪结果是元素级显示数据，不能反向污染全局贴纸库。
-    const elementCropDataUrl = element.type === 'sticker' && typeof style.cropDataUrl === 'string' && style.cropDataUrl.startsWith('data:') ? style.cropDataUrl : undefined;
-    const dataUrl = elementCropDataUrl ?? asset?.dataUrl ?? (asset?.dataBase64 ? `data:${asset.mimeType};base64,${asset.dataBase64}` : undefined);
+    const elementCropDataUrl =
+      element.type === 'sticker' && !isGifAsset(asset) && typeof style.cropDataUrl === 'string' && style.cropDataUrl.startsWith('data:')
+        ? style.cropDataUrl
+        : undefined;
+    const dataUrl = elementCropDataUrl ?? assetDataUrl(asset);
     if (dataUrl) {
       return (
         <img

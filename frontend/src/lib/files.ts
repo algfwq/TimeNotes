@@ -17,6 +17,30 @@ export function readFileAsDataURL(file: File): Promise<string> {
   });
 }
 
+export function assetDataUrl(asset?: Pick<AssetMeta, 'mimeType' | 'dataBase64' | 'dataUrl'> | null) {
+  if (!asset) {
+    return undefined;
+  }
+  if (asset.dataUrl) {
+    return asset.dataUrl;
+  }
+  if (asset.dataBase64) {
+    return `data:${asset.mimeType || 'application/octet-stream'};base64,${asset.dataBase64}`;
+  }
+  return undefined;
+}
+
+export function isGifAsset(asset?: Pick<AssetMeta, 'mimeType' | 'name' | 'path'> | null) {
+  if (!asset) {
+    return false;
+  }
+  return /^image\/gif(?:;|$)/i.test(asset.mimeType || '') || /\.(gif)$/i.test(asset.name || '') || /\.(gif)$/i.test(asset.path || '');
+}
+
+export function isSupportedImageFile(file: Pick<File, 'type' | 'name'>) {
+  return file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg)$/i.test(file.name);
+}
+
 export function getImageIntrinsicSize(src: string): Promise<ImageIntrinsicSize> {
   return new Promise((resolve, reject) => {
     const image = new Image();
@@ -93,8 +117,20 @@ function mimeTypeFromDataUrl(value: string) {
   return match?.[1] ?? '';
 }
 
-function mimeTypeFromName(name: string) {
+export function mimeTypeFromName(name: string) {
   const lower = name.toLowerCase();
+  if (lower.endsWith('.gif')) {
+    return 'image/gif';
+  }
+  if (lower.endsWith('.png')) {
+    return 'image/png';
+  }
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+    return 'image/jpeg';
+  }
+  if (lower.endsWith('.webp')) {
+    return 'image/webp';
+  }
   if (lower.endsWith('.woff2')) {
     return 'font/woff2';
   }

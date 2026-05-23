@@ -1,4 +1,4 @@
-export type ElementType = 'text' | 'image' | 'sticker' | 'tape' | 'shape' | 'drawing';
+export type ElementType = 'text' | 'code' | 'image' | 'sticker' | 'tape' | 'shape' | 'drawing';
 
 export interface NotePage {
   id: string;
@@ -101,7 +101,7 @@ export interface NotePackage {
   thumbnail: string;
 }
 
-export type ToolMode = 'select' | 'pan' | 'text' | 'image' | 'sticker' | 'tape' | 'drawing';
+export type ToolMode = 'select' | 'pan' | 'text' | 'code' | 'image' | 'sticker' | 'tape' | 'drawing';
 
 export interface ToolStyleState {
   text: {
@@ -113,6 +113,14 @@ export interface ToolStyleState {
     borderWidth: number;
     borderStyle: string;
     borderRadius: number;
+    width: number;
+    height: number;
+  };
+  code: {
+    language: string;
+    fontSize: number;
+    color: string;
+    background: string;
     width: number;
     height: number;
   };
@@ -133,7 +141,7 @@ export interface ToolStyleState {
 }
 
 export interface PendingPlacement {
-  type: Extract<ElementType, 'text' | 'image' | 'sticker'>;
+  type: Extract<ElementType, 'text' | 'code' | 'image' | 'sticker'>;
   patch?: Partial<NoteElement>;
 }
 

@@ -5,7 +5,7 @@ import { IconArrowDown, IconArrowUp, IconCopy, IconCrop, IconDelete, IconEdit, I
 import { useDocument } from '../providers/DocumentProvider';
 import { useCollaboration } from '../providers/CollaborationProvider';
 import type { NoteElement, NotePage, PresenceUser } from '../types';
-import { createAssetFromDataUrl } from '../lib/files';
+import { assetDataUrl, createAssetFromDataUrl, isGifAsset } from '../lib/files';
 import { ImageCropModal } from './ImageCropModal';
 import { PageBackground } from './PageBackground';
 import { PageRenderer } from './PageRenderer';
@@ -181,7 +181,7 @@ export function CanvasStage() {
     if (target.closest('[data-element-id]')) {
       return;
     }
-    if (tool === 'text' || tool === 'sticker' || tool === 'image') {
+    if (tool === 'text' || tool === 'code' || tool === 'sticker' || tool === 'image') {
       const point = getDomPagePoint(event, paperRef.current, zoom);
       if (point) {
         event.preventDefault();
@@ -216,7 +216,7 @@ export function CanvasStage() {
     <div
       ref={viewportRef}
       className={`relative h-full overflow-hidden bg-[#e8e2d6] ${
-        tool === 'pan' ? 'cursor-grab' : tool === 'text' || tool === 'sticker' || tool === 'image' ? 'cursor-crosshair' : ''
+        tool === 'pan' ? 'cursor-grab' : tool === 'text' || tool === 'code' || tool === 'sticker' || tool === 'image' ? 'cursor-crosshair' : ''
       }`}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) {
@@ -480,6 +480,8 @@ function CanvasContextMenu({ state, onClose, onCrop }: { state: ContextMenuState
   }
   const style = element.style ?? {};
   const isMedia = element.type === 'image' || element.type === 'sticker';
+  const mediaAsset = isMedia ? [...document.assets, ...document.stickers].find((asset) => asset.id === element.assetId) : undefined;
+  const canCropMedia = Boolean(isMedia && mediaAsset && !isGifAsset(mediaAsset));
   const canDuplicate = element.type !== 'drawing' && element.type !== 'tape';
   return (
     <div
@@ -488,10 +490,10 @@ function CanvasContextMenu({ state, onClose, onCrop }: { state: ContextMenuState
       onClick={(event) => event.stopPropagation()}
       onContextMenu={(event) => event.preventDefault()}
     >
-      {element.type === 'text' ? (
+      {element.type === 'text' || element.type === 'code' ? (
         <MenuButton
           icon={<IconEdit />}
-          label="编辑文字"
+          label={element.type === 'code' ? '编辑代码' : '编辑文字'}
           onClick={() => {
             startEditing(element.id);
             onClose();
@@ -500,14 +502,16 @@ function CanvasContextMenu({ state, onClose, onCrop }: { state: ContextMenuState
       ) : null}
       {isMedia ? (
         <>
-          <MenuButton
-            icon={<IconCrop />}
-            label="裁剪图片"
-            onClick={() => {
-              onCrop(element.id);
-              onClose();
-            }}
-          />
+          {canCropMedia ? (
+            <MenuButton
+              icon={<IconCrop />}
+              label="裁剪图片"
+              onClick={() => {
+                onCrop(element.id);
+                onClose();
+              }}
+            />
+          ) : null}
           {style.fit === 'cover' ? (
             <MenuButton
               icon={<IconImage />}
@@ -564,9 +568,9 @@ function ElementCropModal({ elementId, onClose }: { elementId: string | null; on
   const { document, addAsset, updateElement } = useDocument();
   const element = elementId ? document.elements.find((item) => item.id === elementId) : undefined;
   const asset = element ? [...document.assets, ...document.stickers].find((item) => item.id === element.assetId) : undefined;
-  const src = asset?.dataUrl ?? (asset?.dataBase64 ? `data:${asset.mimeType};base64,${asset.dataBase64}` : undefined);
+  const src = !isGifAsset(asset) ? assetDataUrl(asset) : undefined;
   const apply = async (dataUrl: string, size: { width: number; height: number; aspectRatio: number }) => {
-    if (element) {
+    if (element && !isGifAsset(asset)) {
       const nextHeight = Math.max(1, Math.round(element.width / size.aspectRatio));
       if (element.type === 'sticker') {
         // 贴纸裁剪只影响当前画布元素，不写回贴纸库，避免“贴纸库”被裁剪结果污染。

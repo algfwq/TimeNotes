@@ -3,6 +3,7 @@ import { Avatar, Badge, Button, Chat, ColorPicker, Empty, Input, Modal, Notifica
 import {
   IconArrowDown,
   IconArrowUp,
+  IconCodeStroked,
   IconColorPalette,
   IconCopy,
   IconCrop,
@@ -17,8 +18,9 @@ import {
 } from '@douyinfe/semi-icons';
 import { AssetService } from '../../bindings/changeme';
 import { builtinStickers } from '../data/builtinStickers';
-import { createAssetFromDataUrl, createAssetFromFile, createAssetFromUrl, getImagePlacementSize } from '../lib/files';
+import { assetDataUrl, createAssetFromDataUrl, createAssetFromFile, createAssetFromUrl, getImagePlacementSize, isGifAsset, isSupportedImageFile } from '../lib/files';
 import { fontDisplayName, fontFamilyForAsset } from '../lib/fonts';
+import { codeLanguageLabel, codeLanguageOptions, normalizeCodeLanguage } from '../lib/codeHighlighting';
 import { useCollaboration } from '../providers/CollaborationProvider';
 import { useDocument } from '../providers/DocumentProvider';
 import type { AssetMeta, ChatMessage, ElementType, NoteElement, NotePage, PresenceUser, SystemFont, ToolMode, ToolStyleState } from '../types';
@@ -27,6 +29,8 @@ import { ImageCropModal } from './ImageCropModal';
 const pageSwatches = ['#fffaf0', '#ffffff', '#f7f0df', '#f2f5ff', '#eef8f1', '#fff1f3', '#202124'];
 const backgroundSwatches = ['', '#ffffff', '#fff3b8', '#f3d6e7', '#d8eef0', '#e9f1d8', '#f8d3c4'];
 const textSwatches = ['#2f2a24', '#0f4c81', '#3d6b59', '#8a3f58', '#6b4b9b', '#ffffff'];
+const codeBackgroundSwatches = ['#101828', '#111827', '#1f2937', '#24292f', '#0f172a', '#fffdf7'];
+const codeTextSwatches = ['#d7e2f0', '#e5e7eb', '#f8fafc', '#2f2a24', '#93c5fd', '#9ae6b4'];
 const brushSwatches = ['#446f64', '#2f2a24', '#0f4c81', '#8a3f58', '#6b4b9b', '#f2cf72'];
 const tapeSwatches = ['#f2cf72', '#f8a7b8', '#a9d8c6', '#9dc3ea', '#d5c2f0', '#f7b267'];
 
@@ -443,11 +447,12 @@ function PageStylePanel({
   const [cropVisible, setCropVisible] = useState(false);
   const [pendingAsset, setPendingAsset] = useState<AssetMeta | null>(null);
   const backgroundAsset = pendingAsset?.id === page.backgroundAssetId ? pendingAsset : assets.find((asset) => asset.id === page.backgroundAssetId);
-  const backgroundSrc = backgroundAsset?.dataUrl ?? (backgroundAsset?.dataBase64 ? `data:${backgroundAsset.mimeType};base64,${backgroundAsset.dataBase64}` : undefined);
+  const backgroundSrc = assetDataUrl(backgroundAsset);
+  const canCropBackground = Boolean(backgroundSrc && !isGifAsset(backgroundAsset));
 
   const importBackground = async (file: File) => {
     // 背景图也是普通 asset；导入后立即打开裁剪，保证页面背景适配当前纸张比例。
-    if (!file.type.startsWith('image/') && !/\.(png|jpe?g|gif|webp|svg)$/i.test(file.name)) {
+    if (!isSupportedImageFile(file)) {
       return;
     }
     const asset = await createAssetFromFile(file, 'assets');
@@ -459,10 +464,15 @@ function PageStylePanel({
       backgroundCropX: 50,
       backgroundCropY: 50,
     });
-    setCropVisible(true);
+    setCropVisible(!isGifAsset(asset));
   };
 
   const applyBackgroundCrop = async (dataUrl: string) => {
+    if (isGifAsset(backgroundAsset)) {
+      setCropVisible(false);
+      setPendingAsset(null);
+      return;
+    }
     // 裁剪结果生成新 asset，不覆盖原图，方便以后扩展“恢复原图/再次裁剪”。
     const asset = await createAssetFromDataUrl(dataUrl, `${backgroundAsset?.name ?? '画布背景'}-裁剪.png`, 'assets', 'image/png');
     onAddAsset(asset);
@@ -498,7 +508,7 @@ function PageStylePanel({
             上传背景图
           </Button>
         </Upload>
-        <Button size="small" icon={<IconCrop />} disabled={!backgroundSrc} onClick={() => setCropVisible(true)}>
+        <Button size="small" icon={<IconCrop />} disabled={!canCropBackground} onClick={() => setCropVisible(true)}>
           裁剪背景
         </Button>
         {backgroundSrc ? (
@@ -514,7 +524,7 @@ function PageStylePanel({
       </div>
       <ImageCropModal
         title="裁剪画布背景"
-        visible={cropVisible}
+        visible={cropVisible && canCropBackground}
         src={backgroundSrc}
         aspectRatio={page.width / Math.max(1, page.height)}
         onClose={() => {
@@ -668,6 +678,30 @@ function ElementControls({
       </PanelCard>
     );
   }
+  if (element.type === 'code') {
+    return (
+      <PanelCard title="代码块属性" action={<Button size="small" icon={<IconEdit />} onClick={onEditText}>编辑代码</Button>}>
+        <CodeStyleControls
+          value={{
+            language: normalizeCodeLanguage(style.language),
+            fontSize: Number(style.fontSize ?? 14),
+            color: String(style.color ?? '#d7e2f0'),
+            background: String(style.background ?? '#101828'),
+            width: element.width,
+            height: element.height,
+          }}
+          onPatch={(patch) => {
+            const { width, height, ...stylePatch } = patch;
+            onPatch({
+              ...(width !== undefined ? { width } : {}),
+              ...(height !== undefined ? { height } : {}),
+              style: { ...style, ...stylePatch },
+            });
+          }}
+        />
+      </PanelCard>
+    );
+  }
   if (element.type === 'drawing' || (element.type === 'tape' && element.points?.length)) {
     return (
       <PanelCard title={element.type === 'tape' ? '胶带笔迹' : '画笔笔迹'}>
@@ -750,6 +784,14 @@ function ToolPresetControls({
       <PanelCard title="新文字样式">
         <TextStyleControls value={toolStyles.text} fonts={fonts} onPatch={(patch) => onUpdateToolStyle('text', patch)} onAddFont={onAddFont} onUseSystemFont={onUseSystemFont} />
         <div className="mt-3 text-xs leading-5 text-black/45">选择文本工具后，在画布上点击位置再创建文字。</div>
+      </PanelCard>
+    );
+  }
+  if (tool === 'code') {
+    return (
+      <PanelCard title="新代码块样式">
+        <CodeStyleControls value={toolStyles.code} onPatch={(patch) => onUpdateToolStyle('code', patch)} />
+        <div className="mt-3 text-xs leading-5 text-black/45">选择代码块工具后，在画布上点击位置再创建代码块。</div>
       </PanelCard>
     );
   }
@@ -847,6 +889,29 @@ function TextStyleControls({
   );
 }
 
+function CodeStyleControls({ value, onPatch }: { value: ToolStyleState['code']; onPatch: (patch: Partial<ToolStyleState['code']>) => void }) {
+  return (
+    <div>
+      <label className="mb-3 block">
+        <span className="mb-1 block text-xs text-black/45">语言</span>
+        <Select
+          value={normalizeCodeLanguage(value.language)}
+          style={{ width: '100%' }}
+          optionList={codeLanguageOptions.map((option) => ({ label: option.label, value: option.value }))}
+          onChange={(language) => onPatch({ language: normalizeCodeLanguage(language) })}
+        />
+      </label>
+      <Swatches label="代码背景" value={value.background} values={codeBackgroundSwatches} onChange={(background) => onPatch({ background })} />
+      <Swatches label="代码文字" value={value.color} values={codeTextSwatches} onChange={(color) => onPatch({ color })} />
+      <div className="grid grid-cols-2 gap-2">
+        <NumberField label="字号" value={Number(value.fontSize ?? 14)} min={10} max={48} onChange={(fontSize) => onPatch({ fontSize })} />
+        <NumberField label="宽度" value={Math.round(value.width)} min={120} max={1600} onChange={(width) => onPatch({ width })} />
+        <NumberField label="高度" value={Math.round(value.height)} min={80} max={1200} onChange={(height) => onPatch({ height })} />
+      </div>
+    </div>
+  );
+}
+
 function BrushControls({
   type,
   value,
@@ -901,7 +966,7 @@ function StickerControls({
     try {
       const existing = stickers.find((asset) => asset.name === name);
       if (existing) {
-        const src = existing.dataUrl ?? (existing.dataBase64 ? `data:${existing.mimeType};base64,${existing.dataBase64}` : '');
+        const src = assetDataUrl(existing) ?? '';
         const size = src ? await getImagePlacementSize(src, 142, 142).catch(() => ({ width: value.width, height: value.height, aspectRatio: value.width / Math.max(1, value.height) })) : { width: value.width, height: value.height, aspectRatio: value.width / Math.max(1, value.height) };
         onPatch({ assetId: existing.id, width: size.width, height: size.height });
         onChooseSticker?.();
@@ -909,7 +974,7 @@ function StickerControls({
       }
       const asset = await createAssetFromUrl(url, name, 'stickers');
       onAddSticker(asset);
-      const src = asset.dataUrl ?? (asset.dataBase64 ? `data:${asset.mimeType};base64,${asset.dataBase64}` : '');
+      const src = assetDataUrl(asset) ?? '';
       const size = src ? await getImagePlacementSize(src, 142, 142).catch(() => ({ width: value.width, height: value.height, aspectRatio: value.width / Math.max(1, value.height) })) : { width: value.width, height: value.height, aspectRatio: value.width / Math.max(1, value.height) };
       onPatch({ assetId: asset.id, width: size.width, height: size.height });
       onChooseSticker?.();
@@ -919,12 +984,13 @@ function StickerControls({
   };
 
   const importSticker = async (file: File) => {
-    if (!file.type.startsWith('image/') && !/\.(png|jpe?g|gif|webp|svg)$/i.test(file.name)) {
+    if (!isSupportedImageFile(file)) {
       return;
     }
     const asset = await createAssetFromFile(file, 'stickers');
     onAddSticker(asset);
-    const size = asset.dataUrl ? await getImagePlacementSize(asset.dataUrl, 142, 142).catch(() => ({ width: value.width, height: value.height, aspectRatio: value.width / Math.max(1, value.height) })) : { width: value.width, height: value.height, aspectRatio: value.width / Math.max(1, value.height) };
+    const src = assetDataUrl(asset);
+    const size = src ? await getImagePlacementSize(src, 142, 142).catch(() => ({ width: value.width, height: value.height, aspectRatio: value.width / Math.max(1, value.height) })) : { width: value.width, height: value.height, aspectRatio: value.width / Math.max(1, value.height) };
     onPatch({ assetId: asset.id, width: size.width, height: size.height });
     onChooseSticker?.();
     Toast.success('贴纸已导入');
@@ -955,14 +1021,14 @@ function StickerControls({
       </div>
       <div className="grid grid-cols-3 gap-2">
         {visibleStickers.map((asset) => {
-          const src = asset.dataUrl ?? (asset.dataBase64 ? `data:${asset.mimeType};base64,${asset.dataBase64}` : undefined);
+          const src = assetDataUrl(asset);
           return (
             <button
               key={asset.id}
               type="button"
               className={`group relative h-20 rounded-[8px] border bg-white p-1 ${value.assetId === asset.id ? 'border-[#2f6fed] ring-2 ring-[#2f6fed]/20' : 'border-black/10'}`}
               onClick={async () => {
-                const src = asset.dataUrl ?? (asset.dataBase64 ? `data:${asset.mimeType};base64,${asset.dataBase64}` : '');
+                const src = assetDataUrl(asset) ?? '';
                 const size = src ? await getImagePlacementSize(src, 142, 142).catch(() => ({ width: value.width, height: value.height, aspectRatio: value.width / Math.max(1, value.height) })) : { width: value.width, height: value.height, aspectRatio: value.width / Math.max(1, value.height) };
                 onPatch({ assetId: asset.id, width: size.width, height: size.height });
                 onChooseSticker?.();
@@ -1025,7 +1091,8 @@ function MediaControls({
   onCrop: () => void;
 }) {
   const asset = assets.find((item) => item.id === element.assetId);
-  const src = asset?.dataUrl ?? (asset?.dataBase64 ? `data:${asset.mimeType};base64,${asset.dataBase64}` : undefined);
+  const src = assetDataUrl(asset);
+  const canCrop = Boolean(src && !isGifAsset(asset));
   const aspectRatio = Number(element.style?.aspectRatio ?? 0) || element.width / Math.max(1, element.height);
   return (
     <div>
@@ -1036,7 +1103,7 @@ function MediaControls({
         <NumberField label="宽度" value={Math.round(element.width)} min={32} max={1600} onChange={(width) => onPatch({ width, height: Math.max(1, Math.round(width / aspectRatio)) })} />
         <NumberField label="高度" value={Math.round(element.height)} min={32} max={1600} onChange={(height) => onPatch({ height, width: Math.max(1, Math.round(height * aspectRatio)) })} />
       </div>
-      <Button className="mt-3" size="small" icon={<IconCrop />} disabled={!src} onClick={onCrop}>
+      <Button className="mt-3" size="small" icon={<IconCrop />} disabled={!canCrop} onClick={onCrop}>
         裁剪图片
       </Button>
     </div>
@@ -1263,10 +1330,10 @@ function InspectorCropModal({ elementId, onClose }: { elementId: string | null; 
   const { document, addAsset, updateElement } = useDocument();
   const element = elementId ? document.elements.find((item) => item.id === elementId) : undefined;
   const asset = element ? [...document.assets, ...document.stickers].find((item) => item.id === element.assetId) : undefined;
-  const src = asset?.dataUrl ?? (asset?.dataBase64 ? `data:${asset.mimeType};base64,${asset.dataBase64}` : undefined);
+  const src = !isGifAsset(asset) ? assetDataUrl(asset) : undefined;
 
   const apply = async (dataUrl: string, size: { width: number; height: number; aspectRatio: number }) => {
-    if (element) {
+    if (element && !isGifAsset(asset)) {
       const nextHeight = Math.max(1, Math.round(element.width / size.aspectRatio));
       if (element.type === 'sticker') {
         // 裁剪贴纸时只替换当前元素的显示图，不把裁剪图塞回贴纸库。
@@ -1290,7 +1357,7 @@ function InspectorCropModal({ elementId, onClose }: { elementId: string | null; 
   return (
     <ImageCropModal
       title="裁剪图片"
-      visible={Boolean(element && src)}
+      visible={Boolean(element && src && !isGifAsset(asset))}
       src={src}
       onClose={onClose}
       onApply={apply}
@@ -1318,10 +1385,20 @@ function LayerPreview({ element, assets }: { element: NoteElement; assets: Asset
       </div>
     );
   }
+  if (element.type === 'code') {
+    return (
+      <div className="grid h-11 w-14 shrink-0 place-items-center rounded-[6px] border border-black/10 bg-[#101828] text-sm text-white/80">
+        <IconCodeStroked />
+      </div>
+    );
+  }
   if (element.type === 'image' || element.type === 'sticker') {
     const asset = assets.find((item) => item.id === element.assetId);
-    const cropDataUrl = element.type === 'sticker' && typeof style.cropDataUrl === 'string' && style.cropDataUrl.startsWith('data:') ? style.cropDataUrl : undefined;
-    const src = cropDataUrl ?? asset?.dataUrl ?? (asset?.dataBase64 ? `data:${asset.mimeType};base64,${asset.dataBase64}` : undefined);
+    const cropDataUrl =
+      element.type === 'sticker' && !isGifAsset(asset) && typeof style.cropDataUrl === 'string' && style.cropDataUrl.startsWith('data:')
+        ? style.cropDataUrl
+        : undefined;
+    const src = cropDataUrl ?? assetDataUrl(asset);
     return (
       <div className="grid h-11 w-14 shrink-0 place-items-center overflow-hidden rounded-[6px] border border-black/10 bg-transparent text-black/45">
         {src ? (
@@ -1354,6 +1431,10 @@ function layerTitle(element: NoteElement, assets: AssetMeta[]) {
   }
   if (element.type === 'text') {
     return stripHtml(element.content || '文本');
+  }
+  if (element.type === 'code') {
+    const summary = (element.content || '').split(/\r?\n/).find((line) => line.trim())?.trim();
+    return summary ? `${codeLanguageLabel(element.style?.language)} · ${summary}` : `${codeLanguageLabel(element.style?.language)} 代码块`;
   }
   if (element.type === 'image' || element.type === 'sticker') {
     return assets.find((asset) => asset.id === element.assetId)?.name ?? (element.type === 'sticker' ? '贴纸' : '图片');

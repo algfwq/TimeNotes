@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button, Empty, Toast, Upload } from '@douyinfe/semi-ui';
 import { IconCrop, IconDelete, IconImage, IconUpload } from '@douyinfe/semi-icons';
-import { createAssetFromDataUrl, createAssetFromFile, getImagePlacementSize } from '../../lib/files';
+import { assetDataUrl, createAssetFromDataUrl, createAssetFromFile, getImagePlacementSize, isGifAsset, isSupportedImageFile } from '../../lib/files';
 import { useDocument } from '../../providers/DocumentProvider';
 import { ImageCropModal } from '../ImageCropModal';
 import type { AssetMeta } from '../../types';
@@ -13,7 +13,7 @@ export function AssetLibrary() {
 
   const importFile = useCallback(
     async (file: File) => {
-      if (!file.type.startsWith('image/') && !/\.(png|jpe?g|gif|webp|svg)$/i.test(file.name)) {
+      if (!isSupportedImageFile(file)) {
         return;
       }
       const asset = await createAssetFromFile(file, 'assets');
@@ -25,7 +25,7 @@ export function AssetLibrary() {
 
   useEffect(() => {
     const handlePaste = (event: ClipboardEvent) => {
-      const files = Array.from(event.clipboardData?.files ?? []).filter((file) => file.type.startsWith('image/'));
+      const files = Array.from(event.clipboardData?.files ?? []).filter(isSupportedImageFile);
       if (files.length === 0) {
         return;
       }
@@ -48,16 +48,17 @@ export function AssetLibrary() {
   }, []);
 
   const chooseAsset = async (asset: AssetMeta) => {
-    const src = asset.dataUrl ?? (asset.dataBase64 ? `data:${asset.mimeType};base64,${asset.dataBase64}` : '');
+    const src = assetDataUrl(asset) ?? '';
     const size = src ? await getImagePlacementSize(src, 220, 180).catch(() => ({ width: 220, height: 160, aspectRatio: 220 / 160 })) : { width: 220, height: 160, aspectRatio: 220 / 160 };
     armPlacement({ type: 'image', patch: { assetId: asset.id, width: size.width, height: size.height, style: { fit: 'contain', aspectRatio: size.aspectRatio } } });
     Toast.info('已选择素材，请在画布上点击放置位置');
   };
 
   const cropAsset = document.assets.find((asset) => asset.id === cropAssetId);
-  const cropSrc = cropAsset?.dataUrl ?? (cropAsset?.dataBase64 ? `data:${cropAsset.mimeType};base64,${cropAsset.dataBase64}` : undefined);
+  const cropSrc = cropAsset && !isGifAsset(cropAsset) ? assetDataUrl(cropAsset) : undefined;
+  const menuAsset = menu ? document.assets.find((asset) => asset.id === menu.assetId) : undefined;
   const applyAssetCrop = async (dataUrl: string) => {
-    if (cropAsset) {
+    if (cropAsset && !isGifAsset(cropAsset)) {
       const nextAsset = await createAssetFromDataUrl(dataUrl, `${cropAsset.name}-裁剪.png`, 'assets', 'image/png');
       replaceAsset(cropAsset.id, nextAsset);
       Toast.success('素材已裁剪');
@@ -98,7 +99,7 @@ export function AssetLibrary() {
             }}
           >
             <div className="aspect-[4/3] overflow-hidden rounded-[6px] bg-transparent">
-              <img className="h-full w-full object-contain" src={asset.dataUrl ?? `data:${asset.mimeType};base64,${asset.dataBase64}`} alt="" />
+              <img className="h-full w-full object-contain" src={assetDataUrl(asset) ?? ''} alt="" />
             </div>
             <div className="mt-2 truncate text-xs text-black/60">{asset.name}</div>
           </button>
@@ -112,7 +113,13 @@ export function AssetLibrary() {
       ) : null}
       <AssetContextMenu
         state={menu}
+        canCrop={Boolean(menuAsset && !isGifAsset(menuAsset))}
         onCrop={(assetId) => {
+          const asset = document.assets.find((item) => item.id === assetId);
+          if (!asset || isGifAsset(asset)) {
+            setMenu(null);
+            return;
+          }
           setCropAssetId(assetId);
           setMenu(null);
         }}
@@ -129,10 +136,12 @@ export function AssetLibrary() {
 
 function AssetContextMenu({
   state,
+  canCrop,
   onCrop,
   onDelete,
 }: {
   state: { x: number; y: number; assetId: string } | null;
+  canCrop: boolean;
   onCrop: (assetId: string) => void;
   onDelete: (assetId: string) => void;
 }) {
@@ -146,10 +155,12 @@ function AssetContextMenu({
       onClick={(event) => event.stopPropagation()}
       onContextMenu={(event) => event.preventDefault()}
     >
-      <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-black/5" onClick={() => onCrop(state.assetId)}>
-        <IconCrop />
-        <span>裁剪素材</span>
-      </button>
+      {canCrop ? (
+        <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-black/5" onClick={() => onCrop(state.assetId)}>
+          <IconCrop />
+          <span>裁剪素材</span>
+        </button>
+      ) : null}
       <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left text-red-600 hover:bg-black/5" onClick={() => onDelete(state.assetId)}>
         <IconDelete />
         <span>删除素材</span>

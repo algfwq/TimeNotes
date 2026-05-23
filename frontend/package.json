@@ -1,7 +1,7 @@
 {
   "name": "react-ts-latest",
   "private": true,
-  "version": "0.0.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -17,8 +17,10 @@
     "@tiptap/pm": "^3.22.5",
     "@tiptap/react": "^3.22.5",
     "@tiptap/starter-kit": "^3.22.5",
+    "@types/prismjs": "^1.26.6",
     "@wailsio/runtime": "latest",
     "konva": "^10.2.5",
+    "prismjs": "^1.30.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-konva": "^18.2.14",

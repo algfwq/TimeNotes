@@ -4,8 +4,8 @@ set -e
 # Build configuration
 APP_NAME="TimeNotes"
 BUNDLE_ID="com.algfwq.timenotes"
-VERSION="0.1.0"
-BUILD_NUMBER="0.1.0"
+VERSION="2.0.0"
+BUILD_NUMBER="2.0.0"
 BUILD_DIR="build/ios"
 TARGET="simulator"
 
