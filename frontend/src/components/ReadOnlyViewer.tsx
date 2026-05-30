@@ -2,17 +2,18 @@ import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from 'react';
 import { Button, Pagination, Slider, Typography } from '@douyinfe/semi-ui';
 import { IconRefresh } from '@douyinfe/semi-icons';
-import { useDocument } from '../providers/DocumentProvider';
-import type { AssetMeta, NoteElement, NotePage } from '../types';
+import type { AssetMeta, NoteElement, NotePage, ResourceTransferProgress } from '../types';
 import { findClosestLinkHref, openExternalLink } from '../lib/externalLinks';
 import { assetDataUrl } from '../lib/files';
+import { resourceKey, useDocument } from '../providers/DocumentProvider';
 import { PageBackground } from './PageBackground';
+import { AudioElement } from './elements/AudioElement';
 import { CodeBlockPreview } from './elements/CodeBlockElement';
 
 const defaultInlineCodeFontFamily = '"Cascadia Code", "Fira Code", Consolas, "SFMono-Regular", monospace';
 
 export function ReadOnlyViewer() {
-  const { document, activePage, setActivePage } = useDocument();
+  const { document, activePage, setActivePage, resourceProgress } = useDocument();
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const panStartRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
   const [scale, setScale] = useState(0.8);
@@ -117,7 +118,7 @@ export function ReadOnlyViewer() {
             transform: `translate(-50%, 0) translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
           }}
         >
-          <ReadOnlyPage page={activePage} elements={elements} assets={document.assets} stickers={document.stickers} />
+          <ReadOnlyPage page={activePage} elements={elements} assets={document.assets} stickers={document.stickers} audios={document.audios} resourceProgress={resourceProgress} />
         </div>
       </div>
     </div>
@@ -129,19 +130,23 @@ function ReadOnlyPage({
   elements,
   assets,
   stickers,
+  audios,
+  resourceProgress,
 }: {
   page: NotePage;
   elements: NoteElement[];
   assets: AssetMeta[];
   stickers: AssetMeta[];
+  audios: AssetMeta[];
+  resourceProgress: Record<string, ResourceTransferProgress>;
 }) {
-  const elementAssets = [...assets, ...stickers];
+  const elementAssets = [...assets, ...stickers, ...audios];
   return (
     <main className="relative overflow-hidden" style={{ width: page.width, height: page.height, background: page.background }}>
       <PageBackground page={page} assets={assets} />
       <PaperTexture page={page} hasImage={Boolean(page.backgroundAssetId)} />
       {elements.map((element) => (
-        <ReadOnlyElement key={element.id} element={element} assets={elementAssets} page={page} />
+        <ReadOnlyElement key={element.id} element={element} assets={elementAssets} page={page} resourceProgress={resourceProgress} />
       ))}
     </main>
   );
@@ -151,10 +156,12 @@ function ReadOnlyElement({
   element,
   assets,
   page,
+  resourceProgress,
 }: {
   element: NoteElement;
   assets: AssetMeta[];
   page: NotePage;
+  resourceProgress: Record<string, ResourceTransferProgress>;
 }) {
   const style = element.style ?? {};
   const handleLinkPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -279,9 +286,20 @@ function ReadOnlyElement({
     );
   }
 
+  if (element.type === 'audio') {
+    const asset = assets.find((item) => item.id === element.assetId);
+    const progress = element.assetId ? resourceProgress[resourceKey('audios', element.assetId)] : undefined;
+    return (
+      <div style={base}>
+        <AudioElement element={element} asset={asset} progress={progress} readOnly />
+      </div>
+    );
+  }
+
   if (element.type === 'image' || element.type === 'sticker') {
     const asset = assets.find((item) => item.id === element.assetId);
     const src = assetDataUrl(asset);
+    const progress = element.assetId ? resourceProgress[resourceKey(element.type === 'sticker' ? 'stickers' : 'assets', element.assetId)] : undefined;
     const showFrame = style.showFrame !== false;
     return src ? (
       <img
@@ -295,6 +313,17 @@ function ReadOnlyElement({
         }}
         className={showFrame ? 'rounded-[8px]' : ''}
       />
+    ) : progress ? (
+      <div style={base} className="grid place-items-center rounded-[8px] border border-dashed border-black/15 bg-white/70 px-3 text-center">
+        <div className="w-full">
+          <div className="truncate text-xs text-black/55">{asset?.name || '素材同步中'}</div>
+          <div className="mt-1 text-[11px] text-black/45">素材传输中</div>
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-black/10">
+            <div className="h-full rounded-full bg-[#2f6fed]" style={{ width: `${Math.round(progress.progress * 100)}%` }} />
+          </div>
+          <div className="mt-1 text-[11px] text-black/45">{Math.round(progress.progress * 100)}%</div>
+        </div>
+      </div>
     ) : null;
   }
 

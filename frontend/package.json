@@ -22,6 +22,7 @@
     "@wailsio/runtime": "latest",
     "konva": "^10.2.5",
     "markdown-it": "^14.2.0",
+    "music-metadata": "^11.12.3",
     "prismjs": "^1.30.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",

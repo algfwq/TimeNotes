@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	currentFormatVersion = 4
+	currentFormatVersion = 5
 	currentAppVersion    = "2.0.0"
 )
 
@@ -38,7 +38,7 @@ func (s *DocumentService) NewDocument() NotePackage {
 	now := time.Now().UTC().Format(time.RFC3339)
 	doc := seedDocument(now)
 	logEvent("info", "document_new", map[string]interface{}{"title": doc.Title, "pages": len(doc.Pages), "elements": len(doc.Elements)})
-	return packageFromDocument(doc, nil, nil, nil, "")
+	return packageFromDocument(doc, nil, nil, nil, nil, "")
 }
 
 func (s *DocumentService) OpenNote(path string) (NotePackage, error) {
@@ -55,6 +55,7 @@ func (s *DocumentService) OpenNote(path string) (NotePackage, error) {
 		"elements": len(note.Document.Elements),
 		"assets":   len(note.Assets),
 		"stickers": len(note.Stickers),
+		"audios":   len(note.Audios),
 	})
 	return note, nil
 }
@@ -76,6 +77,7 @@ func (s *DocumentService) SaveNote(path string, note NotePackage) error {
 		"elements": len(note.Document.Elements),
 		"assets":   len(note.Assets),
 		"stickers": len(note.Stickers),
+		"audios":   len(note.Audios),
 	})
 	return nil
 }
@@ -121,6 +123,21 @@ func (s *AssetService) ImportFonts(paths []string) ([]AssetBlob, error) {
 	}
 	logEvent("info", "fonts_imported", map[string]interface{}{"count": len(fonts)})
 	return fonts, nil
+}
+
+func (s *AssetService) ImportAudios(paths []string) ([]AssetBlob, error) {
+	// 音频素材使用 audios/ 目录；封面和标题等 metadata 由前端解析后写入 AssetMeta。
+	audios := make([]AssetBlob, 0, len(paths))
+	for _, path := range paths {
+		audio, err := readAsset(path, "audios")
+		if err != nil {
+			logEvent("error", "audio_import_failed", map[string]interface{}{"path": path, "error": err.Error()})
+			return nil, err
+		}
+		audios = append(audios, audio)
+	}
+	logEvent("info", "audios_imported", map[string]interface{}{"count": len(audios)})
+	return audios, nil
 }
 
 func (s *AssetService) GetSystemFonts() []SystemFont {
@@ -188,6 +205,9 @@ func (note *NotePackage) normalize() {
 	if note.Document.Fonts == nil {
 		note.Document.Fonts = []AssetMeta{}
 	}
+	if note.Document.Audios == nil {
+		note.Document.Audios = []AssetMeta{}
+	}
 	if note.Document.Stickers == nil {
 		note.Document.Stickers = []AssetMeta{}
 	}
@@ -206,10 +226,11 @@ func (note *NotePackage) normalize() {
 		Assets:        note.Document.Assets,
 		Stickers:      note.Document.Stickers,
 		Fonts:         note.Document.Fonts,
+		Audios:        note.Document.Audios,
 	}
 }
 
-func packageFromDocument(doc NoteDocument, assets []AssetBlob, stickers []AssetBlob, fonts []AssetBlob, yjsState string) NotePackage {
+func packageFromDocument(doc NoteDocument, assets []AssetBlob, stickers []AssetBlob, fonts []AssetBlob, audios []AssetBlob, yjsState string) NotePackage {
 	// 内存里先拼成 NotePackage，再复用 normalize，避免新建和保存两条路径产生格式差异。
 	note := NotePackage{
 		Document: doc,
@@ -217,6 +238,7 @@ func packageFromDocument(doc NoteDocument, assets []AssetBlob, stickers []AssetB
 		Assets:   assets,
 		Stickers: stickers,
 		Fonts:    fonts,
+		Audios:   audios,
 	}
 	note.normalize()
 	return note
@@ -370,6 +392,11 @@ func writeNotePackage(path string, note NotePackage) error {
 			return err
 		}
 	}
+	for _, audio := range note.Audios {
+		if err := writeAssetBlob(zw, "audios", audio); err != nil {
+			return err
+		}
+	}
 	if note.Thumbnail != "" {
 		if raw, err := decodeDataURL(note.Thumbnail); err == nil {
 			if err := writeFile(zw, "thumbnail.png", raw); err != nil {
@@ -424,6 +451,9 @@ func readNotePackage(path string) (NotePackage, error) {
 	if len(doc.Fonts) == 0 && len(manifest.Fonts) > 0 {
 		doc.Fonts = manifest.Fonts
 	}
+	if len(doc.Audios) == 0 && len(manifest.Audios) > 0 {
+		doc.Audios = manifest.Audios
+	}
 
 	var yjsState string
 	if manifest.YjsStatePath != "" {
@@ -435,8 +465,10 @@ func readNotePackage(path string) (NotePackage, error) {
 	assets, warnings := readAssetBlobs(files, manifest.Assets)
 	stickers, stickerWarnings := readAssetBlobs(files, manifest.Stickers)
 	fonts, fontWarnings := readAssetBlobs(files, manifest.Fonts)
+	audios, audioWarnings := readAssetBlobs(files, manifest.Audios)
 	warnings = append(warnings, stickerWarnings...)
 	warnings = append(warnings, fontWarnings...)
+	warnings = append(warnings, audioWarnings...)
 	thumbnail := ""
 	if raw, err := readFile(files, "thumbnail.png"); err == nil {
 		thumbnail = "data:image/png;base64," + base64.StdEncoding.EncodeToString(raw)
@@ -449,6 +481,7 @@ func readNotePackage(path string) (NotePackage, error) {
 		Assets:    assets,
 		Stickers:  stickers,
 		Fonts:     fonts,
+		Audios:    audios,
 		Thumbnail: thumbnail,
 		Warnings:  warnings,
 	}
@@ -563,6 +596,10 @@ func migrateDocument(doc *NoteDocument, fromVersion int) {
 		// v3 才有独立贴纸资源池；旧文档保持原有元素不动，只补一个空列表。
 		doc.Stickers = []AssetMeta{}
 	}
+	if fromVersion < 5 && doc.Audios == nil {
+		// v5 增加独立音频素材池；旧文档只补空列表。
+		doc.Audios = []AssetMeta{}
+	}
 	doc.FormatVersion = currentFormatVersion
 }
 
@@ -580,7 +617,7 @@ func safeArchiveName(name string) (string, error) {
 }
 
 func assetArchivePath(group string, hash string, ext string) string {
-	// group 决定资源所在目录：assets、stickers 或 fonts；hash 决定文件名稳定性。
+	// group 决定资源所在目录：assets、stickers、fonts 或 audios；hash 决定文件名稳定性。
 	if hash == "" {
 		hash = "asset"
 	}
@@ -609,6 +646,20 @@ func detectAssetMimeType(name string, path string) string {
 		return "image/webp"
 	case ".svg":
 		return "image/svg+xml"
+	case ".mp3":
+		return "audio/mpeg"
+	case ".m4a":
+		return "audio/mp4"
+	case ".aac":
+		return "audio/aac"
+	case ".wav":
+		return "audio/wav"
+	case ".ogg", ".oga", ".opus":
+		return "audio/ogg"
+	case ".flac":
+		return "audio/flac"
+	case ".webm":
+		return "audio/webm"
 	default:
 		return "application/octet-stream"
 	}
@@ -626,6 +677,20 @@ func extensionForMimeType(mimeType string) string {
 		return ".webp"
 	case "image/svg+xml":
 		return ".svg"
+	case "audio/mpeg", "audio/mp3":
+		return ".mp3"
+	case "audio/mp4", "audio/x-m4a":
+		return ".m4a"
+	case "audio/aac":
+		return ".aac"
+	case "audio/wav", "audio/x-wav", "audio/wave":
+		return ".wav"
+	case "audio/ogg", "application/ogg":
+		return ".ogg"
+	case "audio/flac", "audio/x-flac":
+		return ".flac"
+	case "audio/webm":
+		return ".webm"
 	default:
 		return ".bin"
 	}
@@ -741,6 +806,11 @@ func renderPortableHTML(note NotePackage) string {
 			assetMap[sticker.ID] = sticker.DataURL
 		}
 	}
+	for _, audio := range note.Audios {
+		if audio.DataURL != "" {
+			assetMap[audio.ID] = audio.DataURL
+		}
+	}
 	assetJSON, _ := json.Marshal(assetMap)
 	page := NotePage{Width: 794, Height: 1123, Background: "#fffdf7"}
 	if len(note.Document.Pages) > 0 {
@@ -777,6 +847,27 @@ func renderPortableHTML(note NotePackage) string {
 		case "image", "sticker":
 			src := assetMap[el.AssetID]
 			body.WriteString(`<img class="note-element media" style="` + style + `" src="` + html.EscapeString(src) + `" alt="">`)
+		case "audio":
+			audio := findAssetMeta(note.Document.Audios, el.AssetID)
+			src := assetMap[el.AssetID]
+			title := audio.AudioTitle
+			if strings.TrimSpace(title) == "" {
+				title = audio.Name
+			}
+			artist := audio.AudioArtist
+			cover := audio.CoverDataURL
+			if cover == "" && audio.CoverDataBase64 != "" {
+				cover = "data:" + firstNonEmpty(audio.CoverMimeType, "image/jpeg") + ";base64," + audio.CoverDataBase64
+			}
+			coverHTML := `<div class="audio-cover"><span>♪</span></div>`
+			if cover != "" {
+				coverHTML = `<img class="audio-cover" src="` + html.EscapeString(cover) + `" alt="">`
+			}
+			body.WriteString(`<section class="note-element audio-player" style="` + style + `">` +
+				coverHTML +
+				`<div class="audio-body"><div class="audio-title">` + html.EscapeString(title) + `</div>` +
+				`<div class="audio-artist">` + html.EscapeString(artist) + `</div>` +
+				`<audio controls preload="metadata" src="` + html.EscapeString(src) + `"></audio></div></section>`)
 		case "tape":
 			color := "#f7d974"
 			if v, ok := el.Style["background"].(string); ok {
@@ -793,7 +884,7 @@ func renderPortableHTML(note NotePackage) string {
 		html.EscapeString(page.Background) +
 		`;width:` + fmt.Sprint(page.Width) + `px;height:` + fmt.Sprint(page.Height) + `px}.page-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:` +
 		fmt.Sprint(cropValue(page.BackgroundCropX)) + `% ` + fmt.Sprint(cropValue(page.BackgroundCropY)) +
-		`%;}.note-element{position:absolute;box-sizing:border-box}.text{overflow:auto;scrollbar-gutter:stable;font-size:26px;line-height:1.45;color:#2c2a26;font-synthesis:style weight}.text::-webkit-scrollbar{width:8px;height:8px}.text::-webkit-scrollbar-thumb{border-radius:999px;background:rgba(47,42,36,.24)}.text::-webkit-scrollbar-track{background:rgba(255,255,255,.18)}.text h1,.text h2,.text h3,.text p,.text ul,.text ol,.text blockquote{margin-top:0;margin-bottom:.42em}.text h1,.text h2,.text h3{font-weight:750;line-height:1.15}.text h1{font-size:1.42em}.text h2{font-size:1.24em}.text h3{font-size:1.1em}.text ul,.text ol{padding-left:1.25em}.text blockquote{border-left:3px solid rgba(47,111,237,.45);border-left-color:color-mix(in srgb,var(--timenotes-blockquote-color,#5f5650) 45%,transparent);padding-left:.72em;color:var(--timenotes-blockquote-color,rgba(47,42,36,.72));font-family:var(--timenotes-blockquote-font-family,var(--timenotes-text-font-family,inherit))!important}.text blockquote :not(code){font-family:inherit!important}.text hr{height:1px;margin:.65em 0;border:0;background:rgba(47,42,36,.22)}.text a{color:#1f5fd2;cursor:pointer;text-decoration:underline;text-underline-offset:2px}.text em,.text i{font-synthesis:style;font-style:italic!important}.text code{border-radius:4px;background:rgba(47,111,237,.1);color:var(--timenotes-inline-code-color,#8a3f58);font-family:var(--timenotes-inline-code-font-family,"Cascadia Code","Fira Code",Consolas,"SFMono-Regular",monospace);font-size:.88em;padding:.06em .28em}.media{object-fit:cover;border-radius:14px}.tape{opacity:.78;border-radius:3px}.shape{border:2px solid #2c2a26;border-radius:16px}.codeblock{display:flex;flex-direction:column;overflow:hidden;border:1px solid rgba(255,255,255,.14);border-radius:8px;background:#101828;color:#d7e2f0;box-shadow:0 14px 32px rgba(15,23,42,.18)}.codebar{display:flex;height:32px;flex-shrink:0;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);padding:0 8px 0 12px;font:11px Inter,"Segoe UI",sans-serif;color:rgba(255,255,255,.72)}.copy-code{cursor:pointer;border:0;border-radius:6px;background:rgba(255,255,255,.1);color:#fff;padding:4px 8px}.codeblock pre{flex:1;min-height:0;margin:0;overflow:auto;padding:12px 14px 16px;font:14px/1.55 "Cascadia Code",Consolas,monospace;white-space:pre}</style></head><body><div class="wrap"><main class="page">` +
+		`%;}.note-element{position:absolute;box-sizing:border-box}.text{overflow:auto;scrollbar-gutter:stable;font-size:26px;line-height:1.45;color:#2c2a26;font-synthesis:style weight}.text::-webkit-scrollbar{width:8px;height:8px}.text::-webkit-scrollbar-thumb{border-radius:999px;background:rgba(47,42,36,.24)}.text::-webkit-scrollbar-track{background:rgba(255,255,255,.18)}.text h1,.text h2,.text h3,.text p,.text ul,.text ol,.text blockquote{margin-top:0;margin-bottom:.42em}.text h1,.text h2,.text h3{font-weight:750;line-height:1.15}.text h1{font-size:1.42em}.text h2{font-size:1.24em}.text h3{font-size:1.1em}.text ul,.text ol{padding-left:1.25em}.text blockquote{border-left:3px solid rgba(47,111,237,.45);border-left-color:color-mix(in srgb,var(--timenotes-blockquote-color,#5f5650) 45%,transparent);padding-left:.72em;color:var(--timenotes-blockquote-color,rgba(47,42,36,.72));font-family:var(--timenotes-blockquote-font-family,var(--timenotes-text-font-family,inherit))!important}.text blockquote :not(code){font-family:inherit!important}.text hr{height:1px;margin:.65em 0;border:0;background:rgba(47,42,36,.22)}.text a{color:#1f5fd2;cursor:pointer;text-decoration:underline;text-underline-offset:2px}.text em,.text i{font-synthesis:style;font-style:italic!important}.text code{border-radius:4px;background:rgba(47,111,237,.1);color:var(--timenotes-inline-code-color,#8a3f58);font-family:var(--timenotes-inline-code-font-family,"Cascadia Code","Fira Code",Consolas,"SFMono-Regular",monospace);font-size:.88em;padding:.06em .28em}.media{object-fit:cover;border-radius:14px}.tape{opacity:.78;border-radius:3px}.shape{border:2px solid #2c2a26;border-radius:16px}.audio-player{display:flex;align-items:center;gap:12px;overflow:hidden;border-radius:8px;border:1px solid rgba(20,24,31,.12);background:#f8fafc;color:#1f2937;padding:10px;box-shadow:0 14px 32px rgba(15,23,42,.13)}.audio-cover{width:68px;height:68px;flex:0 0 auto;border-radius:6px;object-fit:cover;background:#111827;color:#fff;display:grid;place-items:center;font-size:28px}.audio-body{min-width:0;flex:1}.audio-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700}.audio-artist{margin-top:2px;min-height:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:rgba(31,41,55,.56);font-size:12px}.audio-player audio{margin-top:8px;width:100%}.codeblock{display:flex;flex-direction:column;overflow:hidden;border:1px solid rgba(255,255,255,.14);border-radius:8px;background:#101828;color:#d7e2f0;box-shadow:0 14px 32px rgba(15,23,42,.18)}.codebar{display:flex;height:32px;flex-shrink:0;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);padding:0 8px 0 12px;font:11px Inter,"Segoe UI",sans-serif;color:rgba(255,255,255,.72)}.copy-code{cursor:pointer;border:0;border-radius:6px;background:rgba(255,255,255,.1);color:#fff;padding:4px 8px}.codeblock pre{flex:1;min-height:0;margin:0;overflow:auto;padding:12px 14px 16px;font:14px/1.55 "Cascadia Code",Consolas,monospace;white-space:pre}</style></head><body><div class="wrap"><main class="page">` +
 		backgroundHTML +
 		body.String() +
 		`</main></div><script type="application/json" id="timenotes-document">` +
@@ -801,6 +892,24 @@ func renderPortableHTML(note NotePackage) string {
 		`</script><script type="application/json" id="timenotes-assets">` +
 		html.EscapeString(string(assetJSON)) +
 		`</script><script>document.querySelectorAll(".copy-code").forEach(function(button){button.addEventListener("click",function(){var code=button.closest(".codeblock").querySelector("code").textContent||"";if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(code)}else{var textarea=document.createElement("textarea");textarea.value=code;document.body.appendChild(textarea);textarea.select();document.execCommand("copy");textarea.remove()}})})</script></body></html>`
+}
+
+func findAssetMeta(assets []AssetMeta, id string) AssetMeta {
+	for _, asset := range assets {
+		if asset.ID == id {
+			return asset
+		}
+	}
+	return AssetMeta{}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func seedDocument(now string) NoteDocument {
@@ -816,6 +925,7 @@ func seedDocument(now string) NoteDocument {
 		Assets:        []AssetMeta{},
 		Stickers:      []AssetMeta{},
 		Fonts:         []AssetMeta{},
+		Audios:        []AssetMeta{},
 		Templates:     []TemplateDef{},
 	}
 }

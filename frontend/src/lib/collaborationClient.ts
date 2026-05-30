@@ -97,6 +97,7 @@ interface PeerConnection {
 }
 
 const remoteOrigin = 'timenotes-collaboration-remote';
+const resourceChunkOrigin = 'timenotes-resource-chunk';
 const dataChannelNames = ['doc', 'presence', 'chat'] as const;
 const collaborationDocumentKeyPrefix = 'document:';
 const docUpdateFlushMs = 90;
@@ -104,6 +105,7 @@ const cursorPresenceFlushMs = 120;
 const serverPresenceMinIntervalMs = 1000;
 const latencyProbeIntervalMs = 3000;
 const maxAutomaticSnapshotBytes = 2 * 1024 * 1024;
+const maxDataChannelBufferedBytes = 8 * 1024 * 1024;
 
 // CollaborationClient 是前端协作的网络内核：
 // - WebSocket 负责鉴权、房间成员、信令、持久化和应用层中转；
@@ -143,7 +145,7 @@ export class CollaborationClient {
       if (origin === remoteOrigin || !this.connected) {
         return;
       }
-      this.queueDocUpdate(update);
+      this.queueDocUpdate(update, origin === resourceChunkOrigin);
     };
     this.options.yDoc.on('update', this.onYUpdate);
     this.openSocket();
@@ -353,24 +355,36 @@ export class CollaborationClient {
     });
   }
 
-  // 本地 Yjs update 在短时间窗口内合并，降低拖拽/缩放元素时的网络帧数量。
-  private queueDocUpdate(update: Uint8Array) {
+  // 普通编辑 update 短时间合并；资源 chunk 立即发出，远端才能看到连续下载进度。
+  private queueDocUpdate(update: Uint8Array, immediate = false) {
     const outboundUpdate = this.nextLocalUpdateStateVector
       ? Y.encodeStateAsUpdate(this.options.yDoc, this.nextLocalUpdateStateVector)
       : update;
     this.nextLocalUpdateStateVector = undefined;
     this.pendingDocUpdates.push(outboundUpdate);
+    if (immediate) {
+      if (this.pendingDocTimer) {
+        window.clearTimeout(this.pendingDocTimer);
+        this.pendingDocTimer = undefined;
+      }
+      this.flushDocUpdates();
+      return;
+    }
     if (this.pendingDocTimer) {
       return;
     }
     this.pendingDocTimer = window.setTimeout(() => {
       this.pendingDocTimer = undefined;
-      const updates = this.pendingDocUpdates.splice(0);
-      if (updates.length === 0 || !this.connected) {
-        return;
-      }
-      this.broadcastDocUpdate(updates.length === 1 ? updates[0] : Y.mergeUpdates(updates));
+      this.flushDocUpdates();
     }, docUpdateFlushMs);
+  }
+
+  private flushDocUpdates() {
+    const updates = this.pendingDocUpdates.splice(0);
+    if (updates.length === 0 || !this.connected) {
+      return;
+    }
+    this.broadcastDocUpdate(updates.length === 1 ? updates[0] : Y.mergeUpdates(updates));
   }
 
   // 服务端已有快照时，先清理本地协作用的 snapshot/resources 槽位，避免旧本地文档再反向覆盖远端状态。
@@ -707,8 +721,12 @@ export class CollaborationClient {
     let sent = false;
     this.peers.forEach((peer) => {
       const channel = peer.channels[channelName];
-      if (channel?.readyState === 'open') {
-        channel.send(JSON.stringify(env));
+      if (channel?.readyState === 'open' && channel.bufferedAmount < maxDataChannelBufferedBytes) {
+        try {
+          channel.send(JSON.stringify(env));
+        } catch {
+          return;
+        }
         sent = true;
       }
     });

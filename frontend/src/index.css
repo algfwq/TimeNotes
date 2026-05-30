@@ -234,6 +234,162 @@ textarea {
   cursor: text;
 }
 
+.timenote-element[data-type="audio"] {
+  cursor: grab;
+}
+
+.timenote-element[data-type="audio"] [data-audio-interactive] {
+  cursor: pointer;
+}
+
+.timenotes-audio-player {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(31, 41, 55, 0.12);
+  border-radius: 8px;
+  padding: 10px;
+  color: #1f2937;
+  background: linear-gradient(180deg, #ffffff, #f7fafc);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.13);
+}
+
+.timenotes-audio-dark {
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #f8fafc;
+  background: linear-gradient(180deg, #172033, #0f172a);
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.28);
+}
+
+.timenotes-audio-button {
+  justify-content: center;
+  padding: 0;
+}
+
+.timenotes-audio-compact {
+  padding: 7px;
+}
+
+.timenotes-audio-cover {
+  display: grid;
+  width: min(74px, 30%);
+  height: calc(100% - 4px);
+  min-width: 48px;
+  max-height: 92px;
+  place-items: center;
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.1);
+  color: currentColor;
+}
+
+.timenotes-audio-dark .timenotes-audio-cover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.timenotes-audio-icon-btn {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid currentColor;
+  border-color: rgba(31, 41, 55, 0.13);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.72);
+  color: currentColor;
+  outline: none;
+  transition: transform 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+
+.timenotes-audio-icon-btn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(47, 111, 237, 0.35);
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.timenotes-audio-icon-primary {
+  width: 36px;
+  height: 36px;
+  background: #2f6fed;
+  color: #fff;
+  border-color: #2f6fed;
+}
+
+.timenotes-audio-icon-primary:hover {
+  border-color: #2f6fed;
+  background: #2f6fed;
+  color: #fff;
+}
+
+.timenotes-audio-button .timenotes-audio-icon-primary {
+  width: min(100%, 46px);
+  height: min(100%, 46px);
+  aspect-ratio: 1;
+}
+
+.timenotes-audio-dark .timenotes-audio-icon-btn {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.timenotes-audio-dark .timenotes-audio-icon-primary {
+  background: #6ea2ff;
+  color: #07111f;
+  border-color: #6ea2ff;
+}
+
+.timenotes-audio-dark .timenotes-audio-icon-primary:hover {
+  border-color: #6ea2ff;
+  background: #6ea2ff;
+  color: #07111f;
+}
+
+.timenotes-audio-range {
+  accent-color: #2f6fed;
+}
+
+.timenotes-audio-dark .timenotes-audio-range {
+  accent-color: #8db6ff;
+}
+
+.timenotes-audio-missing {
+  border-style: dashed;
+  background: rgba(255, 255, 255, 0.7);
+  box-shadow: none;
+}
+
+.timenotes-audio-transfer {
+  box-shadow: inset 0 0 0 1px rgba(47, 111, 237, 0.08);
+}
+
+.timenotes-audio-transfer-bar {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.12);
+}
+
+.timenotes-audio-transfer-bar > div {
+  height: 100%;
+  min-width: 8px;
+  border-radius: inherit;
+  background: #2f6fed;
+  transition: width 0.18s ease;
+}
+
+.timenotes-audio-dark .timenotes-audio-transfer-bar {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.timenotes-audio-dark .timenotes-audio-transfer-bar > div {
+  background: #8db6ff;
+}
+
 .timenotes-code-block {
   display: flex;
   width: 100%;

@@ -8,6 +8,7 @@ type NotePackage struct {
 	Assets    []AssetBlob   `json:"assets"`
 	Stickers  []AssetBlob   `json:"stickers"`
 	Fonts     []AssetBlob   `json:"fonts"`
+	Audios    []AssetBlob   `json:"audios"`
 	Thumbnail string        `json:"thumbnail"`
 	Warnings  []ServiceNote `json:"warnings,omitempty"`
 }
@@ -24,6 +25,7 @@ type NoteManifest struct {
 	Assets        []AssetMeta `json:"assets"`
 	Stickers      []AssetMeta `json:"stickers"`
 	Fonts         []AssetMeta `json:"fonts"`
+	Audios        []AssetMeta `json:"audios"`
 }
 
 type NoteDocument struct {
@@ -38,6 +40,7 @@ type NoteDocument struct {
 	// Stickers 独立于 Assets，避免左侧图片素材栏和右侧贴纸控制面板互相污染。
 	Stickers  []AssetMeta   `json:"stickers"`
 	Fonts     []AssetMeta   `json:"fonts"`
+	Audios    []AssetMeta   `json:"audios"`
 	Templates []TemplateDef `json:"templates"`
 }
 
@@ -80,6 +83,14 @@ type AssetMeta struct {
 	MimeType string `json:"mimeType"`
 	Size     int64  `json:"size"`
 	Path     string `json:"path"`
+
+	AudioTitle      string   `json:"audioTitle,omitempty"`
+	AudioArtist     string   `json:"audioArtist,omitempty"`
+	AudioAlbum      string   `json:"audioAlbum,omitempty"`
+	Duration        *float64 `json:"duration,omitempty"`
+	CoverMimeType   string   `json:"coverMimeType,omitempty"`
+	CoverDataBase64 string   `json:"coverDataBase64,omitempty"`
+	CoverDataURL    string   `json:"coverDataUrl,omitempty"`
 }
 
 type AssetBlob struct {

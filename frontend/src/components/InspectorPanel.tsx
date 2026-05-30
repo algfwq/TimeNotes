@@ -13,16 +13,17 @@ import {
   IconHandle,
   IconImage,
   IconLayers,
+  IconMusic,
   IconText,
   IconUpload,
 } from '@douyinfe/semi-icons';
 import { AssetService } from '../../bindings/changeme';
 import { builtinStickers } from '../data/builtinStickers';
-import { assetDataUrl, createAssetFromDataUrl, createAssetFromFile, createAssetFromUrl, getImagePlacementSize, isGifAsset, isSupportedImageFile } from '../lib/files';
+import { assetCoverDataUrl, assetDataUrl, createAssetFromDataUrl, createAssetFromFile, createAssetFromUrl, getImagePlacementSize, isGifAsset, isSupportedImageFile } from '../lib/files';
 import { fontDisplayName, fontFamilyForAsset } from '../lib/fonts';
 import { codeLanguageLabel, codeLanguageOptions, normalizeCodeLanguage } from '../lib/codeHighlighting';
 import { useCollaboration } from '../providers/CollaborationProvider';
-import { useDocument } from '../providers/DocumentProvider';
+import { resourceKey, useDocument } from '../providers/DocumentProvider';
 import type { AssetMeta, ChatMessage, ElementType, NoteElement, NotePage, PresenceUser, SystemFont, ToolMode, ToolStyleState } from '../types';
 import { ImageCropModal } from './ImageCropModal';
 
@@ -80,7 +81,7 @@ export function InspectorPanel() {
         .sort((first, second) => second.zIndex - first.zIndex),
     [activePageId, document.elements],
   );
-  const elementAssets = useMemo(() => [...document.assets, ...document.stickers], [document.assets, document.stickers]);
+  const elementAssets = useMemo(() => [...document.assets, ...document.stickers, ...document.audios], [document.assets, document.stickers, document.audios]);
 
   useEffect(() => {
     // 画布或其他组件可以派发事件打开“控制”页，避免跨组件传很多 UI 状态。
@@ -164,6 +165,7 @@ export function InspectorPanel() {
             selectedElement={selectedElement}
             assets={document.assets}
             stickers={document.stickers}
+            audios={document.audios}
             fonts={document.fonts}
             onPatchElement={(patch) => selectedElement && updateElement(selectedElement.id, patch)}
             onEditText={() => selectedElement && startEditing(selectedElement.id)}
@@ -545,6 +547,7 @@ function ControlsPanel({
   selectedElement,
   assets,
   stickers,
+  audios,
   fonts,
   onPatchElement,
   onEditText,
@@ -564,6 +567,7 @@ function ControlsPanel({
   selectedElement?: NoteElement;
   assets: AssetMeta[];
   stickers: AssetMeta[];
+  audios: AssetMeta[];
   fonts: AssetMeta[];
   onPatchElement: (patch: Partial<NoteElement>) => void;
   onEditText: () => void;
@@ -592,6 +596,7 @@ function ControlsPanel({
           element={selectedElement}
           assets={assets}
           stickers={stickers}
+          audios={audios}
           fonts={fonts}
           onPatch={onPatchElement}
           onEditText={onEditText}
@@ -625,6 +630,7 @@ function ElementControls({
   element,
   assets,
   stickers,
+  audios,
   fonts,
   onPatch,
   onEditText,
@@ -638,6 +644,7 @@ function ElementControls({
   element: NoteElement;
   assets: AssetMeta[];
   stickers: AssetMeta[];
+  audios: AssetMeta[];
   fonts: AssetMeta[];
   onPatch: (patch: Partial<NoteElement>) => void;
   onEditText: () => void;
@@ -750,6 +757,13 @@ function ElementControls({
     return (
       <PanelCard title="图片属性">
         <MediaControls element={element} assets={assets} onPatch={onPatch} onCrop={() => onCropElement(element.id)} />
+      </PanelCard>
+    );
+  }
+  if (element.type === 'audio') {
+    return (
+      <PanelCard title="音频属性">
+        <AudioControls element={element} audios={audios} onPatch={onPatch} />
       </PanelCard>
     );
   }
@@ -988,6 +1002,7 @@ function StickerControls({
   onDeleteSticker: (id: string) => void;
   onChooseSticker?: () => void;
 }) {
+  const { resourceProgress } = useDocument();
   const chooseBuiltinSticker = async (url: string, name: string) => {
     try {
       const existing = stickers.find((asset) => asset.name === name);
@@ -1048,6 +1063,7 @@ function StickerControls({
       <div className="grid grid-cols-3 gap-2">
         {visibleStickers.map((asset) => {
           const src = assetDataUrl(asset);
+          const progress = resourceProgress[resourceKey('stickers', asset.id)];
           return (
             <button
               key={asset.id}
@@ -1066,6 +1082,11 @@ function StickerControls({
               title={asset.name}
             >
               {src ? <img className="h-full w-full object-contain" src={src} alt="" /> : <IconImage />}
+              {progress ? (
+                <span className="absolute inset-x-1 bottom-1 h-1 overflow-hidden rounded-full bg-black/10">
+                  <span className="block h-full rounded-full bg-[#2f6fed]" style={{ width: `${Math.round(progress.progress * 100)}%` }} />
+                </span>
+              ) : null}
               <span
                 role="button"
                 tabIndex={0}
@@ -1145,6 +1166,42 @@ function MediaControls({
   );
 }
 
+function AudioControls({ element, audios, onPatch }: { element: NoteElement; audios: AssetMeta[]; onPatch: (patch: Partial<NoteElement>) => void }) {
+  const style = element.style ?? {};
+  const asset = audios.find((item) => item.id === element.assetId);
+  const cover = assetCoverDataUrl(asset);
+  return (
+    <div>
+      <div className="mb-3 flex gap-3 rounded-[8px] border border-black/10 bg-white p-2">
+        <div className="grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-[7px] bg-[#111827] text-white">
+          {cover ? <img className="h-full w-full object-cover" src={cover} alt="" /> : <IconMusic />}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium">{asset?.audioTitle || asset?.name || '音频素材缺失'}</div>
+          <div className="truncate text-xs text-black/45">{asset?.audioArtist || asset?.audioAlbum || formatDuration(asset?.duration)}</div>
+          {asset?.duration ? <div className="mt-1 text-[11px] text-black/40">时长 {formatDuration(asset.duration)}</div> : null}
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <NumberField label="宽度" value={Math.round(element.width)} min={46} max={1600} onChange={(width) => onPatch({ width })} />
+        <NumberField label="高度" value={Math.round(element.height)} min={46} max={800} onChange={(height) => onPatch({ height })} />
+      </div>
+      <label className="mt-3 block">
+        <span className="mb-1 block text-xs text-black/45">播放器主题</span>
+        <Select
+          value={String(style.audioTheme ?? 'light')}
+          style={{ width: '100%' }}
+          optionList={[
+            { label: '明亮', value: 'light' },
+            { label: '深色', value: 'dark' },
+          ]}
+          onChange={(audioTheme) => onPatch({ style: { ...style, audioTheme: String(audioTheme) } })}
+        />
+      </label>
+    </div>
+  );
+}
+
 function FontSelector({
   label = '字体',
   defaultLabel = '默认字体',
@@ -1164,6 +1221,7 @@ function FontSelector({
 }) {
   const [systemFonts, setSystemFonts] = useState<SystemFont[]>([]);
   const [loading, setLoading] = useState(false);
+  const { resourceProgress } = useDocument();
 
   useEffect(() => {
     let alive = true;
@@ -1193,7 +1251,8 @@ function FontSelector({
   const optionList = [
     { label: renderFontOption(defaultLabel), value: '' },
     ...fonts.map((font) => {
-      const label = `已打包：${fontDisplayName(font)}`;
+      const progress = resourceProgress[resourceKey('fonts', font.id)];
+      const label = `已打包：${fontDisplayName(font)}${progress ? ` · 同步 ${Math.round(progress.progress * 100)}%` : ''}`;
       return { label: renderFontOption(label), value: fontFamilyForAsset(font) };
     }),
     ...dedupeSystemFonts(systemFonts).map((font) => {
@@ -1281,6 +1340,15 @@ function systemFontLabel(font: SystemFont) {
   const face = font.name && font.name !== font.family ? `${font.family} / ${font.name}` : font.family;
   const filename = font.path.split(/[\\/]/).pop();
   return filename ? `${face} · ${filename}` : face;
+}
+
+function formatDuration(value?: number) {
+  if (!value) {
+    return '未知时长';
+  }
+  const minutes = Math.floor(value / 60);
+  const seconds = Math.floor(value % 60);
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
 function NumberField({
@@ -1450,6 +1518,15 @@ function LayerPreview({ element, assets }: { element: NoteElement; assets: Asset
       </div>
     );
   }
+  if (element.type === 'audio') {
+    const asset = assets.find((item) => item.id === element.assetId);
+    const cover = assetCoverDataUrl(asset);
+    return (
+      <div className="grid h-11 w-14 shrink-0 place-items-center overflow-hidden rounded-[6px] border border-black/10 bg-[#111827] text-white/80">
+        {cover ? <img className="h-full w-full object-cover" src={cover} alt="" /> : <IconMusic />}
+      </div>
+    );
+  }
   if (element.type === 'drawing' || element.type === 'tape') {
     return (
       <div className="h-11 w-14 shrink-0 rounded-[6px] border border-black/10 bg-white p-2">
@@ -1477,6 +1554,10 @@ function layerTitle(element: NoteElement, assets: AssetMeta[]) {
   }
   if (element.type === 'image' || element.type === 'sticker') {
     return assets.find((asset) => asset.id === element.assetId)?.name ?? (element.type === 'sticker' ? '贴纸' : '图片');
+  }
+  if (element.type === 'audio') {
+    const asset = assets.find((item) => item.id === element.assetId);
+    return asset?.audioTitle || asset?.name || '音频';
   }
   if (element.type === 'tape') {
     return element.points?.length ? '胶带笔迹' : '胶带';

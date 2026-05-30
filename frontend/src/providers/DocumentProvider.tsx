@@ -12,6 +12,8 @@ import type {
   NotePackage,
   NotePage,
   PendingPlacement,
+  ResourceTransferProgress,
+  ResourceGroup,
   ToolStyleState,
   ToolMode,
   WorkspaceTab,
@@ -73,25 +75,32 @@ interface DocumentContextValue {
   addSticker: (asset: AssetMeta) => void;
   replaceSticker: (oldId: string, asset: AssetMeta) => void;
   deleteSticker: (id: string) => void;
+  addAudio: (asset: AssetMeta) => void;
+  deleteAudio: (id: string) => void;
   addFont: (font: AssetMeta) => void;
+  resourceProgress: Record<string, ResourceTransferProgress>;
+  getResourceProgress: (group: ResourceGroup, id?: string) => ResourceTransferProgress | undefined;
 }
 
 const DocumentContext = createContext<DocumentContextValue | null>(null);
 
-// v4 增加代码块元素；v3 开始把贴纸资源从普通图片素材中拆出。
-const currentFormatVersion = 4;
+// v5 增加音频元素与独立音频素材池；v4 增加代码块元素；v3 开始把贴纸资源从普通图片素材中拆出。
+const currentFormatVersion = 5;
 const currentAppVersion = '2.0.0';
 const localOrigin = 'timenotes-react';
+const resourceChunkOrigin = 'timenotes-resource-chunk';
 const collaborationRemoteOrigin = 'timenotes-collaboration-remote';
 const collaborationSnapshotMapName = 'snapshot';
 const collaborationResourceMapName = 'resources';
 const collaborationDocumentKeyPrefix = 'document:';
 const maxHistorySteps = 80;
+const largeResourceByteThreshold = 512 * 1024;
+// WebRTC DataChannel 在不同环境下对单条消息大小很敏感，较小 chunk 能让 P2P 音频传输更稳，也让进度条更细腻。
+const resourceChunkBase64Size = 64 * 1024;
 const defaultCodeBlockContent = `function todayNote(title: string) {
   return \`TimeNotes: \${title}\`;
 }`;
 
-type ResourceGroup = 'assets' | 'stickers' | 'fonts';
 type CollaborationSnapshotScope = { type: 'document' } | { type: 'page'; pageId: string };
 
 interface DocumentUpdateOptions {
@@ -101,10 +110,27 @@ interface DocumentUpdateOptions {
 }
 
 interface CollaborationResourceEntry {
+  kind?: 'resource';
   group: ResourceGroup;
   asset: AssetMeta;
   signature: string;
+  chunked?: boolean;
+  chunkCount?: number;
+  chunkSize?: number;
+  totalBase64Length?: number;
 }
+
+interface CollaborationResourceChunkEntry {
+  kind: 'resource-chunk';
+  group: ResourceGroup;
+  assetId: string;
+  signature: string;
+  index: number;
+  total: number;
+  dataBase64: string;
+}
+
+type CollaborationResourceValue = CollaborationResourceEntry | CollaborationResourceChunkEntry;
 
 interface CollaborationDocumentEntry {
   kind: 'document';
@@ -168,8 +194,18 @@ function makeAssetDataUrl(asset: AssetMeta) {
   return undefined;
 }
 
+function makeAssetCoverDataUrl(asset: AssetMeta) {
+  if (asset.coverDataUrl) {
+    return asset.coverDataUrl;
+  }
+  if (asset.coverDataBase64) {
+    return `data:${asset.coverMimeType || 'image/jpeg'};base64,${asset.coverDataBase64}`;
+  }
+  return undefined;
+}
+
 function hydrateAsset(asset: AssetMeta): AssetMeta {
-  return { ...asset, dataUrl: makeAssetDataUrl(asset) };
+  return { ...asset, dataUrl: makeAssetDataUrl(asset), coverDataUrl: makeAssetCoverDataUrl(asset) };
 }
 
 function mergeAssets(...groups: AssetMeta[][]) {
@@ -187,6 +223,7 @@ function normalizeDocument(
   packageAssets: AssetMeta[] = [],
   packageStickers: AssetMeta[] = [],
   packageFonts: AssetMeta[] = [],
+  packageAudios: AssetMeta[] = [],
 ): NoteDocument {
   const seed = createSeedDocument();
   const pages = nextDocument.pages?.length ? nextDocument.pages : seed.pages;
@@ -209,6 +246,7 @@ function normalizeDocument(
     assets: mergeAssets(nextDocument.assets ?? [], packageAssets),
     stickers: mergeAssets(nextDocument.stickers ?? [], packageStickers),
     fonts: mergeAssets(nextDocument.fonts ?? [], packageFonts),
+    audios: mergeAssets(nextDocument.audios ?? [], packageAudios),
     templates: [],
   };
 }
@@ -225,6 +263,7 @@ function cloneDocumentForHistory(document: NoteDocument) {
     assets: snapshot.assets.map(stripTransientAssetData),
     stickers: snapshot.stickers.map(stripTransientAssetData),
     fonts: snapshot.fonts.map(stripTransientAssetData),
+    audios: snapshot.audios.map(stripTransientAssetData),
   };
 }
 
@@ -241,17 +280,17 @@ function createTab(document: NoteDocument, mode: WorkspaceTabMode, sourcePath?: 
   };
 }
 
-function stripTransientAssetData(asset: AssetMeta) {
-  const { dataBase64, dataUrl, ...meta } = asset;
+function stripTransientAssetData(asset: AssetMeta): AssetMeta {
+  const { dataBase64, dataUrl, coverDataUrl, ...meta } = asset;
   return meta;
 }
 
-function compactResourceAsset(asset: AssetMeta) {
+function compactResourceAsset(asset: AssetMeta): AssetMeta {
   const dataBase64 = asset.dataBase64 ?? (asset.dataUrl ? dataUrlToBase64(asset.dataUrl) : undefined);
   if (!dataBase64) {
     return stripTransientAssetData(asset);
   }
-  const { dataUrl, ...meta } = asset;
+  const { dataUrl, coverDataUrl, ...meta } = asset;
   return { ...meta, dataBase64 };
 }
 
@@ -261,11 +300,12 @@ function stripDocumentForCollaboration(document: NoteDocument): NoteDocument {
     assets: document.assets.map(stripTransientAssetData),
     stickers: document.stickers.map(stripTransientAssetData),
     fonts: document.fonts.map(stripTransientAssetData),
+    audios: document.audios.map(stripTransientAssetData),
   };
 }
 
 function rememberResources(cache: Map<string, AssetMeta>, document: NoteDocument) {
-  [...document.assets, ...document.stickers, ...document.fonts].forEach((asset) => {
+  [...document.assets, ...document.stickers, ...document.fonts, ...document.audios].forEach((asset) => {
     if (asset.id && (asset.dataBase64 || asset.dataUrl)) {
       cache.set(asset.id, asset);
     }
@@ -279,6 +319,7 @@ function hydrateResourcesFromCache(document: NoteDocument, cache: Map<string, As
     assets: document.assets.map(hydrate),
     stickers: document.stickers.map(hydrate),
     fonts: document.fonts.map(hydrate),
+    audios: document.audios.map(hydrate),
   };
 }
 
@@ -287,15 +328,28 @@ function resourceGroups(document: NoteDocument): Array<[ResourceGroup, AssetMeta
     ['assets', document.assets],
     ['stickers', document.stickers],
     ['fonts', document.fonts],
+    ['audios', document.audios],
   ];
 }
 
-function resourceKey(group: ResourceGroup, id: string) {
+export function resourceKey(group: ResourceGroup, id: string) {
   return `${group}:${id}`;
 }
 
+function resourceChunkKey(key: string, index: number) {
+  return `chunk:${key}:${index}`;
+}
+
 function resourceSignature(asset: AssetMeta) {
-  return [asset.hash, asset.size, asset.mimeType, asset.dataBase64?.length ?? 0, asset.dataUrl?.length ?? 0].join(':');
+  return [
+    asset.hash,
+    asset.size,
+    asset.mimeType,
+    asset.dataBase64?.length ?? 0,
+    asset.dataUrl?.length ?? 0,
+    asset.coverDataBase64?.length ?? 0,
+    asset.coverDataUrl?.length ?? 0,
+  ].join(':');
 }
 
 function hydrateResourceForSync(asset: AssetMeta, cache: Map<string, AssetMeta>) {
@@ -310,10 +364,12 @@ function hydrateResourceForSync(asset: AssetMeta, cache: Map<string, AssetMeta>)
     ...asset,
     dataBase64: asset.dataBase64 ?? cached.dataBase64,
     dataUrl: asset.dataUrl ?? cached.dataUrl,
+    coverDataBase64: asset.coverDataBase64 ?? cached.coverDataBase64,
+    coverDataUrl: asset.coverDataUrl ?? cached.coverDataUrl,
   });
 }
 
-function syncResourcesToYjs(resourceMap: Y.Map<CollaborationResourceEntry>, signatures: Map<string, string>, document: NoteDocument, cache: Map<string, AssetMeta>) {
+function syncResourcesToYjs(targetYDoc: Y.Doc, resourceMap: Y.Map<CollaborationResourceValue>, signatures: Map<string, string>, document: NoteDocument, cache: Map<string, AssetMeta>) {
   const localKeys = new Set<string>();
   resourceGroups(document).forEach(([group, assets]) => {
     assets.forEach((asset) => {
@@ -332,7 +388,45 @@ function syncResourcesToYjs(resourceMap: Y.Map<CollaborationResourceEntry>, sign
         return;
       }
       signatures.set(key, signature);
-      resourceMap.set(key, { group, asset: compact, signature });
+      if (compact.dataBase64 && (compact.size > largeResourceByteThreshold || compact.dataBase64.length > Math.ceil((largeResourceByteThreshold * 4) / 3))) {
+        const dataBase64 = compact.dataBase64;
+        const chunkCount = Math.ceil(dataBase64.length / resourceChunkBase64Size);
+        targetYDoc.transact(() => {
+          resourceMap.set(key, {
+            kind: 'resource',
+            group,
+            asset: stripTransientAssetData(compact),
+            signature,
+            chunked: true,
+            chunkCount,
+            chunkSize: resourceChunkBase64Size,
+            totalBase64Length: dataBase64.length,
+          });
+        }, resourceChunkOrigin);
+        for (let index = 0; index < chunkCount; index += 1) {
+          const start = index * resourceChunkBase64Size;
+          const writeChunk = () => targetYDoc.transact(() => {
+            resourceMap.set(resourceChunkKey(key, index), {
+              kind: 'resource-chunk',
+              group,
+              assetId: asset.id,
+              signature,
+              index,
+              total: chunkCount,
+              dataBase64: dataBase64.slice(start, start + resourceChunkBase64Size),
+            });
+          }, resourceChunkOrigin);
+          if (typeof window === 'undefined' || index < 2) {
+            writeChunk();
+          } else {
+            window.setTimeout(writeChunk, Math.floor(index / 2) * 45);
+          }
+        }
+        return;
+      }
+      targetYDoc.transact(() => {
+        resourceMap.set(key, { kind: 'resource', group, asset: compact, signature });
+      }, resourceChunkOrigin);
     });
   });
 
@@ -346,13 +440,57 @@ function syncResourcesToYjs(resourceMap: Y.Map<CollaborationResourceEntry>, sign
   // 就会把 A 刚上传的图片/字体删掉，其他客户端只能看到资源 id，无法渲染。
 }
 
-function cacheResourcesFromYjs(resourceMap: Y.Map<CollaborationResourceEntry>, cache: Map<string, AssetMeta>) {
+function cacheResourcesFromYjs(resourceMap: Y.Map<CollaborationResourceValue>, cache: Map<string, AssetMeta>) {
   // resources map 是协作中的二进制素材池；缓存到内存后，document 快照只需要引用 assetId。
-  resourceMap.forEach((entry) => {
-    if (entry?.asset?.id) {
-      cache.set(entry.asset.id, hydrateAsset(entry.asset));
+  const progress: Record<string, ResourceTransferProgress> = {};
+  resourceMap.forEach((entry, key) => {
+    if (!isResourceEntry(entry) || !entry.asset?.id) {
+      return;
     }
+    if (!entry.chunked) {
+      if (entry.asset.dataBase64 || entry.asset.dataUrl) {
+        cache.set(entry.asset.id, hydrateAsset(entry.asset));
+      }
+      return;
+    }
+    const chunks: CollaborationResourceChunkEntry[] = [];
+    const chunkCount = entry.chunkCount ?? 0;
+    for (let index = 0; index < chunkCount; index += 1) {
+      const chunk = resourceMap.get(resourceChunkKey(String(key), index));
+      if (isResourceChunkEntry(chunk) && chunk.signature === entry.signature && chunk.assetId === entry.asset.id) {
+        chunks[index] = chunk;
+      }
+    }
+    const receivedChunks = chunks.filter(Boolean).length;
+    if (chunkCount > 0 && receivedChunks === chunkCount) {
+      const dataBase64 = chunks.map((chunk) => chunk.dataBase64).join('');
+      cache.set(entry.asset.id, hydrateAsset({ ...entry.asset, dataBase64 }));
+      return;
+    }
+    const receivedBase64 = chunks.reduce((sum, chunk) => sum + (chunk?.dataBase64.length ?? 0), 0);
+    const totalBase64 = entry.totalBase64Length || Math.max(1, chunkCount * resourceChunkBase64Size);
+    const totalBytes = entry.asset.size || totalBase64;
+    progress[String(key)] = {
+      key: String(key),
+      group: entry.group,
+      assetId: entry.asset.id,
+      name: entry.asset.name,
+      receivedChunks,
+      totalChunks: Math.max(1, chunkCount),
+      receivedBytes: Math.round((receivedBase64 / Math.max(1, totalBase64)) * totalBytes),
+      totalBytes,
+      progress: Math.min(0.99, Math.max(0, receivedBase64 / Math.max(1, totalBase64))),
+    };
   });
+  return progress;
+}
+
+function isResourceEntry(entry: CollaborationResourceValue | undefined): entry is CollaborationResourceEntry {
+  return Boolean(entry && (entry.kind === undefined || entry.kind === 'resource') && 'asset' in entry);
+}
+
+function isResourceChunkEntry(entry: CollaborationResourceValue | undefined): entry is CollaborationResourceChunkEntry {
+  return Boolean(entry && entry.kind === 'resource-chunk' && 'dataBase64' in entry);
 }
 
 function collaborationDocumentKey(yDoc: Y.Doc) {
@@ -413,6 +551,8 @@ function mergeAssetList(current: AssetMeta[], incoming: AssetMeta[]) {
         ...asset,
         dataBase64: asset.dataBase64 ?? existing?.dataBase64,
         dataUrl: asset.dataUrl ?? existing?.dataUrl,
+        coverDataBase64: asset.coverDataBase64 ?? existing?.coverDataBase64,
+        coverDataUrl: asset.coverDataUrl ?? existing?.coverDataUrl,
       }),
     );
   });
@@ -439,6 +579,7 @@ function mergeCollaborationDocument(current: NoteDocument, incoming: NoteDocumen
     assets: mergeAssetList(current.assets, normalizedIncoming.assets),
     stickers: mergeAssetList(current.stickers, normalizedIncoming.stickers),
     fonts: mergeAssetList(current.fonts, normalizedIncoming.fonts),
+    audios: mergeAssetList(current.audios, normalizedIncoming.audios),
     pages: current.pages.map((page) => (page.id === pageId ? incomingPage : page)),
     elements: [
       ...current.elements.filter((element) => element.pageId !== pageId),
@@ -532,6 +673,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
   const [toolState, setToolState] = useState<ToolMode>('select');
   const [toolStyles, setToolStyles] = useState<ToolStyleState>(defaultToolStyles);
   const [pendingPlacement, setPendingPlacement] = useState<PendingPlacement | undefined>();
+  const [resourceProgress, setResourceProgress] = useState<Record<string, ResourceTransferProgress>>({});
 
   const activeTab = useMemo(() => tabs.find((tab) => tab.id === activeTabId) ?? tabs[0], [activeTabId, tabs]);
   const document = activeTab.document;
@@ -552,11 +694,12 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
 
   const syncToYjs = useCallback((nextDocument: NoteDocument, targetYDoc: Y.Doc, scope: CollaborationSnapshotScope, currentActivePageId: string) => {
     const snapshotMap = targetYDoc.getMap<CollaborationSnapshotValue>(collaborationSnapshotMapName);
-    const resourceMap = targetYDoc.getMap<CollaborationResourceEntry>(collaborationResourceMapName);
+    const resourceMap = targetYDoc.getMap<CollaborationResourceValue>(collaborationResourceMapName);
+    // 大资源分块单独写入 resources map；每个 chunk 是独立 Yjs transaction，远端能逐步计算下载进度。
+    syncResourcesToYjs(targetYDoc, resourceMap, resourceSignaturesFor(targetYDoc), nextDocument, resourceCacheRef.current);
     targetYDoc.transact(() => {
       // 高频画布编辑只同步轻量 document；图片、贴纸、字体二进制单独进入 resources map。
       // 日志里 35MB 的重复 doc_update 正是因为每次拖动都把素材 dataURL/base64 一起写进 document。
-      syncResourcesToYjs(resourceMap, resourceSignaturesFor(targetYDoc), nextDocument, resourceCacheRef.current);
       // 每个客户端写独立槽位，避免多个协作者同时 set 同一个 Y.Map key 时被 Yjs 冲突合并规则吞掉更新。
       snapshotMap.set(collaborationDocumentKey(targetYDoc), {
         kind: 'document',
@@ -641,7 +784,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // 监听协作快照 map：远端写入 snapshot 后合并进当前 React 文档状态。
     const snapshotMap = activeYDoc.getMap<CollaborationSnapshotValue>(collaborationSnapshotMapName);
-    const resourceMap = activeYDoc.getMap<CollaborationResourceEntry>(collaborationResourceMapName);
+    const resourceMap = activeYDoc.getMap<CollaborationResourceValue>(collaborationResourceMapName);
     const observer = (events: Y.YMapEvent<CollaborationSnapshotValue>, transaction: Y.Transaction) => {
       if (transaction.origin === localOrigin) {
         return;
@@ -651,7 +794,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       // 先缓存资源，再合并 document；否则元素引用到的新 assetId 可能还找不到二进制数据。
-      cacheResourcesFromYjs(resourceMap, resourceCacheRef.current);
+      setResourceProgress(cacheResourcesFromYjs(resourceMap, resourceCacheRef.current));
       skipNextYjsSyncRef.current = transaction.origin === collaborationRemoteOrigin;
       if (transaction.origin === collaborationRemoteOrigin) {
         skipYjsSyncUntilRef.current = Date.now() + 150;
@@ -671,12 +814,12 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     // resources map 可能比 document 快照先到，也可能后到；单独监听可以补齐延迟到达的素材。
-    const resourceMap = activeYDoc.getMap<CollaborationResourceEntry>(collaborationResourceMapName);
-    const observer = (_events: Y.YMapEvent<CollaborationResourceEntry>, transaction: Y.Transaction) => {
-      if (transaction.origin === localOrigin) {
+    const resourceMap = activeYDoc.getMap<CollaborationResourceValue>(collaborationResourceMapName);
+    const observer = (_events: Y.YMapEvent<CollaborationResourceValue>, transaction: Y.Transaction) => {
+      if (transaction.origin === localOrigin || transaction.origin === resourceChunkOrigin) {
         return;
       }
-      cacheResourcesFromYjs(resourceMap, resourceCacheRef.current);
+      setResourceProgress(cacheResourcesFromYjs(resourceMap, resourceCacheRef.current));
       skipNextYjsSyncRef.current = transaction.origin === collaborationRemoteOrigin;
       if (transaction.origin === collaborationRemoteOrigin) {
         skipYjsSyncUntilRef.current = Date.now() + 150;
@@ -689,7 +832,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
         return { ...tab, title: hydrated.title, document: hydrated };
       });
     };
-    cacheResourcesFromYjs(resourceMap, resourceCacheRef.current);
+    setResourceProgress(cacheResourcesFromYjs(resourceMap, resourceCacheRef.current));
     resourceMap.observe(observer);
     return () => resourceMap.unobserve(observer);
   }, [activeYDoc, updateActiveTab]);
@@ -805,7 +948,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
   const loadPackage = useCallback(
     (note: NotePackage, sourcePath?: string) => {
       // 打开 .tnote 时优先以 document.json + 包内资源作为恢复源，Yjs state 只是协作增量的附加状态。
-      const normalized = normalizeDocument(note.document, note.assets ?? [], note.stickers ?? [], note.fonts ?? []);
+      const normalized = normalizeDocument(note.document, note.assets ?? [], note.stickers ?? [], note.fonts ?? [], note.audios ?? []);
       rememberResources(resourceCacheRef.current, normalized);
       const tab = createTab(normalized, 'edit', sourcePath);
       const tabYDoc = new Y.Doc();
@@ -978,6 +1121,9 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       if (type === 'sticker' && !(patch.assetId ?? toolStyles.sticker.assetId)) {
         return;
       }
+      if (type === 'audio' && !patch.assetId) {
+        return;
+      }
       const id = createId('el');
       const isStroke = (type === 'drawing' || type === 'tape') && Boolean(patch.points?.length);
       updateDocument((current) => {
@@ -999,6 +1145,8 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
                 ? toolStyles.code.width
                 : type === 'sticker'
                   ? toolStyles.sticker.width
+                  : type === 'audio'
+                    ? 360
                   : 180,
           height: isStroke
             ? activePage.height
@@ -1008,6 +1156,8 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
                 ? toolStyles.code.height
                 : type === 'sticker'
                   ? toolStyles.sticker.height
+                  : type === 'audio'
+                    ? 96
                   : 150,
           rotation: 0,
           content: type === 'text' ? '<p>新的文字</p>' : type === 'code' ? defaultCodeBlockContent : undefined,
@@ -1032,6 +1182,8 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
                 ? { ...toolStyles.code }
               : type === 'sticker' || type === 'image'
                 ? { fit: 'contain' }
+              : type === 'audio'
+                ? { audioTheme: 'light' }
               : type === 'tape'
                 ? { ...toolStyles.tape }
               : type === 'drawing'
@@ -1072,21 +1224,42 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       }
       const type =
         pendingPlacement?.type ??
-        (toolState === 'text' || toolState === 'code' || toolState === 'sticker' || toolState === 'image' ? toolState : undefined);
+        (toolState === 'text' || toolState === 'code' || toolState === 'sticker' || toolState === 'image' || toolState === 'audio' ? toolState : undefined);
       if (!type) {
         return;
       }
       const patch = pendingPlacement?.patch ?? {};
       const width = Number(
-        patch.width ?? (type === 'text' ? toolStyles.text.width : type === 'code' ? toolStyles.code.width : type === 'sticker' ? toolStyles.sticker.width : 220),
+        patch.width ??
+          (type === 'text'
+            ? toolStyles.text.width
+            : type === 'code'
+              ? toolStyles.code.width
+              : type === 'sticker'
+                ? toolStyles.sticker.width
+                : type === 'audio'
+                  ? 360
+                  : 220),
       );
       const height = Number(
-        patch.height ?? (type === 'text' ? toolStyles.text.height : type === 'code' ? toolStyles.code.height : type === 'sticker' ? toolStyles.sticker.height : 160),
+        patch.height ??
+          (type === 'text'
+            ? toolStyles.text.height
+            : type === 'code'
+              ? toolStyles.code.height
+              : type === 'sticker'
+                ? toolStyles.sticker.height
+                : type === 'audio'
+                  ? 96
+                  : 160),
       );
       if (type === 'sticker' && !(patch.assetId ?? toolStyles.sticker.assetId)) {
         return;
       }
       if (type === 'image' && !patch.assetId) {
+        return;
+      }
+      if (type === 'audio' && !patch.assetId) {
         return;
       }
       // 用户点的是希望元素出现的位置，所以用元素中心对齐点击点，同时限制在页面坐标范围内。
@@ -1289,7 +1462,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
         const exists = current.assets.some((item) => item.id === hydrated.id);
         // assets 只保存普通图片素材和背景图；贴纸单独进入 stickers，避免两个面板互相同步。
         return { ...current, assets: exists ? current.assets.map((item) => (item.id === hydrated.id ? hydrated : item)) : [...current.assets, hydrated] };
-      });
+      }, { collaborationScope: { type: 'document' } });
     },
     [updateDocument],
   );
@@ -1340,7 +1513,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
           ...current,
           stickers: exists ? current.stickers.map((item) => (item.id === hydrated.id ? hydrated : item)) : [...current.stickers, hydrated],
         };
-      });
+      }, { collaborationScope: { type: 'document' } });
     },
     [updateDocument],
   );
@@ -1372,13 +1545,42 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
     [updateDocument],
   );
 
+  const addAudio = useCallback(
+    (asset: AssetMeta) => {
+      updateDocument((current) => {
+        const hydrated = hydrateAsset(asset);
+        const exists = current.audios.some((item) => item.id === hydrated.id);
+        return {
+          ...current,
+          audios: exists ? current.audios.map((item) => (item.id === hydrated.id ? hydrated : item)) : [...current.audios, hydrated],
+        };
+      }, { collaborationScope: { type: 'document' } });
+    },
+    [updateDocument],
+  );
+
+  const deleteAudio = useCallback(
+    (id: string) => {
+      updateDocument((current) => ({
+        ...current,
+        audios: current.audios.filter((asset) => asset.id !== id),
+        elements: current.elements.filter((element) => !(element.type === 'audio' && element.assetId === id)),
+      }), { collaborationScope: { type: 'document' } });
+      setSelectedElementId((current) => {
+        const selected = document.elements.find((element) => element.id === current);
+        return selected?.type === 'audio' && selected.assetId === id ? undefined : current;
+      });
+    },
+    [document.elements, updateDocument],
+  );
+
   const addFont = useCallback(
     (font: AssetMeta) => {
       updateDocument((current) => {
         const hydrated = hydrateAsset(font);
         const exists = current.fonts.some((item) => item.id === hydrated.id);
         return { ...current, fonts: exists ? current.fonts.map((item) => (item.id === hydrated.id ? hydrated : item)) : [...current.fonts, hydrated] };
-      });
+      }, { collaborationScope: { type: 'document' } });
     },
     [updateDocument],
   );
@@ -1399,17 +1601,20 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
         assets: normalizedDocument.assets.map(stripTransientAssetData),
         stickers: normalizedDocument.stickers.map(stripTransientAssetData),
         fonts: normalizedDocument.fonts.map(stripTransientAssetData),
+        audios: normalizedDocument.audios.map(stripTransientAssetData),
       },
       document: {
         ...normalizedDocument,
         assets: normalizedDocument.assets.map(stripTransientAssetData),
         stickers: normalizedDocument.stickers.map(stripTransientAssetData),
         fonts: normalizedDocument.fonts.map(stripTransientAssetData),
+        audios: normalizedDocument.audios.map(stripTransientAssetData),
       },
       yjsState: bytesToBase64(update),
       assets: normalizedDocument.assets,
       stickers: normalizedDocument.stickers,
       fonts: normalizedDocument.fonts,
+      audios: normalizedDocument.audios,
       thumbnail: '',
     };
   }, [activeYDoc, document]);
@@ -1425,6 +1630,16 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       clearSelection();
     }
   }, [clearSelection, loadPackage]);
+
+  const getResourceProgress = useCallback(
+    (group: ResourceGroup, id?: string) => {
+      if (!id) {
+        return undefined;
+      }
+      return resourceProgress[resourceKey(group, id)];
+    },
+    [resourceProgress],
+  );
 
   const value = useMemo<DocumentContextValue>(
     () => ({
@@ -1489,7 +1704,11 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       addSticker,
       replaceSticker,
       deleteSticker,
+      addAudio,
+      deleteAudio,
       addFont,
+      resourceProgress,
+      getResourceProgress,
     }),
     [
       activePage,
@@ -1501,6 +1720,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       addElement,
       addFont,
       addPage,
+      addAudio,
       addSticker,
       armPlacement,
       closeTab,
@@ -1513,11 +1733,13 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       reorderPage,
       deleteSelectedElement,
       deleteAsset,
+      deleteAudio,
       deleteSticker,
       document,
       duplicateElement,
       editingElementId,
       loadPackage,
+      getResourceProgress,
       moveElementLayer,
       openReadTab,
       pendingPlacement,
@@ -1530,6 +1752,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       replaceDocument,
       replaceAsset,
       replaceSticker,
+      resourceProgress,
       selectElement,
       selectedElement,
       selectedElementId,

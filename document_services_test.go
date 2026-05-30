@@ -34,6 +34,9 @@ func TestSaveAndOpenNotePackage(t *testing.T) {
 	if opened.Document.Stickers == nil {
 		t.Fatalf("expected stickers slice to be initialized")
 	}
+	if opened.Document.Audios == nil {
+		t.Fatalf("expected audios slice to be initialized")
+	}
 }
 
 func TestSaveAndOpenNotePackageKeepsAssetBlobs(t *testing.T) {
@@ -169,6 +172,102 @@ func TestSaveAndOpenNotePackageKeepsGifAssetAndImageGeometry(t *testing.T) {
 	}
 	if element.X != 25 || element.Y != 36 || element.Width != 128 || element.Height != 72 || element.Rotation != 15 || element.ZIndex != 30 {
 		t.Fatalf("GIF geometry was not preserved: %#v", element)
+	}
+}
+
+func TestSaveAndOpenNotePackageKeepsAudioAssetAndMetadata(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "audio.tnote")
+	docService := &DocumentService{}
+	note := docService.NewDocument()
+	duration := 12.5
+	audio := AssetBlob{
+		AssetMeta: AssetMeta{
+			ID:              "audio-1",
+			Name:            "theme.mp3",
+			Hash:            "audio-hash",
+			MimeType:        "audio/mpeg",
+			Size:            9,
+			Path:            "audios/audio-hash.mp3",
+			AudioTitle:      "Theme",
+			AudioArtist:     "TimeNotes",
+			AudioAlbum:      "Sketches",
+			Duration:        &duration,
+			CoverMimeType:   "image/png",
+			CoverDataBase64: "iVBORw0KGgo=",
+		},
+		DataBase64: "SUQzBAAAAA==",
+	}
+	note.Document.Audios = []AssetMeta{audio.AssetMeta}
+	note.Audios = []AssetBlob{audio}
+	note.Document.Elements = []NoteElement{
+		{
+			ID:       "audio-el",
+			PageID:   note.Document.Pages[0].ID,
+			Type:     "audio",
+			X:        32,
+			Y:        48,
+			Width:    360,
+			Height:   96,
+			Rotation: -8,
+			ZIndex:   40,
+			AssetID:  audio.ID,
+			Style: map[string]interface{}{
+				"audioTheme": "dark",
+			},
+		},
+	}
+
+	if err := docService.SaveNote(path, note); err != nil {
+		t.Fatalf("SaveNote failed: %v", err)
+	}
+
+	reader, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatalf("open zip: %v", err)
+	}
+	foundAudioEntry := false
+	for _, file := range reader.File {
+		if file.Name == audio.Path {
+			foundAudioEntry = true
+			break
+		}
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatalf("close zip: %v", err)
+	}
+	if !foundAudioEntry {
+		t.Fatalf("expected audio entry %q in package", audio.Path)
+	}
+
+	opened, err := docService.OpenNote(path)
+	if err != nil {
+		t.Fatalf("OpenNote failed: %v", err)
+	}
+	if len(opened.Audios) != 1 {
+		t.Fatalf("audios = %d, want 1", len(opened.Audios))
+	}
+	if opened.Audios[0].DataBase64 != audio.DataBase64 {
+		t.Fatalf("audio dataBase64 was not preserved")
+	}
+	if !strings.HasPrefix(opened.Audios[0].DataURL, "data:audio/mpeg;base64,") {
+		t.Fatalf("audio data URL = %q", opened.Audios[0].DataURL)
+	}
+	if opened.Document.Audios[0].AudioTitle != "Theme" || opened.Document.Audios[0].AudioArtist != "TimeNotes" {
+		t.Fatalf("audio metadata was not preserved: %#v", opened.Document.Audios[0])
+	}
+	if opened.Document.Audios[0].Duration == nil || *opened.Document.Audios[0].Duration != duration {
+		t.Fatalf("audio duration = %#v", opened.Document.Audios[0].Duration)
+	}
+	if len(opened.Document.Elements) != 1 {
+		t.Fatalf("elements = %d, want 1", len(opened.Document.Elements))
+	}
+	element := opened.Document.Elements[0]
+	if element.Type != "audio" || element.AssetID != audio.ID {
+		t.Fatalf("audio element mismatch: %#v", element)
+	}
+	if element.X != 32 || element.Y != 48 || element.Width != 360 || element.Height != 96 || element.Rotation != -8 || element.ZIndex != 40 {
+		t.Fatalf("audio geometry was not preserved: %#v", element)
 	}
 }
 
@@ -317,5 +416,53 @@ func TestPortableHTMLCodeBlockEscapesContent(t *testing.T) {
 	}
 	if !strings.Contains(html, `class="copy-code"`) {
 		t.Fatalf("expected copy button in portable HTML")
+	}
+}
+
+func TestPortableHTMLIncludesAudioPlayer(t *testing.T) {
+	duration := 3.25
+	note := (&DocumentService{}).NewDocument()
+	audio := AssetBlob{
+		AssetMeta: AssetMeta{
+			ID:              "audio-1",
+			Name:            "demo.ogg",
+			Hash:            "audio-hash",
+			MimeType:        "audio/ogg",
+			Size:            7,
+			Path:            "audios/audio-hash.ogg",
+			AudioTitle:      "Demo Tune",
+			AudioArtist:     "TimeNotes",
+			Duration:        &duration,
+			CoverMimeType:   "image/jpeg",
+			CoverDataBase64: "/9j/2w==",
+		},
+		DataBase64: "T2dnUw==",
+		DataURL:    "data:audio/ogg;base64,T2dnUw==",
+	}
+	note.Document.Audios = []AssetMeta{audio.AssetMeta}
+	note.Audios = []AssetBlob{audio}
+	note.Document.Elements = []NoteElement{
+		{
+			ID:      "audio-el",
+			PageID:  note.Document.Pages[0].ID,
+			Type:    "audio",
+			X:       10,
+			Y:       20,
+			Width:   320,
+			Height:  92,
+			ZIndex:  10,
+			AssetID: audio.ID,
+		},
+	}
+
+	html := renderPortableHTML(note)
+	if !strings.Contains(html, `class="note-element audio-player"`) {
+		t.Fatalf("expected audio player in portable HTML:\n%s", html)
+	}
+	if !strings.Contains(html, `<audio controls preload="metadata" src="data:audio/ogg;base64,T2dnUw=="></audio>`) {
+		t.Fatalf("expected audio tag with data URL")
+	}
+	if !strings.Contains(html, `Demo Tune`) || !strings.Contains(html, `data:image/jpeg;base64,/9j/2w==`) {
+		t.Fatalf("expected audio title and cover in portable HTML")
 	}
 }

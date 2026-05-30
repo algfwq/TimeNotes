@@ -181,7 +181,7 @@ export function CanvasStage() {
     if (target.closest('[data-element-id]')) {
       return;
     }
-    if (tool === 'text' || tool === 'code' || tool === 'sticker' || tool === 'image') {
+    if (tool === 'text' || tool === 'code' || tool === 'sticker' || tool === 'image' || tool === 'audio') {
       const point = getDomPagePoint(event, paperRef.current, zoom);
       if (point) {
         event.preventDefault();
@@ -216,7 +216,7 @@ export function CanvasStage() {
     <div
       ref={viewportRef}
       className={`relative h-full overflow-hidden bg-[#e8e2d6] ${
-        tool === 'pan' ? 'cursor-grab' : tool === 'text' || tool === 'code' || tool === 'sticker' || tool === 'image' ? 'cursor-crosshair' : ''
+        tool === 'pan' ? 'cursor-grab' : tool === 'text' || tool === 'code' || tool === 'sticker' || tool === 'image' || tool === 'audio' ? 'cursor-crosshair' : ''
       }`}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) {

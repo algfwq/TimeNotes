@@ -1,4 +1,4 @@
-export type ElementType = 'text' | 'code' | 'image' | 'sticker' | 'tape' | 'shape' | 'drawing';
+export type ElementType = 'text' | 'code' | 'image' | 'sticker' | 'audio' | 'tape' | 'shape' | 'drawing';
 
 export interface NotePage {
   id: string;
@@ -55,6 +55,13 @@ export interface AssetMeta {
   path: string;
   dataBase64?: string;
   dataUrl?: string;
+  audioTitle?: string;
+  audioArtist?: string;
+  audioAlbum?: string;
+  duration?: number;
+  coverMimeType?: string;
+  coverDataBase64?: string;
+  coverDataUrl?: string;
 }
 
 export interface TemplateDef {
@@ -75,6 +82,7 @@ export interface NoteDocument {
   assets: AssetMeta[];
   stickers: AssetMeta[];
   fonts: AssetMeta[];
+  audios: AssetMeta[];
   templates: TemplateDef[];
 }
 
@@ -89,6 +97,7 @@ export interface NoteManifest {
   assets: AssetMeta[];
   stickers: AssetMeta[];
   fonts: AssetMeta[];
+  audios: AssetMeta[];
 }
 
 export interface NotePackage {
@@ -98,10 +107,11 @@ export interface NotePackage {
   assets: AssetMeta[];
   stickers: AssetMeta[];
   fonts: AssetMeta[];
+  audios: AssetMeta[];
   thumbnail: string;
 }
 
-export type ToolMode = 'select' | 'pan' | 'text' | 'code' | 'image' | 'sticker' | 'tape' | 'drawing';
+export type ToolMode = 'select' | 'pan' | 'text' | 'code' | 'image' | 'sticker' | 'audio' | 'tape' | 'drawing';
 
 export interface ToolStyleState {
   text: {
@@ -145,8 +155,22 @@ export interface ToolStyleState {
 }
 
 export interface PendingPlacement {
-  type: Extract<ElementType, 'text' | 'code' | 'image' | 'sticker'>;
+  type: Extract<ElementType, 'text' | 'code' | 'image' | 'sticker' | 'audio'>;
   patch?: Partial<NoteElement>;
+}
+
+export type ResourceGroup = 'assets' | 'stickers' | 'fonts' | 'audios';
+
+export interface ResourceTransferProgress {
+  key: string;
+  group: ResourceGroup;
+  assetId: string;
+  name: string;
+  receivedChunks: number;
+  totalChunks: number;
+  receivedBytes: number;
+  totalBytes: number;
+  progress: number;
 }
 
 // 只把字体文件路径从后端暴露给前端；真正使用时再导入字体二进制，避免一次性加载所有系统字体。

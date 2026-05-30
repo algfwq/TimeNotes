@@ -2,6 +2,8 @@ import type { AssetMeta } from '../types';
 import { dataUrlToBase64 } from './base64';
 import { createId, hashText } from './ids';
 
+type AssetGroup = 'assets' | 'stickers' | 'fonts' | 'audios';
+
 export interface ImageIntrinsicSize {
   width: number;
   height: number;
@@ -30,6 +32,19 @@ export function assetDataUrl(asset?: Pick<AssetMeta, 'mimeType' | 'dataBase64' |
   return undefined;
 }
 
+export function assetCoverDataUrl(asset?: Pick<AssetMeta, 'coverMimeType' | 'coverDataBase64' | 'coverDataUrl'> | null) {
+  if (!asset) {
+    return undefined;
+  }
+  if (asset.coverDataUrl) {
+    return asset.coverDataUrl;
+  }
+  if (asset.coverDataBase64) {
+    return `data:${asset.coverMimeType || 'image/jpeg'};base64,${asset.coverDataBase64}`;
+  }
+  return undefined;
+}
+
 export function isGifAsset(asset?: Pick<AssetMeta, 'mimeType' | 'name' | 'path'> | null) {
   if (!asset) {
     return false;
@@ -39,6 +54,10 @@ export function isGifAsset(asset?: Pick<AssetMeta, 'mimeType' | 'name' | 'path'>
 
 export function isSupportedImageFile(file: Pick<File, 'type' | 'name'>) {
   return file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg)$/i.test(file.name);
+}
+
+export function isSupportedAudioFile(file: Pick<File, 'type' | 'name'>) {
+  return file.type.startsWith('audio/') || /\.(mp3|m4a|aac|wav|ogg|oga|flac|webm)$/i.test(file.name);
 }
 
 export function getImageIntrinsicSize(src: string): Promise<ImageIntrinsicSize> {
@@ -69,12 +88,12 @@ export async function getImagePlacementSize(src: string, maxWidth: number, maxHe
 }
 
 // 前端导入图片和字体都走同一套资源结构，保存 .tnote 时后端会把 dataBase64 写入 ZIP 包。
-export async function createAssetFromFile(file: File, group: 'assets' | 'stickers' | 'fonts'): Promise<AssetMeta> {
+export async function createAssetFromFile(file: File, group: AssetGroup): Promise<AssetMeta> {
   const dataUrl = await readFileAsDataURL(file);
   return createAssetFromDataUrl(dataUrl, file.name, group, file.type || mimeTypeFromName(file.name), file.size);
 }
 
-export async function createAssetFromUrl(url: string, name: string, group: 'assets' | 'stickers' | 'fonts'): Promise<AssetMeta> {
+export async function createAssetFromUrl(url: string, name: string, group: AssetGroup): Promise<AssetMeta> {
   const response = await fetch(url);
   const blob = await response.blob();
   const dataUrl = await blobToDataURL(blob);
@@ -85,12 +104,12 @@ export async function createAssetFromUrl(url: string, name: string, group: 'asse
 export async function createAssetFromDataUrl(
   dataUrl: string,
   name: string,
-  group: 'assets' | 'stickers' | 'fonts',
+  group: AssetGroup,
   mimeType = mimeTypeFromDataUrl(dataUrl) || mimeTypeFromName(name),
   size = dataUrl.length,
 ): Promise<AssetMeta> {
   const hash = await hashText(dataUrl);
-  const id = hash.slice(0, 16) || createId(group === 'fonts' ? 'font' : group === 'stickers' ? 'sticker' : 'asset');
+  const id = hash.slice(0, 16) || createId(group === 'fonts' ? 'font' : group === 'stickers' ? 'sticker' : group === 'audios' ? 'audio' : 'asset');
   return {
     id,
     name,
@@ -145,6 +164,27 @@ export function mimeTypeFromName(name: string) {
   }
   if (lower.endsWith('.svg')) {
     return 'image/svg+xml';
+  }
+  if (lower.endsWith('.mp3')) {
+    return 'audio/mpeg';
+  }
+  if (lower.endsWith('.m4a')) {
+    return 'audio/mp4';
+  }
+  if (lower.endsWith('.aac')) {
+    return 'audio/aac';
+  }
+  if (lower.endsWith('.wav')) {
+    return 'audio/wav';
+  }
+  if (lower.endsWith('.ogg') || lower.endsWith('.oga')) {
+    return 'audio/ogg';
+  }
+  if (lower.endsWith('.flac')) {
+    return 'audio/flac';
+  }
+  if (lower.endsWith('.webm')) {
+    return 'audio/webm';
   }
   return 'application/octet-stream';
 }

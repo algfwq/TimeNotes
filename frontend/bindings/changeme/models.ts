@@ -15,6 +15,13 @@ export class AssetBlob {
     "mimeType": string;
     "size": number;
     "path": string;
+    "audioTitle"?: string;
+    "audioArtist"?: string;
+    "audioAlbum"?: string;
+    "duration"?: number | null;
+    "coverMimeType"?: string;
+    "coverDataBase64"?: string;
+    "coverDataUrl"?: string;
 
     /**
      * DataBase64 是跨 Wails 边界传输素材内容的承载字段，保存时会重新写回 ZIP。
@@ -68,6 +75,13 @@ export class AssetMeta {
     "mimeType": string;
     "size": number;
     "path": string;
+    "audioTitle"?: string;
+    "audioArtist"?: string;
+    "audioAlbum"?: string;
+    "duration"?: number | null;
+    "coverMimeType"?: string;
+    "coverDataBase64"?: string;
+    "coverDataUrl"?: string;
 
     /** Creates a new AssetMeta instance. */
     constructor($$source: Partial<AssetMeta> = {}) {
@@ -119,6 +133,7 @@ export class NoteDocument {
      */
     "stickers": AssetMeta[];
     "fonts": AssetMeta[];
+    "audios": AssetMeta[];
     "templates": TemplateDef[];
 
     /** Creates a new NoteDocument instance. */
@@ -150,6 +165,9 @@ export class NoteDocument {
         if (!("fonts" in $$source)) {
             this["fonts"] = [];
         }
+        if (!("audios" in $$source)) {
+            this["audios"] = [];
+        }
         if (!("templates" in $$source)) {
             this["templates"] = [];
         }
@@ -166,7 +184,8 @@ export class NoteDocument {
         const $$createField6_0 = $$createType5;
         const $$createField7_0 = $$createType5;
         const $$createField8_0 = $$createType5;
-        const $$createField9_0 = $$createType7;
+        const $$createField9_0 = $$createType5;
+        const $$createField10_0 = $$createType7;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("pages" in $$parsedSource) {
             $$parsedSource["pages"] = $$createField4_0($$parsedSource["pages"]);
@@ -183,8 +202,11 @@ export class NoteDocument {
         if ("fonts" in $$parsedSource) {
             $$parsedSource["fonts"] = $$createField8_0($$parsedSource["fonts"]);
         }
+        if ("audios" in $$parsedSource) {
+            $$parsedSource["audios"] = $$createField9_0($$parsedSource["audios"]);
+        }
         if ("templates" in $$parsedSource) {
-            $$parsedSource["templates"] = $$createField9_0($$parsedSource["templates"]);
+            $$parsedSource["templates"] = $$createField10_0($$parsedSource["templates"]);
         }
         return new NoteDocument($$parsedSource as Partial<NoteDocument>);
     }
@@ -272,6 +294,7 @@ export class NoteManifest {
     "assets": AssetMeta[];
     "stickers": AssetMeta[];
     "fonts": AssetMeta[];
+    "audios": AssetMeta[];
 
     /** Creates a new NoteManifest instance. */
     constructor($$source: Partial<NoteManifest> = {}) {
@@ -305,6 +328,9 @@ export class NoteManifest {
         if (!("fonts" in $$source)) {
             this["fonts"] = [];
         }
+        if (!("audios" in $$source)) {
+            this["audios"] = [];
+        }
 
         Object.assign(this, $$source);
     }
@@ -316,6 +342,7 @@ export class NoteManifest {
         const $$createField7_0 = $$createType5;
         const $$createField8_0 = $$createType5;
         const $$createField9_0 = $$createType5;
+        const $$createField10_0 = $$createType5;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("assets" in $$parsedSource) {
             $$parsedSource["assets"] = $$createField7_0($$parsedSource["assets"]);
@@ -325,6 +352,9 @@ export class NoteManifest {
         }
         if ("fonts" in $$parsedSource) {
             $$parsedSource["fonts"] = $$createField9_0($$parsedSource["fonts"]);
+        }
+        if ("audios" in $$parsedSource) {
+            $$parsedSource["audios"] = $$createField10_0($$parsedSource["audios"]);
         }
         return new NoteManifest($$parsedSource as Partial<NoteManifest>);
     }
@@ -340,6 +370,7 @@ export class NotePackage {
     "assets": AssetBlob[];
     "stickers": AssetBlob[];
     "fonts": AssetBlob[];
+    "audios": AssetBlob[];
     "thumbnail": string;
     "warnings"?: ServiceNote[];
 
@@ -363,6 +394,9 @@ export class NotePackage {
         if (!("fonts" in $$source)) {
             this["fonts"] = [];
         }
+        if (!("audios" in $$source)) {
+            this["audios"] = [];
+        }
         if (!("thumbnail" in $$source)) {
             this["thumbnail"] = "";
         }
@@ -379,7 +413,8 @@ export class NotePackage {
         const $$createField3_0 = $$createType13;
         const $$createField4_0 = $$createType13;
         const $$createField5_0 = $$createType13;
-        const $$createField7_0 = $$createType15;
+        const $$createField6_0 = $$createType13;
+        const $$createField8_0 = $$createType15;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("manifest" in $$parsedSource) {
             $$parsedSource["manifest"] = $$createField0_0($$parsedSource["manifest"]);
@@ -396,8 +431,11 @@ export class NotePackage {
         if ("fonts" in $$parsedSource) {
             $$parsedSource["fonts"] = $$createField5_0($$parsedSource["fonts"]);
         }
+        if ("audios" in $$parsedSource) {
+            $$parsedSource["audios"] = $$createField6_0($$parsedSource["audios"]);
+        }
         if ("warnings" in $$parsedSource) {
-            $$parsedSource["warnings"] = $$createField7_0($$parsedSource["warnings"]);
+            $$parsedSource["warnings"] = $$createField8_0($$parsedSource["warnings"]);
         }
         return new NotePackage($$parsedSource as Partial<NotePackage>);
     }

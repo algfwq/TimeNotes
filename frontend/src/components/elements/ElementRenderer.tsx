@@ -1,8 +1,10 @@
 import { useMemo } from 'react';
 import { IconHandle } from '@douyinfe/semi-icons';
 import { useDocument } from '../../providers/DocumentProvider';
-import type { AssetMeta, NoteDocument, NoteElement } from '../../types';
+import type { AssetMeta, NoteDocument, NoteElement, ResourceTransferProgress } from '../../types';
 import { assetDataUrl, isGifAsset } from '../../lib/files';
+import { resourceKey } from '../../providers/DocumentProvider';
+import { AudioElement } from './AudioElement';
 import { CodeBlockElement } from './CodeBlockElement';
 import { RichTextElement } from './RichTextElement';
 
@@ -15,15 +17,16 @@ export function ElementRenderer({
   element: NoteElement;
   onContextMenu?: (event: React.MouseEvent, element: NoteElement) => void;
 }) {
-  const { document, activePage, selectedElementId, editingElementId, selectElement, startEditing, stopEditing, updateElement, zoom, tool } = useDocument();
+  const { document, activePage, selectedElementId, editingElementId, selectElement, startEditing, stopEditing, updateElement, zoom, tool, resourceProgress } = useDocument();
   const selected = selectedElementId === element.id;
   const editing = editingElementId === element.id;
   const isStrokePath = (element.type === 'drawing' || element.type === 'tape') && Boolean(element.points?.length);
   const drawingToolActive = tool === 'drawing' || tool === 'tape';
   const asset = useMemo(
-    () => [...document.assets, ...document.stickers].find((item) => item.id === element.assetId),
-    [document.assets, document.stickers, element.assetId],
+    () => [...document.assets, ...document.stickers, ...document.audios].find((item) => item.id === element.assetId),
+    [document.assets, document.stickers, document.audios, element.assetId],
   );
+  const progress = element.assetId ? resourceProgress[resourceKey(element.type === 'audio' ? 'audios' : element.type === 'sticker' ? 'stickers' : 'assets', element.assetId)] : undefined;
   const baseStyle: React.CSSProperties = {
     left: element.x,
     top: element.y,
@@ -48,6 +51,9 @@ export function ElementRenderer({
         }
         event.stopPropagation();
         if (event.button !== 0) {
+          return;
+        }
+        if (isAudioInteractiveTarget(event.target)) {
           return;
         }
         selectElement(element.id);
@@ -78,7 +84,7 @@ export function ElementRenderer({
         onContextMenu?.(event, element);
       }}
     >
-      {renderElement(element, selected, editing, asset)}
+      {renderElement(element, selected, editing, asset, progress)}
       {selected && element.type === 'text' ? <TextMoveHandle element={element} page={activePage} zoom={zoom} onMove={updateElement} onBegin={() => stopEditing()} /> : null}
     </div>
   );
@@ -89,6 +95,10 @@ function canDirectDragElement(element: NoteElement, tool: string) {
     return false;
   }
   return !((element.type === 'drawing' || element.type === 'tape') && Boolean(element.points?.length));
+}
+
+function isAudioInteractiveTarget(target: EventTarget) {
+  return target instanceof HTMLElement && Boolean(target.closest('[data-audio-interactive]'));
 }
 
 function beginDirectElementDrag(
@@ -231,13 +241,16 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-function renderElement(element: NoteElement, selected: boolean, editing: boolean, asset?: AssetMeta) {
+function renderElement(element: NoteElement, selected: boolean, editing: boolean, asset?: AssetMeta, progress?: ResourceTransferProgress) {
   const style = element.style ?? {};
   if (element.type === 'text') {
     return <RichTextElement element={element} selected={selected} editing={editing} />;
   }
   if (element.type === 'code') {
     return <CodeBlockElement element={element} selected={selected} editing={editing} />;
+  }
+  if (element.type === 'audio') {
+    return <AudioElement element={element} asset={asset} progress={progress} />;
   }
   if ((element.type === 'drawing' || element.type === 'tape') && element.points?.length) {
     return <StrokeSvg element={element} selected={selected} />;
@@ -263,6 +276,9 @@ function renderElement(element: NoteElement, selected: boolean, editing: boolean
           }}
         />
       );
+    }
+    if (progress) {
+      return <ResourceProgressPlaceholder name={asset?.name ?? '素材'} progress={progress.progress} />;
     }
     if (element.type === 'sticker') {
       return (
@@ -298,6 +314,21 @@ function renderElement(element: NoteElement, selected: boolean, editing: boolean
       className="h-full w-full rounded-[8px] border-2"
       style={{ borderColor: String(style.stroke ?? '#2f2a24'), background: String(style.background ?? 'transparent') }}
     />
+  );
+}
+
+function ResourceProgressPlaceholder({ name, progress }: { name: string; progress: number }) {
+  return (
+    <div className="grid h-full w-full place-items-center rounded-[8px] border border-dashed border-black/15 bg-white/70 px-3 text-center">
+      <div className="w-full">
+        <div className="truncate text-xs text-black/55">{name}</div>
+        <div className="mt-1 text-[11px] text-black/45">素材传输中</div>
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-black/10">
+          <div className="h-full rounded-full bg-[#2f6fed]" style={{ width: `${Math.round(progress * 100)}%` }} />
+        </div>
+        <div className="mt-1 text-[11px] text-black/45">{Math.round(progress * 100)}%</div>
+      </div>
+    </div>
   );
 }
 

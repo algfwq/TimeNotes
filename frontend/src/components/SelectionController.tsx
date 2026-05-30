@@ -46,6 +46,7 @@ export function SelectionController({
   const interactionStartDocumentRef = useRef(noteDocument);
   const editing = Boolean(selectedElementId && selectedElementId === editingElementId);
   const keepRatio = selectedElement?.type === 'image' || selectedElement?.type === 'sticker';
+  const minSize = selectedElement?.type === 'audio' ? { width: 46, height: 46 } : { width: 1, height: 1 };
   const elementRatio = Number(selectedElement?.style?.aspectRatio ?? 0) || (selectedElement ? selectedElement.width / Math.max(1, selectedElement.height) : 1);
   const snapReferences = useMemo(
     // 对齐参考点来自页面边缘/中心和同页其他元素的边缘/中心，坐标都是页面坐标。
@@ -199,7 +200,7 @@ export function SelectionController({
         elementSnapDirections={{ left: true, right: true, top: true, bottom: true, center: true, middle: true }}
         onDragStart={beginElementInteraction}
         onDrag={({ target: dragTarget, left, top }: any) => {
-          const clamped = clampBox({ x: left, y: top, width: selectedElement.width, height: selectedElement.height }, page);
+          const clamped = clampBox({ x: left, y: top, width: selectedElement.width, height: selectedElement.height }, page, undefined, minSize);
           const snapped = snapBox(clamped, snapReferences, page);
           dragTarget.style.left = `${snapped.box.x}px`;
           dragTarget.style.top = `${snapped.box.y}px`;
@@ -208,7 +209,7 @@ export function SelectionController({
         }}
         onResizeStart={beginElementInteraction}
         onResize={({ target: resizeTarget, width, height, drag }: any) => {
-          const clamped = clampBox({ x: drag.left, y: drag.top, width, height }, page, keepRatio ? elementRatio : undefined);
+          const clamped = clampBox({ x: drag.left, y: drag.top, width, height }, page, keepRatio ? elementRatio : undefined, minSize);
           const snapped = snapBox(clamped, snapReferences, page);
           resizeTarget.style.width = `${snapped.box.width}px`;
           resizeTarget.style.height = `${snapped.box.height}px`;
@@ -334,14 +335,15 @@ function clampBox(
   box: { x: number; y: number; width: number; height: number },
   page: NotePage,
   aspectRatio?: number,
+  minSize: { width: number; height: number } = { width: 1, height: 1 },
 ) {
-  let width = Math.max(1, Math.round(box.width));
-  let height = Math.max(1, Math.round(box.height));
+  let width = Math.max(minSize.width, Math.round(box.width));
+  let height = Math.max(minSize.height, Math.round(box.height));
   if (aspectRatio && aspectRatio > 0) {
-    height = Math.max(1, Math.round(width / aspectRatio));
+    height = Math.max(minSize.height, Math.round(width / aspectRatio));
     if (height > page.height) {
       height = page.height;
-      width = Math.max(1, Math.round(height * aspectRatio));
+      width = Math.max(minSize.width, Math.round(height * aspectRatio));
     }
   }
   width = Math.min(width, page.width);
