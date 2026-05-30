@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
-import { Avatar, Badge, Button, Chat, ColorPicker, Empty, Input, Modal, Notification, Select, Space, Tabs, Tag, Toast, Tooltip, Typography, Upload } from '@douyinfe/semi-ui';
+import { Avatar, Badge, Button, Chat, Checkbox, ColorPicker, Empty, Input, Modal, Notification, Select, Space, Tabs, Tag, Toast, Tooltip, Typography, Upload } from '@douyinfe/semi-ui';
 import {
   IconArrowDown,
   IconArrowUp,
@@ -29,6 +29,8 @@ import { ImageCropModal } from './ImageCropModal';
 const pageSwatches = ['#fffaf0', '#ffffff', '#f7f0df', '#f2f5ff', '#eef8f1', '#fff1f3', '#202124'];
 const backgroundSwatches = ['', '#ffffff', '#fff3b8', '#f3d6e7', '#d8eef0', '#e9f1d8', '#f8d3c4'];
 const textSwatches = ['#2f2a24', '#0f4c81', '#3d6b59', '#8a3f58', '#6b4b9b', '#ffffff'];
+const inlineCodeTextSwatches = ['#8a3f58', '#0f4c81', '#3d6b59', '#6b4b9b', '#b45309', '#2f2a24'];
+const blockquoteTextSwatches = ['#5f5650', '#0f4c81', '#3d6b59', '#8a3f58', '#6b4b9b', '#2f2a24'];
 const codeBackgroundSwatches = ['#101828', '#111827', '#1f2937', '#24292f', '#0f172a', '#fffdf7'];
 const codeTextSwatches = ['#d7e2f0', '#e5e7eb', '#f8fafc', '#2f2a24', '#93c5fd', '#9ae6b4'];
 const brushSwatches = ['#446f64', '#2f2a24', '#0f4c81', '#8a3f58', '#6b4b9b', '#f2cf72'];
@@ -656,6 +658,10 @@ function ElementControls({
             color: String(style.color ?? '#2f2a24'),
             background: String(style.background ?? ''),
             fontFamily: String(style.fontFamily ?? ''),
+            inlineCodeColor: String(style.inlineCodeColor ?? '#8a3f58'),
+            inlineCodeFontFamily: String(style.inlineCodeFontFamily ?? ''),
+            blockquoteColor: String(style.blockquoteColor ?? '#5f5650'),
+            blockquoteFontFamily: String(style.blockquoteFontFamily ?? ''),
             borderColor: String(style.borderColor ?? '#2f2a24'),
             borderWidth: Number(style.borderWidth ?? 0),
             borderStyle: String(style.borderStyle ?? (Number(style.borderWidth ?? 0) > 0 ? 'solid' : 'none')),
@@ -858,6 +864,8 @@ function TextStyleControls({
     <div>
       <Swatches label="文本背景" value={value.background} values={backgroundSwatches} onChange={(background) => onPatch({ background })} />
       <Swatches label="文字颜色" value={value.color} values={textSwatches} onChange={(color) => onPatch({ color })} />
+      <Swatches label="行内代码颜色" value={value.inlineCodeColor || '#8a3f58'} values={inlineCodeTextSwatches} onChange={(inlineCodeColor) => onPatch({ inlineCodeColor })} />
+      <Swatches label="引用颜色" value={value.blockquoteColor || '#5f5650'} values={blockquoteTextSwatches} onChange={(blockquoteColor) => onPatch({ blockquoteColor })} />
       <Swatches label="边框颜色" value={value.borderColor} values={textSwatches} onChange={(borderColor) => onPatch({ borderColor })} />
       <div className="grid grid-cols-2 gap-2">
         <NumberField label="字号" value={Number(value.fontSize ?? 22)} min={8} max={120} onChange={(fontSize) => onPatch({ fontSize })} />
@@ -884,7 +892,25 @@ function TextStyleControls({
           }}
         />
       </label>
-      <FontSelector value={value.fontFamily} fonts={fonts} onChange={(fontFamily) => onPatch({ fontFamily })} onAddFont={onAddFont} onUseSystemFont={onUseSystemFont} />
+      <FontSelector label="文字字体" value={value.fontFamily} fonts={fonts} onChange={(fontFamily) => onPatch({ fontFamily })} onAddFont={onAddFont} onUseSystemFont={onUseSystemFont} />
+      <FontSelector
+        label="行内代码字体"
+        defaultLabel="默认代码字体"
+        value={value.inlineCodeFontFamily}
+        fonts={fonts}
+        onChange={(inlineCodeFontFamily) => onPatch({ inlineCodeFontFamily })}
+        onAddFont={onAddFont}
+        onUseSystemFont={onUseSystemFont}
+      />
+      <FontSelector
+        label="引用字体"
+        defaultLabel="默认文字字体"
+        value={value.blockquoteFontFamily}
+        fonts={fonts}
+        onChange={(blockquoteFontFamily) => onPatch({ blockquoteFontFamily })}
+        onAddFont={onAddFont}
+        onUseSystemFont={onUseSystemFont}
+      />
     </div>
   );
 }
@@ -1093,6 +1119,8 @@ function MediaControls({
   const asset = assets.find((item) => item.id === element.assetId);
   const src = assetDataUrl(asset);
   const canCrop = Boolean(src && !isGifAsset(asset));
+  const style = element.style ?? {};
+  const showFrame = style.showFrame !== false;
   const aspectRatio = Number(element.style?.aspectRatio ?? 0) || element.width / Math.max(1, element.height);
   return (
     <div>
@@ -1103,6 +1131,13 @@ function MediaControls({
         <NumberField label="宽度" value={Math.round(element.width)} min={32} max={1600} onChange={(width) => onPatch({ width, height: Math.max(1, Math.round(width / aspectRatio)) })} />
         <NumberField label="高度" value={Math.round(element.height)} min={32} max={1600} onChange={(height) => onPatch({ height, width: Math.max(1, Math.round(height * aspectRatio)) })} />
       </div>
+      <Checkbox
+        className="mt-3"
+        checked={showFrame}
+        onChange={(event) => onPatch({ style: { ...style, showFrame: Boolean(event.target.checked) } })}
+      >
+        显示边框
+      </Checkbox>
       <Button className="mt-3" size="small" icon={<IconCrop />} disabled={!canCrop} onClick={onCrop}>
         裁剪图片
       </Button>
@@ -1111,12 +1146,16 @@ function MediaControls({
 }
 
 function FontSelector({
+  label = '字体',
+  defaultLabel = '默认字体',
   value,
   fonts,
   onChange,
   onAddFont,
   onUseSystemFont,
 }: {
+  label?: string;
+  defaultLabel?: string;
   value: string;
   fonts: AssetMeta[];
   onChange: (fontFamily: string) => void;
@@ -1152,7 +1191,7 @@ function FontSelector({
   }, []);
 
   const optionList = [
-    { label: renderFontOption('默认字体'), value: '' },
+    { label: renderFontOption(defaultLabel), value: '' },
     ...fonts.map((font) => {
       const label = `已打包：${fontDisplayName(font)}`;
       return { label: renderFontOption(label), value: fontFamilyForAsset(font) };
@@ -1184,7 +1223,7 @@ function FontSelector({
     <div className="mt-3">
       <div className="mb-2 flex items-center gap-2 text-xs text-black/45">
         <IconFont />
-        <span>字体</span>
+        <span>{label}</span>
       </div>
       <Select
         filter

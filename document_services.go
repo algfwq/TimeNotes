@@ -648,6 +648,85 @@ func cropValue(value *float64) float64 {
 	return *value
 }
 
+func portableTextStyle(style map[string]interface{}) string {
+	var builder strings.Builder
+	appendCSSString(&builder, "background", styleStringValue(style, "background"))
+	appendCSSString(&builder, "color", styleStringValue(style, "color"))
+	appendCSSString(&builder, "font-family", styleStringValue(style, "fontFamily"))
+	appendCSSString(&builder, "--timenotes-text-font-family", styleStringValue(style, "fontFamily"))
+	appendCSSString(&builder, "--timenotes-inline-code-color", styleStringValue(style, "inlineCodeColor"))
+	appendCSSString(&builder, "--timenotes-inline-code-font-family", styleStringValue(style, "inlineCodeFontFamily"))
+	appendCSSString(&builder, "--timenotes-blockquote-color", styleStringValue(style, "blockquoteColor"))
+	appendCSSString(&builder, "--timenotes-blockquote-font-family", styleStringValue(style, "blockquoteFontFamily"))
+	appendCSSString(&builder, "border-color", styleStringValue(style, "borderColor"))
+	appendCSSString(&builder, "border-style", styleStringValue(style, "borderStyle"))
+	if value, ok := styleNumberValue(style, "fontSize"); ok {
+		appendCSSNumber(&builder, "font-size", value, "px")
+	}
+	if value, ok := styleNumberValue(style, "borderWidth"); ok {
+		appendCSSNumber(&builder, "border-width", value, "px")
+	}
+	if value, ok := styleNumberValue(style, "borderRadius"); ok {
+		appendCSSNumber(&builder, "border-radius", value, "px")
+	}
+	return builder.String()
+}
+
+func styleStringValue(style map[string]interface{}, key string) string {
+	if style == nil {
+		return ""
+	}
+	value, ok := style[key]
+	if !ok {
+		return ""
+	}
+	text, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(text)
+}
+
+func styleNumberValue(style map[string]interface{}, key string) (float64, bool) {
+	if style == nil {
+		return 0, false
+	}
+	switch value := style[key].(type) {
+	case float64:
+		return value, true
+	case float32:
+		return float64(value), true
+	case int:
+		return float64(value), true
+	case int64:
+		return float64(value), true
+	case json.Number:
+		number, err := value.Float64()
+		return number, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func appendCSSString(builder *strings.Builder, property string, value string) {
+	if value == "" {
+		return
+	}
+	value = strings.ReplaceAll(value, ";", "")
+	builder.WriteString(property)
+	builder.WriteByte(':')
+	builder.WriteString(html.EscapeString(value))
+	builder.WriteByte(';')
+}
+
+func appendCSSNumber(builder *strings.Builder, property string, value float64, unit string) {
+	builder.WriteString(property)
+	builder.WriteByte(':')
+	builder.WriteString(fmt.Sprintf("%g", value))
+	builder.WriteString(unit)
+	builder.WriteByte(';')
+}
+
 func renderPortableHTML(note NotePackage) string {
 	// 便携 HTML 把文档和资源都内联到单文件，定位为只读查看而不是编辑回写。
 	documentJSON, _ := json.Marshal(note.Document)
@@ -683,6 +762,7 @@ func renderPortableHTML(note NotePackage) string {
 		style := fmt.Sprintf("left:%gpx;top:%gpx;width:%gpx;height:%gpx;transform:rotate(%gdeg);z-index:%d;", el.X, el.Y, el.Width, el.Height, el.Rotation, el.ZIndex)
 		switch el.Type {
 		case "text":
+			style += portableTextStyle(el.Style)
 			body.WriteString(`<div class="note-element text" style="` + style + `">` + el.Content + `</div>`)
 		case "code":
 			language := "plaintext"
@@ -713,7 +793,7 @@ func renderPortableHTML(note NotePackage) string {
 		html.EscapeString(page.Background) +
 		`;width:` + fmt.Sprint(page.Width) + `px;height:` + fmt.Sprint(page.Height) + `px}.page-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:` +
 		fmt.Sprint(cropValue(page.BackgroundCropX)) + `% ` + fmt.Sprint(cropValue(page.BackgroundCropY)) +
-		`%;}.note-element{position:absolute;box-sizing:border-box}.text{font-size:26px;line-height:1.45;color:#2c2a26}.media{object-fit:cover;border-radius:14px}.tape{opacity:.78;border-radius:3px}.shape{border:2px solid #2c2a26;border-radius:16px}.codeblock{display:flex;flex-direction:column;overflow:hidden;border:1px solid rgba(255,255,255,.14);border-radius:8px;background:#101828;color:#d7e2f0;box-shadow:0 14px 32px rgba(15,23,42,.18)}.codebar{display:flex;height:32px;flex-shrink:0;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);padding:0 8px 0 12px;font:11px Inter,"Segoe UI",sans-serif;color:rgba(255,255,255,.72)}.copy-code{cursor:pointer;border:0;border-radius:6px;background:rgba(255,255,255,.1);color:#fff;padding:4px 8px}.codeblock pre{flex:1;min-height:0;margin:0;overflow:auto;padding:12px 14px 16px;font:14px/1.55 "Cascadia Code",Consolas,monospace;white-space:pre}</style></head><body><div class="wrap"><main class="page">` +
+		`%;}.note-element{position:absolute;box-sizing:border-box}.text{overflow:auto;scrollbar-gutter:stable;font-size:26px;line-height:1.45;color:#2c2a26;font-synthesis:style weight}.text::-webkit-scrollbar{width:8px;height:8px}.text::-webkit-scrollbar-thumb{border-radius:999px;background:rgba(47,42,36,.24)}.text::-webkit-scrollbar-track{background:rgba(255,255,255,.18)}.text h1,.text h2,.text h3,.text p,.text ul,.text ol,.text blockquote{margin-top:0;margin-bottom:.42em}.text h1,.text h2,.text h3{font-weight:750;line-height:1.15}.text h1{font-size:1.42em}.text h2{font-size:1.24em}.text h3{font-size:1.1em}.text ul,.text ol{padding-left:1.25em}.text blockquote{border-left:3px solid rgba(47,111,237,.45);border-left-color:color-mix(in srgb,var(--timenotes-blockquote-color,#5f5650) 45%,transparent);padding-left:.72em;color:var(--timenotes-blockquote-color,rgba(47,42,36,.72));font-family:var(--timenotes-blockquote-font-family,var(--timenotes-text-font-family,inherit))!important}.text blockquote :not(code){font-family:inherit!important}.text hr{height:1px;margin:.65em 0;border:0;background:rgba(47,42,36,.22)}.text a{color:#1f5fd2;cursor:pointer;text-decoration:underline;text-underline-offset:2px}.text em,.text i{font-synthesis:style;font-style:italic!important}.text code{border-radius:4px;background:rgba(47,111,237,.1);color:var(--timenotes-inline-code-color,#8a3f58);font-family:var(--timenotes-inline-code-font-family,"Cascadia Code","Fira Code",Consolas,"SFMono-Regular",monospace);font-size:.88em;padding:.06em .28em}.media{object-fit:cover;border-radius:14px}.tape{opacity:.78;border-radius:3px}.shape{border:2px solid #2c2a26;border-radius:16px}.codeblock{display:flex;flex-direction:column;overflow:hidden;border:1px solid rgba(255,255,255,.14);border-radius:8px;background:#101828;color:#d7e2f0;box-shadow:0 14px 32px rgba(15,23,42,.18)}.codebar{display:flex;height:32px;flex-shrink:0;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);padding:0 8px 0 12px;font:11px Inter,"Segoe UI",sans-serif;color:rgba(255,255,255,.72)}.copy-code{cursor:pointer;border:0;border-radius:6px;background:rgba(255,255,255,.1);color:#fff;padding:4px 8px}.codeblock pre{flex:1;min-height:0;margin:0;overflow:auto;padding:12px 14px 16px;font:14px/1.55 "Cascadia Code",Consolas,monospace;white-space:pre}</style></head><body><div class="wrap"><main class="page">` +
 		backgroundHTML +
 		body.String() +
 		`</main></div><script type="application/json" id="timenotes-document">` +

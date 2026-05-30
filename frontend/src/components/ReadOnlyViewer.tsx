@@ -1,12 +1,15 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from 'react';
+import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from 'react';
 import { Button, Pagination, Slider, Typography } from '@douyinfe/semi-ui';
 import { IconRefresh } from '@douyinfe/semi-icons';
 import { useDocument } from '../providers/DocumentProvider';
 import type { AssetMeta, NoteElement, NotePage } from '../types';
+import { findClosestLinkHref, openExternalLink } from '../lib/externalLinks';
 import { assetDataUrl } from '../lib/files';
 import { PageBackground } from './PageBackground';
 import { CodeBlockPreview } from './elements/CodeBlockElement';
+
+const defaultInlineCodeFontFamily = '"Cascadia Code", "Fira Code", Consolas, "SFMono-Regular", monospace';
 
 export function ReadOnlyViewer() {
   const { document, activePage, setActivePage } = useDocument();
@@ -154,6 +157,20 @@ function ReadOnlyElement({
   page: NotePage;
 }) {
   const style = element.style ?? {};
+  const handleLinkPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (findClosestLinkHref(event.target)) {
+      event.stopPropagation();
+    }
+  };
+  const handleLinkClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    const href = findClosestLinkHref(event.target);
+    if (!href) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    void openExternalLink(href);
+  };
   if ((element.type === 'drawing' || element.type === 'tape') && element.points?.length) {
     const stroke = String(style.stroke ?? (element.type === 'tape' ? '#f2cf72' : '#446f64'));
     const strokeWidth = Number(style.strokeWidth ?? (element.type === 'tape' ? 22 : 6));
@@ -238,9 +255,17 @@ function ReadOnlyElement({
           borderRadius: Number(style.borderRadius ?? 0),
           fontSize: Number(style.fontSize ?? 22),
           fontFamily: String(style.fontFamily || 'Inter, "Segoe UI", sans-serif'),
+          '--timenotes-text-font-family': String(style.fontFamily || 'Inter, "Segoe UI", sans-serif'),
+          '--timenotes-inline-code-color': String(style.inlineCodeColor ?? '#8a3f58'),
+          '--timenotes-inline-code-font-family': String(style.inlineCodeFontFamily || defaultInlineCodeFontFamily),
+          '--timenotes-blockquote-color': String(style.blockquoteColor ?? '#5f5650'),
+          '--timenotes-blockquote-font-family': String(style.blockquoteFontFamily || style.fontFamily || 'Inter, "Segoe UI", sans-serif'),
           lineHeight: 1.38,
-        }}
-        className="overflow-hidden rounded-[8px] px-4 py-3"
+        } as CSSProperties}
+        className="timenotes-rich-text timenotes-text-scroll overflow-auto rounded-[8px] px-4 py-3"
+        onPointerDownCapture={handleLinkPointerDown}
+        onClickCapture={handleLinkClick}
+        onWheel={(event) => event.stopPropagation()}
         dangerouslySetInnerHTML={{ __html: element.content ?? '' }}
       />
     );
@@ -257,6 +282,7 @@ function ReadOnlyElement({
   if (element.type === 'image' || element.type === 'sticker') {
     const asset = assets.find((item) => item.id === element.assetId);
     const src = assetDataUrl(asset);
+    const showFrame = style.showFrame !== false;
     return src ? (
       <img
         alt=""
@@ -267,7 +293,7 @@ function ReadOnlyElement({
           objectFit: String(style.fit ?? 'contain') as CSSProperties['objectFit'],
           objectPosition: objectPosition(style),
         }}
-        className="rounded-[8px]"
+        className={showFrame ? 'rounded-[8px]' : ''}
       />
     ) : null;
   }

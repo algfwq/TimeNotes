@@ -249,10 +249,11 @@ function renderElement(element: NoteElement, selected: boolean, editing: boolean
         ? style.cropDataUrl
         : undefined;
     const dataUrl = elementCropDataUrl ?? assetDataUrl(asset);
+    const showFrame = style.showFrame !== false;
     if (dataUrl) {
       return (
         <img
-          className={`h-full w-full rounded-[8px] ${element.type === 'sticker' ? 'drop-shadow-md' : 'shadow-md'}`}
+          className={`h-full w-full ${showFrame ? 'rounded-[8px]' : ''} ${showFrame ? (element.type === 'sticker' ? 'drop-shadow-md' : 'shadow-md') : ''}`}
           src={dataUrl}
           alt=""
           draggable={false}
@@ -275,7 +276,7 @@ function renderElement(element: NoteElement, selected: boolean, editing: boolean
     }
     return (
       <div
-        className="h-full w-full rounded-[8px] shadow-md"
+        className={`h-full w-full ${showFrame ? 'rounded-[8px] shadow-md' : ''}`}
         style={{ background: String(style.background ?? 'linear-gradient(135deg,#f4b4a4,#8ab6d6)') }}
       />
     );

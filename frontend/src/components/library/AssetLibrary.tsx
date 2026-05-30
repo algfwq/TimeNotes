@@ -79,7 +79,7 @@ export function AssetLibrary() {
         }}
       >
         <Button block theme="solid" type="primary" icon={<IconUpload />}>
-          导入图片素材
+          导入素材
         </Button>
       </Upload>
 

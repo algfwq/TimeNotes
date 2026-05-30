@@ -109,6 +109,10 @@ export interface ToolStyleState {
     color: string;
     background: string;
     fontFamily: string;
+    inlineCodeColor: string;
+    inlineCodeFontFamily: string;
+    blockquoteColor: string;
+    blockquoteFontFamily: string;
     borderColor: string;
     borderWidth: number;
     borderStyle: string;
