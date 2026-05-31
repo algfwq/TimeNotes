@@ -151,6 +151,7 @@ interface ResourceDeletion {
   key: string;
   group: ResourceGroup;
   assetId: string;
+  deletedAt?: string;
 }
 
 interface ResourceCacheResult {
@@ -407,6 +408,51 @@ function pruneDeletedResources(document: NoteDocument, deletedKeys: Set<string>)
   return next;
 }
 
+function documentResourceKeys(document: NoteDocument) {
+  const keys = new Set<string>();
+  resourceGroups(document).forEach(([group, assets]) => {
+    assets.forEach((asset) => {
+      if (asset.id) {
+        keys.add(resourceKey(group, asset.id));
+      }
+    });
+  });
+  return keys;
+}
+
+function deletedKeysForIncomingDocument(document: NoteDocument, deletedKeys: Set<string>, deletionTimes: Map<string, string>) {
+  const incomingKeys = documentResourceKeys(document);
+  const incomingTime = Date.parse(document.updatedAt || document.createdAt || '') || 0;
+  const next = new Set(deletedKeys);
+  incomingKeys.forEach((key) => {
+    const deletedAt = deletionTimes.get(key);
+    if (!deletedAt) {
+      return;
+    }
+    const deletedTime = Date.parse(deletedAt) || 0;
+    if (incomingTime > deletedTime) {
+      next.delete(key);
+    }
+  });
+  return next;
+}
+
+function clearDeletedKeysResurrectedByDocument(document: NoteDocument, deletedKeys: Set<string>, deletionTimes: Map<string, string>) {
+  const incomingKeys = documentResourceKeys(document);
+  const incomingTime = Date.parse(document.updatedAt || document.createdAt || '') || 0;
+  incomingKeys.forEach((key) => {
+    const deletedAt = deletionTimes.get(key);
+    if (!deletedAt) {
+      return;
+    }
+    const deletedTime = Date.parse(deletedAt) || 0;
+    if (incomingTime > deletedTime) {
+      deletedKeys.delete(key);
+      deletionTimes.delete(key);
+    }
+  });
+}
+
 function resourceGroups(document: NoteDocument): Array<[ResourceGroup, AssetMeta[]]> {
   return [
     ['assets', document.assets],
@@ -575,7 +621,12 @@ function syncResourcesToYjs(
   // 就会把 A 刚上传的图片/字体删掉，其他客户端只能看到资源 id，无法渲染。
 }
 
-function cacheResourcesFromYjs(resourceMap: Y.Map<CollaborationResourceValue>, cache: Map<string, AssetMeta>, deletedKeys?: Set<string>): ResourceCacheResult {
+function cacheResourcesFromYjs(
+  resourceMap: Y.Map<CollaborationResourceValue>,
+  cache: Map<string, AssetMeta>,
+  deletedKeys?: Set<string>,
+  deletionTimes?: Map<string, string>,
+): ResourceCacheResult {
   // resources map 是协作中的二进制素材池；缓存到内存后，document 快照只需要引用 assetId。
   const progress: Record<string, ResourceTransferProgress> = {};
   const completedKeys: string[] = [];
@@ -584,9 +635,10 @@ function cacheResourcesFromYjs(resourceMap: Y.Map<CollaborationResourceValue>, c
   resourceMap.forEach((entry, key) => {
     const resourceKey = String(key);
     if (isResourceDeleteEntry(entry)) {
-      const deletion = { key: resourceKey, group: entry.group, assetId: entry.assetId };
+      const deletion = { key: resourceKey, group: entry.group, assetId: entry.assetId, deletedAt: entry.deletedAt };
       deletions.push(deletion);
       deletedKeys?.add(deletion.key);
+      deletionTimes?.set(deletion.key, entry.deletedAt);
       cache.delete(entry.assetId);
       completedKeys.push(resourceKey);
       return;
@@ -595,6 +647,7 @@ function cacheResourcesFromYjs(resourceMap: Y.Map<CollaborationResourceValue>, c
       return;
     }
     deletedKeys?.delete(resourceKey);
+    deletionTimes?.delete(resourceKey);
     if (entry.transfer === 'file') {
       if (cache.has(entry.asset.id)) {
         hydrated = true;
@@ -756,10 +809,12 @@ function mergeCollaborationDocument(
   scope: CollaborationSnapshotScope | undefined,
   cache: Map<string, AssetMeta>,
   deletedKeys: Set<string>,
+  deletionTimes: Map<string, string>,
 ) {
   // 页面级协同只替换当前页和该页元素；如果页面结构变化或 scope 缺失，退回整文档替换。
+  const incomingDeletedKeys = deletedKeysForIncomingDocument(incoming, deletedKeys, deletionTimes);
   const safeCurrent = pruneDeletedResources(current, deletedKeys);
-  const normalizedIncoming = normalizeDocument(hydrateResourcesFromCache(pruneDeletedResources(incoming, deletedKeys), cache));
+  const normalizedIncoming = normalizeDocument(hydrateResourcesFromCache(pruneDeletedResources(incoming, incomingDeletedKeys), cache));
   if (!scope || scope.type === 'document') {
     return normalizedIncoming;
   }
@@ -839,6 +894,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
   const resourceCacheRef = useRef(new Map<string, AssetMeta>());
   const resourceSyncSignaturesRef = useRef(new WeakMap<Y.Doc, Map<string, string>>());
   const deletedResourceKeysRef = useRef(new Set<string>());
+  const deletedResourceTimesRef = useRef(new Map<string, string>());
   // 下一次同步到 Yjs 时的作用域。页面内编辑尽量只广播 page scope，页面结构变化才升级为 document scope。
   const pendingCollaborationScopeRef = useRef<CollaborationSnapshotScope | undefined>();
   const activePageIdRef = useRef('');
@@ -917,18 +973,22 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
   }, [resourceSignaturesFor]);
 
   const clearResourceDeleted = useCallback((group: ResourceGroup, assetId: string) => {
-    deletedResourceKeysRef.current.delete(resourceKey(group, assetId));
+    const key = resourceKey(group, assetId);
+    deletedResourceKeysRef.current.delete(key);
+    deletedResourceTimesRef.current.delete(key);
   }, []);
 
   const markResourceDeleted = useCallback(
     (group: ResourceGroup, assetId: string) => {
       const key = resourceKey(group, assetId);
+      const deletedAt = new Date().toISOString();
       deletedResourceKeysRef.current.add(key);
+      deletedResourceTimesRef.current.set(key, deletedAt);
       resourceCacheRef.current.delete(assetId);
       resourceSignaturesFor(activeYDoc).delete(key);
       const resourceMap = activeYDoc.getMap<CollaborationResourceValue>(collaborationResourceMapName);
       activeYDoc.transact(() => {
-        resourceMap.set(key, { kind: 'resource-delete', group, assetId, deletedAt: new Date().toISOString() });
+        resourceMap.set(key, { kind: 'resource-delete', group, assetId, deletedAt });
         Array.from(resourceMap.keys()).forEach((entryKey) => {
           if (entryKey.startsWith(resourceChunkKeyPrefix(key))) {
             resourceMap.delete(entryKey);
@@ -1023,18 +1083,26 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       // 先缓存资源，再合并 document；否则元素引用到的新 assetId 可能还找不到二进制数据。
-      const resourceResult = cacheResourcesFromYjs(resourceMap, resourceCacheRef.current, deletedResourceKeysRef.current);
+      const resourceResult = cacheResourcesFromYjs(resourceMap, resourceCacheRef.current, deletedResourceKeysRef.current, deletedResourceTimesRef.current);
       mergeResourceProgress(resourceResult.progress, resourceResult.completedKeys);
       if (resourceResult.hydrated) {
         bumpResourceCacheVersion();
       }
       announceResourceTransferInvalidations(resourceResult.deletions);
+      clearDeletedKeysResurrectedByDocument(nextSnapshot.document, deletedResourceKeysRef.current, deletedResourceTimesRef.current);
       skipNextYjsSyncRef.current = transaction.origin === collaborationRemoteOrigin;
       if (transaction.origin === collaborationRemoteOrigin) {
         skipYjsSyncUntilRef.current = Date.now() + 150;
       }
       updateActiveTab((tab) => {
-        const normalized = mergeCollaborationDocument(tab.document, nextSnapshot.document, nextSnapshot.scope, resourceCacheRef.current, deletedResourceKeysRef.current);
+        const normalized = mergeCollaborationDocument(
+          tab.document,
+          nextSnapshot.document,
+          nextSnapshot.scope,
+          resourceCacheRef.current,
+          deletedResourceKeysRef.current,
+          deletedResourceTimesRef.current,
+        );
         rememberResources(resourceCacheRef.current, normalized);
         return { ...tab, title: normalized.title, document: normalized };
       });
@@ -1050,7 +1118,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       if (transaction.origin === localOrigin || transaction.origin === resourceChunkOrigin) {
         return;
       }
-      const resourceResult = cacheResourcesFromYjs(resourceMap, resourceCacheRef.current, deletedResourceKeysRef.current);
+      const resourceResult = cacheResourcesFromYjs(resourceMap, resourceCacheRef.current, deletedResourceKeysRef.current, deletedResourceTimesRef.current);
       mergeResourceProgress(resourceResult.progress, resourceResult.completedKeys);
       if (resourceResult.hydrated) {
         bumpResourceCacheVersion();
@@ -1069,7 +1137,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
         return { ...tab, title: hydrated.title, document: hydrated };
       });
     };
-    const initialResources = cacheResourcesFromYjs(resourceMap, resourceCacheRef.current, deletedResourceKeysRef.current);
+    const initialResources = cacheResourcesFromYjs(resourceMap, resourceCacheRef.current, deletedResourceKeysRef.current, deletedResourceTimesRef.current);
     setResourceProgressMap(initialResources.progress, initialResources.completedKeys);
     if (initialResources.hydrated) {
       bumpResourceCacheVersion();
