@@ -1,14 +1,16 @@
 import type { AssetMeta, NotePage } from '../types';
-import { assetDataUrl } from '../lib/files';
-import { resourceKey, useDocument } from '../providers/DocumentProvider';
+import { assetDataUrl, mergeAssetWithCache } from '../lib/files';
+import { useDocument } from '../providers/DocumentProvider';
+import { resourceProgressKey, useResourceProgressMap } from '../providers/ResourceProgressStore';
 
 export function PageBackground({ page, assets }: { page: NotePage; assets: AssetMeta[] }) {
   // 背景图只保存 assetId 和裁剪百分比；图片二进制仍走 assets 打包进 .tnote。
-  const { resourceProgress } = useDocument();
-  const asset = assets.find((item) => item.id === page.backgroundAssetId);
+  const { getResourceAsset } = useDocument();
+  const resourceProgress = useResourceProgressMap();
+  const asset = mergeAssetWithCache(assets.find((item) => item.id === page.backgroundAssetId), getResourceAsset(page.backgroundAssetId));
   const src = assetDataUrl(asset);
   if (!src) {
-    const progress = page.backgroundAssetId ? resourceProgress[resourceKey('assets', page.backgroundAssetId)] : undefined;
+    const progress = page.backgroundAssetId ? resourceProgress[resourceProgressKey('assets', page.backgroundAssetId)] : undefined;
     if (progress) {
       return (
         <div className="pointer-events-none absolute inset-x-4 top-4 z-[1] rounded-[8px] bg-white/75 px-2 py-1 shadow-sm">

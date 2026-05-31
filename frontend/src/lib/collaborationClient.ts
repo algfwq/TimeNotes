@@ -1,6 +1,15 @@
 import * as Y from 'yjs';
-import { base64ToBytes, bytesToBase64 } from './base64';
-import type { ChatMessage, PresenceUser } from '../types';
+import { base64ByteLength, base64ToBytes, bytesToBase64 } from './base64';
+import {
+  announceCompletedResourceTransfer,
+  announceResourceTransferProgress,
+  announceResourceTransportReady,
+  subscribeOutboundResourceTransfer,
+  subscribeResourceTransferInvalidated,
+  type OutboundResourceTransfer,
+  type ResourceTransferInvalidation,
+} from './resourceTransferBus';
+import type { AssetMeta, ChatMessage, PresenceUser, ResourceGroup } from '../types';
 
 type Transport = NonNullable<PresenceUser['transport']>;
 
@@ -59,6 +68,34 @@ interface PongPayload {
   pingId: string;
 }
 
+interface FileResourceStartPayload {
+  transferId: string;
+  key: string;
+  group: ResourceGroup;
+  asset: AssetMeta;
+  signature: string;
+  transferVersion?: string;
+  totalBytes: number;
+  totalChunks: number;
+  chunkSize: number;
+  relay?: boolean;
+}
+
+interface FileResourceChunkPayload {
+  transferId: string;
+  key: string;
+  index: number;
+  chunkBase64: string;
+  chunkBytes?: number;
+  relay?: boolean;
+}
+
+interface FileResourceCompletePayload {
+  transferId: string;
+  key: string;
+  relay?: boolean;
+}
+
 interface JoinRequestPayload {
   requestId: string;
   user: PresenceUser;
@@ -92,20 +129,41 @@ interface PeerConnection {
   id: string;
   user: PresenceUser;
   pc: RTCPeerConnection;
-  channels: Partial<Record<'doc' | 'presence' | 'chat', RTCDataChannel>>;
+  channels: Partial<Record<DataChannelName, RTCDataChannel>>;
   timer: number;
+}
+
+interface IncomingFileTransfer {
+  peerId: string;
+  start: FileResourceStartPayload;
+  chunks: Array<string | Uint8Array | undefined>;
+  receivedBytes: number;
+  receivedChunks: number;
 }
 
 const remoteOrigin = 'timenotes-collaboration-remote';
 const resourceChunkOrigin = 'timenotes-resource-chunk';
-const dataChannelNames = ['doc', 'presence', 'chat'] as const;
+const dataChannelNames = ['doc', 'presence', 'chat', 'file'] as const;
+type DataChannelName = (typeof dataChannelNames)[number];
+type RealtimeChannelName = Exclude<DataChannelName, 'file'>;
 const collaborationDocumentKeyPrefix = 'document:';
 const docUpdateFlushMs = 90;
+const resourceUpdateFlushMs = 45;
+const resourceArchiveFlushMs = 180;
+const resourceArchiveIdleMs = 1200;
+const resourceTransferIdleMs = 1500;
+const fileChannelBackpressureRetryMs = 80;
+const fileTransferChunkBytes = 16 * 1024;
+const fileTransferChunkBase64Chars = Math.floor(fileTransferChunkBytes / 3) * 4;
+const fileTransferChunkIntervalMs = 12;
 const cursorPresenceFlushMs = 120;
 const serverPresenceMinIntervalMs = 1000;
 const latencyProbeIntervalMs = 3000;
 const maxAutomaticSnapshotBytes = 2 * 1024 * 1024;
 const maxDataChannelBufferedBytes = 8 * 1024 * 1024;
+const maxFileChannelBufferedBytes = 2 * 1024 * 1024;
+const maxRelaySocketBufferedBytes = 1024 * 1024;
+const relaySocketBackpressureRetryMs = 40;
 
 // CollaborationClient 是前端协作的网络内核：
 // - WebSocket 负责鉴权、房间成员、信令、持久化和应用层中转；
@@ -129,15 +187,29 @@ export class CollaborationClient {
   private pendingPresenceTimer?: number;
   private latencyTimer?: number;
   private pendingDocTimer?: number;
+  private pendingResourceTimer?: number;
+  private pendingResourceArchiveTimer?: number;
   // 本地 Yjs 高频编辑先合并到短队列里，再统一广播，避免拖动元素时刷爆网络。
   private pendingDocUpdates: Uint8Array[] = [];
+  private pendingResourceUpdates: Uint8Array[] = [];
+  private pendingResourceArchiveEnvelopes: Array<Envelope<DocUpdatePayload>> = [];
+  private pendingFileTransfers: OutboundResourceTransfer[] = [];
+  private pendingFileTransferKeys = new Set<string>();
+  private activeFileTransferKeys = new Set<string>();
+  private availableFileTransferKeys = new Set<string>();
+  private incomingFileTransfers = new Map<string, IncomingFileTransfer>();
   private pendingPings = new Map<string, number>();
   // 初次拉取服务端历史状态后，下一次本地 update 需要补发“服务端缺失的差量”。
   private nextLocalUpdateStateVector?: Uint8Array;
+  private lastDocInteractionAt = 0;
   private lastPresenceSentAt = 0;
   private lastServerPresenceAt = 0;
+  private p2pFileTransferActiveUntil = 0;
+  private sendingFileTransfer = false;
   private closing = false;
   private readonly onYUpdate: (update: Uint8Array, origin: unknown) => void;
+  private readonly unsubscribeOutboundResourceTransfer: () => void;
+  private readonly unsubscribeResourceTransferInvalidated: () => void;
 
   constructor(options: CollaborationClientOptions) {
     this.options = options;
@@ -145,9 +217,15 @@ export class CollaborationClient {
       if (origin === remoteOrigin || !this.connected) {
         return;
       }
-      this.queueDocUpdate(update, origin === resourceChunkOrigin);
+      if (origin === resourceChunkOrigin) {
+        this.queueResourceUpdate(update);
+        return;
+      }
+      this.queueDocUpdate(update);
     };
     this.options.yDoc.on('update', this.onYUpdate);
+    this.unsubscribeOutboundResourceTransfer = subscribeOutboundResourceTransfer((transfer) => this.queueFileTransfer(transfer));
+    this.unsubscribeResourceTransferInvalidated = subscribeResourceTransferInvalidated((invalidation) => this.invalidateFileTransferAvailability(invalidation));
     this.openSocket();
   }
 
@@ -155,8 +233,17 @@ export class CollaborationClient {
     this.closing = true;
     this.connected = false;
     this.options.yDoc.off('update', this.onYUpdate);
+    this.unsubscribeOutboundResourceTransfer();
+    this.unsubscribeResourceTransferInvalidated();
     this.clearTimers();
     this.pendingDocUpdates = [];
+    this.pendingResourceUpdates = [];
+    this.pendingResourceArchiveEnvelopes = [];
+    this.pendingFileTransfers = [];
+    this.pendingFileTransferKeys.clear();
+    this.activeFileTransferKeys.clear();
+    this.availableFileTransferKeys.clear();
+    this.incomingFileTransfers.clear();
     this.pendingPings.clear();
     this.peers.forEach((peer) => {
       window.clearTimeout(peer.timer);
@@ -201,9 +288,11 @@ export class CollaborationClient {
     };
     this.seenChats.add(message.id);
     this.options.onChat(message);
-    const payload = { messageId: message.id, text: trimmed, user: this.options.user, relay: this.needsRelay('chat') };
+    const payload = { messageId: message.id, text: trimmed, user: this.options.user, relay: this.needsRelay('chat') || this.isP2PFileTransferActive() };
     const env = this.makeEnvelope('chat', payload);
-    this.sendToPeers('chat', env);
+    if (!this.isP2PFileTransferActive()) {
+      this.sendToPeers('chat', env);
+    }
     this.sendSocket(env);
   }
 
@@ -278,6 +367,15 @@ export class CollaborationClient {
       case 'doc_update':
         this.applyDocUpdate(env.payload as DocUpdatePayload);
         break;
+      case 'file_resource_start':
+        this.applyFileResourceStart(env.from ?? 'relay', env.payload as FileResourceStartPayload);
+        break;
+      case 'file_resource_chunk':
+        this.applyFileResourceChunk(env.from ?? 'relay', env.payload as FileResourceChunkPayload);
+        break;
+      case 'file_resource_complete':
+        this.applyFileResourceComplete(env.from ?? 'relay', env.payload as FileResourceCompletePayload);
+        break;
       case 'presence':
         this.applyPresence((env.payload as { user?: PresenceUser })?.user, source);
         break;
@@ -329,6 +427,7 @@ export class CollaborationClient {
     payload.peers?.forEach((peer) => this.upsertPeer(peer));
     this.options.onStatus('已连接');
     this.options.onJoined(this.options.user);
+    announceResourceTransportReady();
     this.publishPresence();
     this.startPresenceHeartbeat();
     this.startLatencyProbe();
@@ -355,21 +454,20 @@ export class CollaborationClient {
     });
   }
 
-  // 普通编辑 update 短时间合并；资源 chunk 立即发出，远端才能看到连续下载进度。
-  private queueDocUpdate(update: Uint8Array, immediate = false) {
-    const outboundUpdate = this.nextLocalUpdateStateVector
-      ? Y.encodeStateAsUpdate(this.options.yDoc, this.nextLocalUpdateStateVector)
-      : update;
-    this.nextLocalUpdateStateVector = undefined;
-    this.pendingDocUpdates.push(outboundUpdate);
-    if (immediate) {
-      if (this.pendingDocTimer) {
-        window.clearTimeout(this.pendingDocTimer);
-        this.pendingDocTimer = undefined;
-      }
-      this.flushDocUpdates();
-      return;
+  private makeOutboundUpdate(update: Uint8Array) {
+    if (!this.nextLocalUpdateStateVector) {
+      return update;
     }
+    const outboundUpdate = Y.encodeStateAsUpdate(this.options.yDoc, this.nextLocalUpdateStateVector);
+    this.nextLocalUpdateStateVector = undefined;
+    return outboundUpdate;
+  }
+
+  // 普通编辑 update 短时间合并，降低拖拽/缩放元素时的网络帧数量。
+  private queueDocUpdate(update: Uint8Array) {
+    const outboundUpdate = this.makeOutboundUpdate(update);
+    this.lastDocInteractionAt = performance.now();
+    this.pendingDocUpdates.push(outboundUpdate);
     if (this.pendingDocTimer) {
       return;
     }
@@ -385,6 +483,188 @@ export class CollaborationClient {
       return;
     }
     this.broadcastDocUpdate(updates.length === 1 ? updates[0] : Y.mergeUpdates(updates));
+  }
+
+  // 大资源 chunk 使用低优先级队列逐块发送，避免音频传输抢占普通编辑交互。
+  private queueResourceUpdate(update: Uint8Array) {
+    this.pendingResourceUpdates.push(this.makeOutboundUpdate(update));
+    this.scheduleResourceFlush();
+  }
+
+  private scheduleResourceFlush(delayMs = resourceUpdateFlushMs) {
+    if (this.pendingResourceTimer || this.pendingResourceUpdates.length === 0) {
+      return;
+    }
+    this.pendingResourceTimer = window.setTimeout(() => {
+      this.pendingResourceTimer = undefined;
+      this.flushNextResourceUpdate();
+    }, delayMs);
+  }
+
+  private flushNextResourceUpdate() {
+    if (!this.connected) {
+      this.pendingResourceUpdates = [];
+      return;
+    }
+    if (this.canUseP2PFileTransfer() && !this.canSendToAllPeers('file')) {
+      this.markP2PFileTransferActive();
+      this.scheduleResourceFlush(fileChannelBackpressureRetryMs);
+      return;
+    }
+    const update = this.pendingResourceUpdates.shift();
+    if (update) {
+      this.broadcastDocUpdate(update, { resource: true });
+    }
+    this.scheduleResourceFlush();
+  }
+
+  private queueResourceArchive(env: Envelope<DocUpdatePayload>) {
+    this.pendingResourceArchiveEnvelopes.push(env);
+    this.scheduleResourceArchiveFlush();
+  }
+
+  private scheduleResourceArchiveFlush(delayMs = resourceArchiveFlushMs) {
+    if (this.pendingResourceArchiveTimer || this.pendingResourceArchiveEnvelopes.length === 0) {
+      return;
+    }
+    this.pendingResourceArchiveTimer = window.setTimeout(() => {
+      this.pendingResourceArchiveTimer = undefined;
+      this.flushNextResourceArchive();
+    }, delayMs);
+  }
+
+  private flushNextResourceArchive() {
+    if (!this.connected) {
+      this.pendingResourceArchiveEnvelopes = [];
+      return;
+    }
+    const now = performance.now();
+    const hasRealtimeWork = this.pendingResourceUpdates.length > 0 || this.isP2PFileTransferActive() || now - this.lastDocInteractionAt < resourceArchiveIdleMs;
+    if (hasRealtimeWork) {
+      this.scheduleResourceArchiveFlush(resourceArchiveFlushMs);
+      return;
+    }
+    const env = this.pendingResourceArchiveEnvelopes.shift();
+    if (env) {
+      this.sendSocket(env);
+    }
+    this.scheduleResourceArchiveFlush();
+  }
+
+  private queueFileTransfer(transfer: OutboundResourceTransfer) {
+    if (!this.connected || !transfer.dataBase64 || this.options.user.id === '') {
+      return;
+    }
+    const dedupeKey = this.fileTransferDedupeKey(transfer);
+    this.availableFileTransferKeys.add(dedupeKey);
+    if (this.pendingFileTransferKeys.has(dedupeKey) || this.activeFileTransferKeys.has(dedupeKey)) {
+      return;
+    }
+    this.pendingFileTransferKeys.add(dedupeKey);
+    this.pendingFileTransfers.push(transfer);
+    if (!this.sendingFileTransfer) {
+      void this.flushFileTransfers();
+    }
+  }
+
+  private async flushFileTransfers() {
+    if (this.sendingFileTransfer) {
+      return;
+    }
+    this.sendingFileTransfer = true;
+    try {
+      while (this.connected && this.pendingFileTransfers.length > 0) {
+        const transfer = this.pendingFileTransfers.shift();
+        if (transfer) {
+          const dedupeKey = this.fileTransferDedupeKey(transfer);
+          this.pendingFileTransferKeys.delete(dedupeKey);
+          this.activeFileTransferKeys.add(dedupeKey);
+          try {
+            await this.sendFileTransfer(transfer);
+          } finally {
+            this.activeFileTransferKeys.delete(dedupeKey);
+          }
+        }
+      }
+    } finally {
+      this.sendingFileTransfer = false;
+    }
+  }
+
+  private async sendFileTransfer(transfer: OutboundResourceTransfer, forcedRoute?: 'p2p' | 'relay') {
+    const dataBase64 = transfer.dataBase64;
+    const transferId = makeId('file');
+    const totalBytes = transfer.asset.size && transfer.asset.size > 0 ? transfer.asset.size : base64ByteLength(dataBase64);
+    const totalChunks = Math.max(1, Math.ceil(Math.max(1, dataBase64.length) / fileTransferChunkBase64Chars));
+    let route: 'p2p' | 'relay' = forcedRoute ?? (this.canUseP2PFileTransfer() ? 'p2p' : 'relay');
+    if (route === 'p2p') {
+      await this.waitForFileBackpressure();
+      if (!this.canUseP2PFileTransfer() || !this.canSendToAllPeers('file')) {
+        route = 'relay';
+      }
+    }
+    const startPayload: FileResourceStartPayload = {
+      transferId,
+      key: transfer.key,
+      group: transfer.group,
+      asset: transfer.asset,
+      signature: transfer.signature,
+      transferVersion: transfer.transferVersion,
+      totalBytes,
+      totalChunks,
+      chunkSize: fileTransferChunkBytes,
+      relay: route === 'relay',
+    };
+    const startEnv = this.makeEnvelope('file_resource_start', startPayload);
+    if (route === 'p2p') {
+      if (!this.sendToAllPeers('file', startEnv)) {
+        await this.sendFileTransfer(transfer, 'relay');
+        return;
+      }
+    } else {
+      await this.waitForRelaySocketBackpressure();
+      this.sendRelayEnvelope(startEnv);
+    }
+    for (let index = 0; index < totalChunks; index += 1) {
+      const chunkBase64 = dataBase64.slice(index * fileTransferChunkBase64Chars, Math.min(dataBase64.length, (index + 1) * fileTransferChunkBase64Chars));
+      const chunkBytes = base64ByteLength(chunkBase64);
+      if (route === 'p2p') {
+        await this.waitForFileBackpressure();
+        if (!this.canUseP2PFileTransfer() || !this.canSendToAllPeers('file')) {
+          // P2P 中途断开时重启为完整中转传输，避免对端拿到半份文件后一直停在临时控件。
+          await this.sendFileTransfer(transfer, 'relay');
+          return;
+        }
+        const chunk = base64ToBytes(chunkBase64);
+        if (!this.sendBinaryToAllPeers('file', chunk)) {
+          await this.sendFileTransfer(transfer, 'relay');
+          return;
+        }
+        this.markP2PFileTransferActive();
+      } else {
+        await this.waitForRelaySocketBackpressure();
+        this.sendRelayEnvelope(
+          this.makeEnvelope('file_resource_chunk', {
+            transferId,
+            key: transfer.key,
+            index,
+            chunkBase64,
+            chunkBytes,
+            relay: true,
+          } satisfies FileResourceChunkPayload),
+        );
+      }
+      if (index < totalChunks - 1) {
+        await sleep(fileTransferChunkIntervalMs);
+      }
+    }
+    const completeEnv = this.makeEnvelope('file_resource_complete', { transferId, key: transfer.key, relay: route === 'relay' } satisfies FileResourceCompletePayload);
+    if (route === 'p2p' && this.canUseP2PFileTransfer() && this.sendToAllPeers('file', completeEnv)) {
+      return;
+    } else {
+      await this.waitForRelaySocketBackpressure();
+      this.sendRelayEnvelope(completeEnv);
+    }
   }
 
   // 服务端已有快照时，先清理本地协作用的 snapshot/resources 槽位，避免旧本地文档再反向覆盖远端状态。
@@ -419,7 +699,7 @@ export class CollaborationClient {
     }
   }
 
-  private broadcastDocUpdate(update: Uint8Array) {
+  private broadcastDocUpdate(update: Uint8Array, options: { resource?: boolean } = {}) {
     // 同一个浏览器标签会复用 sessionStorage 里的 user.id。
     // 协作者退出后重新加入时 updateSeq 会从 0 开始，如果 updateId 只用 user.id + seq，
     // 其他客户端会把新连接的编辑误判为旧连接已处理过的 update。connectionId 用于隔离每次连接生命周期。
@@ -428,13 +708,24 @@ export class CollaborationClient {
     const payload: DocUpdatePayload = {
       updateId,
       updateBase64: bytesToBase64(update),
-      // 文档 update 始终让服务端中转一份。资源拆分后普通编辑 update 通常只有几百字节，
-      // 这比依赖 DataChannel 状态判断更稳，也不会再出现 35MB 素材包被反复中转的问题。
+      // 服务端仍负责持久化与必要中转；资源走 P2P file 通道时会延后归档，避免和实时编辑抢带宽。
       relay: true,
     };
     const env = this.makeEnvelope('doc_update', payload);
-    this.sendToPeers('doc', env);
+    if (options.resource && this.canUseP2PFileTransfer()) {
+      if (this.sendToAllPeers('file', env)) {
+        this.markP2PFileTransferActive();
+        this.queueResourceArchive(env);
+        return;
+      }
+    }
+    if (!this.isP2PFileTransferActive()) {
+      this.sendToPeers('doc', env);
+    }
     this.sendSocket(env);
+    if (options.resource) {
+      return;
+    }
     this.snapshotCounter += 1;
     if (this.snapshotCounter >= 50) {
       this.snapshotCounter = 0;
@@ -467,6 +758,141 @@ export class CollaborationClient {
     Y.applyUpdate(this.options.yDoc, base64ToBytes(payload.updateBase64), remoteOrigin);
   }
 
+  private applyFileResourceStart(peerId: string, payload?: FileResourceStartPayload) {
+    if (!payload?.transferId || !payload.key || peerId === this.options.user.id) {
+      return;
+    }
+    if (this.availableFileTransferKeys.has(this.fileTransferDedupeKeyFromPayload(payload))) {
+      return;
+    }
+    const sessionKey = this.fileSessionKey(peerId, payload.transferId);
+    this.clearIncomingFileSessions(peerId, payload.key);
+    this.incomingFileTransfers.set(sessionKey, {
+      peerId,
+      start: payload,
+      chunks: [],
+      receivedBytes: 0,
+      receivedChunks: 0,
+    });
+    announceResourceTransferProgress(this.fileProgress(payload, 0, 0));
+  }
+
+  private applyFileResourceChunk(peerId: string, payload?: FileResourceChunkPayload) {
+    if (!payload?.transferId || typeof payload.chunkBase64 !== 'string' || peerId === this.options.user.id) {
+      return;
+    }
+    this.appendFileChunk(peerId, payload.transferId, payload.chunkBase64, payload.index, payload.chunkBytes);
+  }
+
+  private async applyFileBinaryChunk(peerId: string, data: ArrayBuffer | Blob) {
+    const sessions = Array.from(this.incomingFileTransfers.values()).filter((session) => session.peerId === peerId);
+    const session = sessions.find((item) => item.receivedChunks < item.start.totalChunks);
+    if (!session) {
+      return;
+    }
+    const bytes = data instanceof Blob ? new Uint8Array(await data.arrayBuffer()) : new Uint8Array(data);
+    this.appendFileChunk(peerId, session.start.transferId, bytes);
+  }
+
+  private applyFileResourceComplete(peerId: string, payload?: FileResourceCompletePayload) {
+    if (!payload?.transferId || peerId === this.options.user.id) {
+      return;
+    }
+    const sessionKey = this.fileSessionKey(peerId, payload.transferId);
+    const session = this.incomingFileTransfers.get(sessionKey);
+    if (!session || session.receivedChunks < session.start.totalChunks) {
+      return;
+    }
+    const dataBase64 = encodeFileTransferChunks(session.chunks);
+    announceCompletedResourceTransfer({
+      key: session.start.key,
+      group: session.start.group,
+      asset: session.start.asset,
+      signature: session.start.signature,
+      transferVersion: session.start.transferVersion,
+      dataBase64,
+    });
+    this.availableFileTransferKeys.add(this.fileTransferDedupeKeyFromPayload(session.start));
+    this.incomingFileTransfers.delete(sessionKey);
+  }
+
+  private appendFileChunk(peerId: string, transferId: string, chunk: string | Uint8Array, index?: number, byteLength?: number) {
+    const sessionKey = this.fileSessionKey(peerId, transferId);
+    const session = this.incomingFileTransfers.get(sessionKey);
+    if (!session) {
+      return;
+    }
+    const chunkIndex = index ?? session.receivedChunks;
+    if (session.chunks[chunkIndex] === undefined) {
+      session.chunks[chunkIndex] = chunk;
+      session.receivedChunks += 1;
+      session.receivedBytes += byteLength ?? (typeof chunk === 'string' ? base64ByteLength(chunk) : chunk.length);
+    }
+    announceResourceTransferProgress(this.fileProgress(session.start, session.receivedBytes, session.receivedChunks));
+    if (session.receivedChunks >= session.start.totalChunks) {
+      this.applyFileResourceComplete(peerId, { transferId, key: session.start.key });
+    }
+  }
+
+  private fileProgress(start: FileResourceStartPayload, receivedBytes: number, receivedChunks: number) {
+    return {
+      key: start.key,
+      group: start.group,
+      assetId: start.asset.id,
+      name: start.asset.name,
+      receivedChunks,
+      totalChunks: start.totalChunks,
+      receivedBytes,
+      totalBytes: Math.max(1, start.totalBytes),
+      progress: Math.min(0.99, receivedBytes / Math.max(1, start.totalBytes)),
+    };
+  }
+
+  private fileSessionKey(peerId: string, transferId: string) {
+    return `${peerId}:${transferId}`;
+  }
+
+  private clearIncomingFileSessions(peerId: string, resourceKeyValue: string) {
+    Array.from(this.incomingFileTransfers.entries()).forEach(([key, session]) => {
+      if (session.peerId === peerId && session.start.key === resourceKeyValue) {
+        this.incomingFileTransfers.delete(key);
+      }
+    });
+  }
+
+  private invalidateFileTransferAvailability(invalidation: ResourceTransferInvalidation) {
+    const prefix = `${invalidation.key}:`;
+    Array.from(this.availableFileTransferKeys).forEach((key) => {
+      if (key.startsWith(prefix)) {
+        this.availableFileTransferKeys.delete(key);
+      }
+    });
+    Array.from(this.pendingFileTransferKeys).forEach((key) => {
+      if (key.startsWith(prefix)) {
+        this.pendingFileTransferKeys.delete(key);
+      }
+    });
+    Array.from(this.activeFileTransferKeys).forEach((key) => {
+      if (key.startsWith(prefix)) {
+        this.activeFileTransferKeys.delete(key);
+      }
+    });
+    this.pendingFileTransfers = this.pendingFileTransfers.filter((transfer) => transfer.key !== invalidation.key);
+    Array.from(this.incomingFileTransfers.entries()).forEach(([key, session]) => {
+      if (session.start.key === invalidation.key) {
+        this.incomingFileTransfers.delete(key);
+      }
+    });
+  }
+
+  private fileTransferDedupeKey(transfer: OutboundResourceTransfer) {
+    return `${transfer.key}:${transfer.signature}:${transfer.transferVersion ?? ''}`;
+  }
+
+  private fileTransferDedupeKeyFromPayload(payload: Pick<FileResourceStartPayload, 'key' | 'signature' | 'transferVersion'>) {
+    return `${payload.key}:${payload.signature}:${payload.transferVersion ?? ''}`;
+  }
+
   // 自动快照只做小文档兜底，超过阈值就继续依赖增量队列，避免大素材反复写入服务端。
   private sendSnapshot() {
     if (!this.connected) {
@@ -492,9 +918,11 @@ export class CollaborationClient {
     const transport: Transport = this.options.forceRelay ? 'relay' : this.hasAnyOpenChannel('presence') ? 'p2p' : 'relay';
     const user = { ...this.options.user, transport, lastSeen: new Date().toISOString() };
     this.options.user = user;
-    const relay = this.needsRelay('presence');
+    const relay = this.needsRelay('presence') || this.isP2PFileTransferActive();
     const env = this.makeEnvelope('presence', { user, relay });
-    this.sendToPeers('presence', env);
+    if (!this.isP2PFileTransferActive()) {
+      this.sendToPeers('presence', env);
+    }
     const now = performance.now();
     if (relay || now - this.lastServerPresenceAt >= serverPresenceMinIntervalMs) {
       this.lastServerPresenceAt = now;
@@ -610,8 +1038,11 @@ export class CollaborationClient {
     this.peerUsers.set(peer.id, peer);
     this.ensurePeer(peer);
     this.emitPeers();
-    if (notify && isNewPeer) {
-      this.options.onPeerJoined(peer);
+    if (isNewPeer) {
+      announceResourceTransportReady();
+      if (notify) {
+        this.options.onPeerJoined(peer);
+      }
     }
   }
 
@@ -681,8 +1112,17 @@ export class CollaborationClient {
     channel.onopen = () => {
       this.peerUsers.set(peer.id, { ...(this.peerUsers.get(peer.id) ?? peer.user), transport: 'p2p' });
       this.emitPeers();
+      if (label === 'file') {
+        announceResourceTransportReady();
+      }
     };
-    channel.onmessage = (event) => this.handleEnvelope(JSON.parse(String(event.data)), 'p2p');
+    channel.onmessage = (event) => {
+      if (label === 'file' && typeof event.data !== 'string') {
+        void this.applyFileBinaryChunk(peer.id, event.data as ArrayBuffer | Blob);
+        return;
+      }
+      this.handleEnvelope(JSON.parse(String(event.data)), 'p2p');
+    };
   }
 
   private async createOffer(peer: PeerConnection) {
@@ -714,16 +1154,17 @@ export class CollaborationClient {
     }
   }
 
-  private sendToPeers(channelName: 'doc' | 'presence' | 'chat', env: Envelope) {
+  private sendToPeers(channelName: DataChannelName, env: Envelope) {
     if (this.options.forceRelay) {
       return false;
     }
     let sent = false;
+    const encoded = JSON.stringify(env);
     this.peers.forEach((peer) => {
       const channel = peer.channels[channelName];
-      if (channel?.readyState === 'open' && channel.bufferedAmount < maxDataChannelBufferedBytes) {
+      if (channel?.readyState === 'open' && channel.bufferedAmount < this.bufferedAmountLimit(channelName)) {
         try {
-          channel.send(JSON.stringify(env));
+          channel.send(encoded);
         } catch {
           return;
         }
@@ -733,14 +1174,57 @@ export class CollaborationClient {
     return sent;
   }
 
+  private sendToAllPeers(channelName: DataChannelName, env: Envelope) {
+    if (this.options.forceRelay || !this.canSendToAllPeers(channelName)) {
+      return false;
+    }
+    const encoded = JSON.stringify(env);
+    try {
+      Array.from(this.peerUsers.keys()).forEach((peerID) => {
+        this.peers.get(peerID)?.channels[channelName]?.send(encoded);
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private sendBinaryToAllPeers(channelName: DataChannelName, data: Uint8Array) {
+    if (this.options.forceRelay || !this.canSendToAllPeers(channelName)) {
+      return false;
+    }
+    const payload = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+    try {
+      Array.from(this.peerUsers.keys()).forEach((peerID) => {
+        this.peers.get(peerID)?.channels[channelName]?.send(payload);
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   private sendSocket(env: Envelope) {
     if (this.socket?.readyState === WebSocket.OPEN) {
       this.socket.send(JSON.stringify(env));
     }
   }
 
+  private sendRelayEnvelope(env: Envelope) {
+    this.sendSocket(
+      this.makeEnvelope(
+        'relay',
+        {
+          type: env.type,
+          payload: env.payload,
+        },
+        env.to ?? '',
+      ),
+    );
+  }
+
   // P2P 未全部打开时，业务消息仍需要发给服务端一份，作为应用层 TURN-like 兜底。
-  private needsRelay(channelName: 'doc' | 'presence' | 'chat') {
+  private needsRelay(channelName: RealtimeChannelName) {
     if (this.options.forceRelay) {
       return true;
     }
@@ -751,8 +1235,55 @@ export class CollaborationClient {
     return peerIDs.some((peerID) => this.peers.get(peerID)?.channels[channelName]?.readyState !== 'open');
   }
 
-  private hasAnyOpenChannel(channelName: 'doc' | 'presence' | 'chat') {
+  private hasAnyOpenChannel(channelName: RealtimeChannelName) {
     return Array.from(this.peers.values()).some((peer) => peer.channels[channelName]?.readyState === 'open');
+  }
+
+  private canUseP2PFileTransfer() {
+    if (this.options.forceRelay) {
+      return false;
+    }
+    const peerIDs = Array.from(this.peerUsers.keys());
+    return peerIDs.length > 0 && peerIDs.every((peerID) => this.peers.get(peerID)?.channels.file?.readyState === 'open');
+  }
+
+  private canSendToAllPeers(channelName: DataChannelName) {
+    if (this.options.forceRelay) {
+      return false;
+    }
+    const peerIDs = Array.from(this.peerUsers.keys());
+    if (peerIDs.length === 0) {
+      return false;
+    }
+    return peerIDs.every((peerID) => {
+      const channel = this.peers.get(peerID)?.channels[channelName];
+      return Boolean(channel && channel.readyState === 'open' && channel.bufferedAmount < this.bufferedAmountLimit(channelName));
+    });
+  }
+
+  private bufferedAmountLimit(channelName: DataChannelName) {
+    return channelName === 'file' ? maxFileChannelBufferedBytes : maxDataChannelBufferedBytes;
+  }
+
+  private async waitForFileBackpressure() {
+    while (this.connected && this.canUseP2PFileTransfer() && !this.canSendToAllPeers('file')) {
+      this.markP2PFileTransferActive();
+      await sleep(fileChannelBackpressureRetryMs);
+    }
+  }
+
+  private async waitForRelaySocketBackpressure() {
+    while (this.connected && this.socket?.readyState === WebSocket.OPEN && this.socket.bufferedAmount > maxRelaySocketBufferedBytes) {
+      await sleep(relaySocketBackpressureRetryMs);
+    }
+  }
+
+  private markP2PFileTransferActive() {
+    this.p2pFileTransferActiveUntil = performance.now() + resourceTransferIdleMs;
+  }
+
+  private isP2PFileTransferActive() {
+    return performance.now() < this.p2pFileTransferActiveUntil;
   }
 
   private clearTimers() {
@@ -771,6 +1302,14 @@ export class CollaborationClient {
     if (this.pendingDocTimer) {
       window.clearTimeout(this.pendingDocTimer);
       this.pendingDocTimer = undefined;
+    }
+    if (this.pendingResourceTimer) {
+      window.clearTimeout(this.pendingResourceTimer);
+      this.pendingResourceTimer = undefined;
+    }
+    if (this.pendingResourceArchiveTimer) {
+      window.clearTimeout(this.pendingResourceArchiveTimer);
+      this.pendingResourceArchiveTimer = undefined;
     }
   }
 
@@ -918,8 +1457,8 @@ function mergeIceServers(...groups: RTCIceServer[][]): RTCIceServer[] {
   return merged;
 }
 
-// presence 通道可以丢包，文档和聊天必须有序可靠。
-function channelOptions(name: 'doc' | 'presence' | 'chat'): RTCDataChannelInit {
+// presence 通道可以丢包，文档、文件和聊天必须有序可靠。
+function channelOptions(name: DataChannelName): RTCDataChannelInit {
   if (name === 'presence') {
     return { ordered: false, maxRetransmits: 0 };
   }
@@ -945,4 +1484,29 @@ function makeId(prefix: string) {
     return `${prefix}-${crypto.randomUUID()}`;
   }
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+function encodeFileTransferChunks(chunks: Array<string | Uint8Array | undefined>) {
+  const presentChunks = chunks.filter((chunk): chunk is string | Uint8Array => chunk !== undefined);
+  if (presentChunks.every((chunk): chunk is string => typeof chunk === 'string')) {
+    return presentChunks.join('');
+  }
+  return bytesToBase64(concatUint8Arrays(presentChunks.map((chunk) => (typeof chunk === 'string' ? base64ToBytes(chunk) : chunk))));
+}
+
+function concatUint8Arrays(chunks: Uint8Array[]) {
+  const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const result = new Uint8Array(total);
+  let offset = 0;
+  chunks.forEach((chunk) => {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  });
+  return result;
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Empty, Toast, Upload } from '@douyinfe/semi-ui';
 import { IconCrop, IconDelete, IconImage, IconMusic, IconPlayCircle, IconUpload } from '@douyinfe/semi-icons';
 import { readAudioMetadata } from '../../lib/audioMetadata';
@@ -11,18 +11,24 @@ import {
   isGifAsset,
   isSupportedAudioFile,
   isSupportedImageFile,
+  mergeAssetWithCache,
 } from '../../lib/files';
-import { resourceKey, useDocument } from '../../providers/DocumentProvider';
+import { useDocument } from '../../providers/DocumentProvider';
+import { resourceProgressKey, useResourceProgressMap } from '../../providers/ResourceProgressStore';
 import { ImageCropModal } from '../ImageCropModal';
 import type { AssetMeta } from '../../types';
 
-const audioAccept = '.mp3,.m4a,.aac,.wav,.ogg,.oga,.flac,.webm,audio/*';
+const materialAccept = '.png,.jpg,.jpeg,.gif,.webp,.svg,.mp3,.m4a,.aac,.wav,.ogg,.oga,.flac,.webm,image/*,audio/*';
 
 export function AssetLibrary() {
-  const { document, addAsset, addAudio, armPlacement, deleteAsset, deleteAudio, replaceAsset, resourceProgress } = useDocument();
+  const { document, addAsset, addAudio, armPlacement, deleteAsset, deleteAudio, replaceAsset, getResourceAsset } = useDocument();
+  const resourceProgress = useResourceProgressMap();
   const [menu, setMenu] = useState<{ x: number; y: number; assetId: string } | null>(null);
   const [audioMenu, setAudioMenu] = useState<{ x: number; y: number; assetId: string } | null>(null);
   const [cropAssetId, setCropAssetId] = useState<string | null>(null);
+  const [dragActive, setDragActive] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const dragDepthRef = useRef(0);
 
   const importImageFile = useCallback(
     async (file: File) => {
@@ -53,19 +59,84 @@ export function AssetLibrary() {
     [addAudio],
   );
 
+  const importMaterialFile = useCallback(
+    async (file: File) => {
+      if (isSupportedImageFile(file)) {
+        await importImageFile(file);
+        return;
+      }
+      if (isSupportedAudioFile(file)) {
+        await importAudioFile(file);
+        return;
+      }
+      Toast.warning(`不支持的素材：${file.name}`);
+    },
+    [importAudioFile, importImageFile],
+  );
+
+  const importMaterialFiles = useCallback(
+    (files: File[]) => {
+      const supported = files.filter(isSupportedMaterialFile);
+      if (supported.length === 0) {
+        if (files.length > 0) {
+          Toast.warning('没有可导入的图片、GIF 或音频素材');
+        }
+        return;
+      }
+      supported.forEach((file) => void importMaterialFile(file));
+    },
+    [importMaterialFile],
+  );
+
+  useEffect(() => {
+    const handleWindowDragOver = (event: DragEvent) => {
+      if (!hasFileDrag(event.dataTransfer) || !isEventInsideRoot(event, rootRef.current)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = 'copy';
+      }
+      setDragActive(true);
+    };
+    const handleWindowDrop = (event: DragEvent) => {
+      if (!hasFileDrag(event.dataTransfer) || !isEventInsideRoot(event, rootRef.current)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      dragDepthRef.current = 0;
+      setDragActive(false);
+      importMaterialFiles(filesFromDataTransfer(event.dataTransfer));
+    };
+    const handleWindowDragEnd = () => {
+      dragDepthRef.current = 0;
+      setDragActive(false);
+    };
+    window.addEventListener('dragover', handleWindowDragOver, true);
+    window.addEventListener('drop', handleWindowDrop, true);
+    window.addEventListener('dragend', handleWindowDragEnd, true);
+    return () => {
+      window.removeEventListener('dragover', handleWindowDragOver, true);
+      window.removeEventListener('drop', handleWindowDrop, true);
+      window.removeEventListener('dragend', handleWindowDragEnd, true);
+    };
+  }, [importMaterialFiles]);
+
   useEffect(() => {
     const handlePaste = (event: ClipboardEvent) => {
-      const files = Array.from(event.clipboardData?.files ?? []).filter(isSupportedImageFile);
+      const files = Array.from(event.clipboardData?.files ?? []).filter(isSupportedMaterialFile);
       if (files.length === 0) {
         return;
       }
       event.preventDefault();
-      files.forEach((file) => void importImageFile(file));
+      importMaterialFiles(files);
     };
-    // 素材栏挂载时监听粘贴，用户无需先点上传按钮即可 Ctrl+V 导入剪切板图片。
+    // 素材栏挂载时监听粘贴，用户无需先点上传按钮即可 Ctrl+V 导入剪切板素材。
     window.addEventListener('paste', handlePaste);
     return () => window.removeEventListener('paste', handlePaste);
-  }, [importImageFile]);
+  }, [importMaterialFiles]);
 
   useEffect(() => {
     const close = () => {
@@ -100,9 +171,9 @@ export function AssetLibrary() {
     Toast.info('已选择音频，请在画布上点击放置位置');
   };
 
-  const cropAsset = document.assets.find((asset) => asset.id === cropAssetId);
+  const cropAsset = mergeAssetWithCache(document.assets.find((asset) => asset.id === cropAssetId), getResourceAsset(cropAssetId ?? undefined));
   const cropSrc = cropAsset && !isGifAsset(cropAsset) ? assetDataUrl(cropAsset) : undefined;
-  const menuAsset = menu ? document.assets.find((asset) => asset.id === menu.assetId) : undefined;
+  const menuAsset = menu ? mergeAssetWithCache(document.assets.find((asset) => asset.id === menu.assetId), getResourceAsset(menu.assetId)) : undefined;
   const hasAnyAsset = document.assets.length > 0 || document.audios.length > 0;
   const applyAssetCrop = async (dataUrl: string) => {
     if (cropAsset && !isGifAsset(cropAsset)) {
@@ -114,51 +185,81 @@ export function AssetLibrary() {
   };
 
   return (
-    <div className="h-full min-h-0 overflow-y-auto overflow-x-hidden px-4 py-4" tabIndex={0}>
-      <div className="grid grid-cols-2 gap-2">
-        <Upload
-          action=""
-          accept=".png,.jpg,.jpeg,.gif,.webp,.svg"
-          multiple
-          showUploadList={false}
-          uploadTrigger="custom"
-          onFileChange={(files: File[]) => {
-            files.forEach((file) => void importImageFile(file));
-          }}
-        >
-          <Button block theme="solid" type="primary" icon={<IconUpload />}>
-            导入图片
-          </Button>
-        </Upload>
-        <Upload
-          action=""
-          accept={audioAccept}
-          multiple
-          showUploadList={false}
-          uploadTrigger="custom"
-          onFileChange={(files: File[]) => {
-            files.forEach((file) => void importAudioFile(file));
-          }}
-        >
-          <Button block icon={<IconMusic />}>
-            导入音频
-          </Button>
-        </Upload>
-      </div>
+    <div
+      ref={rootRef}
+      className={`relative h-full min-h-0 overflow-y-auto overflow-x-hidden px-4 py-4 ${dragActive ? 'bg-[#2f6fed]/5' : ''}`}
+      tabIndex={0}
+      onDragEnter={(event) => {
+        if (!hasFileDrag(event.dataTransfer)) {
+          return;
+        }
+        event.preventDefault();
+        dragDepthRef.current += 1;
+        setDragActive(true);
+      }}
+      onDragOver={(event) => {
+        if (!hasFileDrag(event.dataTransfer)) {
+          return;
+        }
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'copy';
+        setDragActive(true);
+      }}
+      onDragLeave={(event) => {
+        if (!hasFileDrag(event.dataTransfer)) {
+          return;
+        }
+        event.preventDefault();
+        dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+        if (dragDepthRef.current === 0) {
+          setDragActive(false);
+        }
+      }}
+      onDrop={(event) => {
+        if (!hasFileDrag(event.dataTransfer)) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        dragDepthRef.current = 0;
+        setDragActive(false);
+        importMaterialFiles(filesFromDataTransfer(event.dataTransfer));
+      }}
+    >
+      {dragActive ? (
+        <div className="pointer-events-none absolute inset-2 z-[20] grid place-items-center rounded-[8px] border-2 border-dashed border-[#2f6fed] bg-white/78 text-sm font-medium text-[#2f6fed] shadow-sm">
+          松开导入素材
+        </div>
+      ) : null}
+      <Upload
+        action=""
+        accept={materialAccept}
+        multiple
+        showUploadList={false}
+        uploadTrigger="custom"
+        onFileChange={(files: unknown[]) => {
+          importMaterialFiles(files.map(nativeFileFromUploadItem).filter((file): file is File => Boolean(file)));
+        }}
+      >
+        <Button block theme="solid" type="primary" icon={<IconUpload />}>
+          导入素材
+        </Button>
+      </Upload>
 
-      <div className="mt-2 text-xs text-black/45">可直接 Ctrl+V 粘贴剪切板图片</div>
+      <div className="mt-2 text-xs text-black/45">可直接 Ctrl+V 粘贴剪切板素材</div>
 
       {document.assets.length > 0 ? (
         <div className="mt-4 grid grid-cols-2 gap-3">
           {document.assets.map((asset) => {
-            const progress = resourceProgress[resourceKey('assets', asset.id)];
-            const src = assetDataUrl(asset);
+            const hydratedAsset = mergeAssetWithCache(asset, getResourceAsset(asset.id)) ?? asset;
+            const progress = resourceProgress[resourceProgressKey('assets', asset.id)];
+            const src = assetDataUrl(hydratedAsset);
             return (
               <button
                 key={asset.id}
                 className="group overflow-hidden rounded-[8px] border border-black/10 bg-white p-2 text-left shadow-sm transition hover:border-[#2f6fed]/45"
                 type="button"
-                onClick={() => void chooseAsset(asset)}
+                onClick={() => void chooseAsset(hydratedAsset)}
                 onContextMenu={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
@@ -176,7 +277,7 @@ export function AssetLibrary() {
                     <div className="mt-1 text-[11px] text-black/40">传输中 {Math.round(progress.progress * 100)}%</div>
                   </div>
                 ) : null}
-                <div className="mt-2 truncate text-xs text-black/60">{asset.name}</div>
+                <div className="mt-2 truncate text-xs text-black/60">{hydratedAsset.name}</div>
               </button>
             );
           })}
@@ -186,15 +287,16 @@ export function AssetLibrary() {
       {document.audios.length > 0 ? (
         <div className="mt-4 flex flex-col gap-3">
           {document.audios.map((asset) => {
-            const cover = assetCoverDataUrl(asset);
-            const progress = resourceProgress[resourceKey('audios', asset.id)];
-            const audioMeta = [asset.audioArtist || asset.audioAlbum, formatDuration(asset.duration)].filter(Boolean).join(' · ');
+            const hydratedAsset = mergeAssetWithCache(asset, getResourceAsset(asset.id)) ?? asset;
+            const cover = assetCoverDataUrl(hydratedAsset);
+            const progress = resourceProgress[resourceProgressKey('audios', asset.id)];
+            const audioMeta = [hydratedAsset.audioArtist || hydratedAsset.audioAlbum, formatDuration(hydratedAsset.duration)].filter(Boolean).join(' · ');
             return (
               <button
                 key={asset.id}
                 type="button"
                 className="group flex min-w-0 items-center gap-3 rounded-[8px] border border-black/10 bg-white p-2 text-left shadow-sm transition hover:border-[#2f6fed]/45"
-                onClick={() => chooseAudio(asset)}
+                onClick={() => chooseAudio(hydratedAsset)}
                 onContextMenu={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
@@ -205,7 +307,7 @@ export function AssetLibrary() {
                   {cover ? <img className="h-full w-full object-cover" src={cover} alt="" /> : <IconMusic />}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">{asset.audioTitle || asset.name}</div>
+                  <div className="truncate text-sm font-medium">{hydratedAsset.audioTitle || hydratedAsset.name}</div>
                   <div className="truncate text-xs text-black/45">{audioMeta || '未知时长'}</div>
                   {progress ? (
                     <div className="mt-2">
@@ -292,6 +394,50 @@ function AssetContextMenu({
       </button>
     </div>
   );
+}
+
+function isSupportedMaterialFile(file: Pick<File, 'type' | 'name'>) {
+  return isSupportedImageFile(file) || isSupportedAudioFile(file);
+}
+
+function hasFileDrag(dataTransfer?: DataTransfer | null) {
+  if (!dataTransfer) {
+    return false;
+  }
+  if (dataTransfer.files?.length || Array.from(dataTransfer.items ?? []).some((item) => item.kind === 'file')) {
+    return true;
+  }
+  return Array.from(dataTransfer.types ?? []).some((type) => type.toLowerCase() === 'files');
+}
+
+function filesFromDataTransfer(dataTransfer?: DataTransfer | null) {
+  if (!dataTransfer) {
+    return [];
+  }
+  const files = Array.from(dataTransfer.files ?? []);
+  if (files.length > 0) {
+    return files;
+  }
+  return Array.from(dataTransfer.items ?? [])
+    .filter((item) => item.kind === 'file')
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => Boolean(file));
+}
+
+function nativeFileFromUploadItem(item: unknown) {
+  if (item instanceof File) {
+    return item;
+  }
+  const candidate = item as { fileInstance?: File; originFileObj?: File; file?: File };
+  return candidate.fileInstance ?? candidate.originFileObj ?? candidate.file;
+}
+
+function isEventInsideRoot(event: Event, root: HTMLElement | null) {
+  if (!root) {
+    return false;
+  }
+  const path = event.composedPath?.() ?? [];
+  return path.includes(root) || (event.target instanceof Node && root.contains(event.target));
 }
 
 function AudioContextMenu({ state, onDelete }: { state: { x: number; y: number; assetId: string } | null; onDelete: (assetId: string) => void }) {

@@ -45,6 +45,23 @@ export function assetCoverDataUrl(asset?: Pick<AssetMeta, 'coverMimeType' | 'cov
   return undefined;
 }
 
+export function mergeAssetWithCache(asset?: AssetMeta, cached?: AssetMeta) {
+  if (!asset) {
+    return cached;
+  }
+  if (!cached) {
+    return asset;
+  }
+  return {
+    ...cached,
+    ...asset,
+    dataBase64: asset.dataBase64 ?? cached.dataBase64,
+    dataUrl: asset.dataUrl ?? cached.dataUrl,
+    coverDataBase64: asset.coverDataBase64 ?? cached.coverDataBase64,
+    coverDataUrl: asset.coverDataUrl ?? cached.coverDataUrl,
+  };
+}
+
 export function isGifAsset(asset?: Pick<AssetMeta, 'mimeType' | 'name' | 'path'> | null) {
   if (!asset) {
     return false;

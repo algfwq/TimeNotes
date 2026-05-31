@@ -17,6 +17,14 @@ export function base64ToBytes(value: string): Uint8Array {
   return bytes;
 }
 
+export function base64ByteLength(value: string): number {
+  if (!value) {
+    return 0;
+  }
+  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((value.length * 3) / 4) - padding);
+}
+
 export function dataUrlToBase64(dataUrl: string): string {
   const [, payload = ''] = dataUrl.split(',', 2);
   return payload;

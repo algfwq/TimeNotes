@@ -4,8 +4,9 @@ import { Button, Pagination, Slider, Typography } from '@douyinfe/semi-ui';
 import { IconRefresh } from '@douyinfe/semi-icons';
 import type { AssetMeta, NoteElement, NotePage, ResourceTransferProgress } from '../types';
 import { findClosestLinkHref, openExternalLink } from '../lib/externalLinks';
-import { assetDataUrl } from '../lib/files';
-import { resourceKey, useDocument } from '../providers/DocumentProvider';
+import { assetDataUrl, mergeAssetWithCache } from '../lib/files';
+import { useDocument } from '../providers/DocumentProvider';
+import { resourceProgressKey, useResourceProgressMap } from '../providers/ResourceProgressStore';
 import { PageBackground } from './PageBackground';
 import { AudioElement } from './elements/AudioElement';
 import { CodeBlockPreview } from './elements/CodeBlockElement';
@@ -13,7 +14,8 @@ import { CodeBlockPreview } from './elements/CodeBlockElement';
 const defaultInlineCodeFontFamily = '"Cascadia Code", "Fira Code", Consolas, "SFMono-Regular", monospace';
 
 export function ReadOnlyViewer() {
-  const { document, activePage, setActivePage, resourceProgress } = useDocument();
+  const { document, activePage, setActivePage, getResourceAsset } = useDocument();
+  const resourceProgress = useResourceProgressMap();
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const panStartRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
   const [scale, setScale] = useState(0.8);
@@ -118,7 +120,15 @@ export function ReadOnlyViewer() {
             transform: `translate(-50%, 0) translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
           }}
         >
-          <ReadOnlyPage page={activePage} elements={elements} assets={document.assets} stickers={document.stickers} audios={document.audios} resourceProgress={resourceProgress} />
+          <ReadOnlyPage
+            page={activePage}
+            elements={elements}
+            assets={document.assets}
+            stickers={document.stickers}
+            audios={document.audios}
+            resourceProgress={resourceProgress}
+            getResourceAsset={getResourceAsset}
+          />
         </div>
       </div>
     </div>
@@ -132,6 +142,7 @@ function ReadOnlyPage({
   stickers,
   audios,
   resourceProgress,
+  getResourceAsset,
 }: {
   page: NotePage;
   elements: NoteElement[];
@@ -139,6 +150,7 @@ function ReadOnlyPage({
   stickers: AssetMeta[];
   audios: AssetMeta[];
   resourceProgress: Record<string, ResourceTransferProgress>;
+  getResourceAsset: (id?: string) => AssetMeta | undefined;
 }) {
   const elementAssets = [...assets, ...stickers, ...audios];
   return (
@@ -146,7 +158,7 @@ function ReadOnlyPage({
       <PageBackground page={page} assets={assets} />
       <PaperTexture page={page} hasImage={Boolean(page.backgroundAssetId)} />
       {elements.map((element) => (
-        <ReadOnlyElement key={element.id} element={element} assets={elementAssets} page={page} resourceProgress={resourceProgress} />
+        <ReadOnlyElement key={element.id} element={element} assets={elementAssets} page={page} resourceProgress={resourceProgress} getResourceAsset={getResourceAsset} />
       ))}
     </main>
   );
@@ -157,11 +169,13 @@ function ReadOnlyElement({
   assets,
   page,
   resourceProgress,
+  getResourceAsset,
 }: {
   element: NoteElement;
   assets: AssetMeta[];
   page: NotePage;
   resourceProgress: Record<string, ResourceTransferProgress>;
+  getResourceAsset: (id?: string) => AssetMeta | undefined;
 }) {
   const style = element.style ?? {};
   const handleLinkPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -287,8 +301,8 @@ function ReadOnlyElement({
   }
 
   if (element.type === 'audio') {
-    const asset = assets.find((item) => item.id === element.assetId);
-    const progress = element.assetId ? resourceProgress[resourceKey('audios', element.assetId)] : undefined;
+    const asset = mergeAssetWithCache(assets.find((item) => item.id === element.assetId), getResourceAsset(element.assetId));
+    const progress = element.assetId ? resourceProgress[resourceProgressKey('audios', element.assetId)] : undefined;
     return (
       <div style={base}>
         <AudioElement element={element} asset={asset} progress={progress} readOnly />
@@ -297,9 +311,9 @@ function ReadOnlyElement({
   }
 
   if (element.type === 'image' || element.type === 'sticker') {
-    const asset = assets.find((item) => item.id === element.assetId);
+    const asset = mergeAssetWithCache(assets.find((item) => item.id === element.assetId), getResourceAsset(element.assetId));
     const src = assetDataUrl(asset);
-    const progress = element.assetId ? resourceProgress[resourceKey(element.type === 'sticker' ? 'stickers' : 'assets', element.assetId)] : undefined;
+    const progress = element.assetId ? resourceProgress[resourceProgressKey(element.type === 'sticker' ? 'stickers' : 'assets', element.assetId)] : undefined;
     const showFrame = style.showFrame !== false;
     return src ? (
       <img

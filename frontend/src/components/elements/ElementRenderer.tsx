@@ -1,9 +1,9 @@
 import { useMemo } from 'react';
 import { IconHandle } from '@douyinfe/semi-icons';
 import { useDocument } from '../../providers/DocumentProvider';
+import { resourceProgressKey, useResourceProgressMap } from '../../providers/ResourceProgressStore';
 import type { AssetMeta, NoteDocument, NoteElement, ResourceTransferProgress } from '../../types';
-import { assetDataUrl, isGifAsset } from '../../lib/files';
-import { resourceKey } from '../../providers/DocumentProvider';
+import { assetDataUrl, isGifAsset, mergeAssetWithCache } from '../../lib/files';
 import { AudioElement } from './AudioElement';
 import { CodeBlockElement } from './CodeBlockElement';
 import { RichTextElement } from './RichTextElement';
@@ -17,16 +17,19 @@ export function ElementRenderer({
   element: NoteElement;
   onContextMenu?: (event: React.MouseEvent, element: NoteElement) => void;
 }) {
-  const { document, activePage, selectedElementId, editingElementId, selectElement, startEditing, stopEditing, updateElement, zoom, tool, resourceProgress } = useDocument();
+  const { document, activePage, selectedElementId, editingElementId, selectElement, startEditing, stopEditing, updateElement, zoom, tool, getResourceAsset } = useDocument();
+  const resourceProgress = useResourceProgressMap();
   const selected = selectedElementId === element.id;
   const editing = editingElementId === element.id;
   const isStrokePath = (element.type === 'drawing' || element.type === 'tape') && Boolean(element.points?.length);
   const drawingToolActive = tool === 'drawing' || tool === 'tape';
-  const asset = useMemo(
+  const documentAsset = useMemo(
     () => [...document.assets, ...document.stickers, ...document.audios].find((item) => item.id === element.assetId),
     [document.assets, document.stickers, document.audios, element.assetId],
   );
-  const progress = element.assetId ? resourceProgress[resourceKey(element.type === 'audio' ? 'audios' : element.type === 'sticker' ? 'stickers' : 'assets', element.assetId)] : undefined;
+  const cachedAsset = getResourceAsset(element.assetId);
+  const asset = useMemo(() => mergeAssetWithCache(documentAsset, cachedAsset), [cachedAsset, documentAsset]);
+  const progress = element.assetId ? resourceProgress[resourceProgressKey(element.type === 'audio' ? 'audios' : element.type === 'sticker' ? 'stickers' : 'assets', element.assetId)] : undefined;
   const baseStyle: React.CSSProperties = {
     left: element.x,
     top: element.y,

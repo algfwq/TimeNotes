@@ -23,7 +23,8 @@ import { assetCoverDataUrl, assetDataUrl, createAssetFromDataUrl, createAssetFro
 import { fontDisplayName, fontFamilyForAsset } from '../lib/fonts';
 import { codeLanguageLabel, codeLanguageOptions, normalizeCodeLanguage } from '../lib/codeHighlighting';
 import { useCollaboration } from '../providers/CollaborationProvider';
-import { resourceKey, useDocument } from '../providers/DocumentProvider';
+import { useDocument } from '../providers/DocumentProvider';
+import { resourceProgressKey, useResourceProgressMap } from '../providers/ResourceProgressStore';
 import type { AssetMeta, ChatMessage, ElementType, NoteElement, NotePage, PresenceUser, SystemFont, ToolMode, ToolStyleState } from '../types';
 import { ImageCropModal } from './ImageCropModal';
 
@@ -1002,7 +1003,7 @@ function StickerControls({
   onDeleteSticker: (id: string) => void;
   onChooseSticker?: () => void;
 }) {
-  const { resourceProgress } = useDocument();
+  const resourceProgress = useResourceProgressMap();
   const chooseBuiltinSticker = async (url: string, name: string) => {
     try {
       const existing = stickers.find((asset) => asset.name === name);
@@ -1063,7 +1064,7 @@ function StickerControls({
       <div className="grid grid-cols-3 gap-2">
         {visibleStickers.map((asset) => {
           const src = assetDataUrl(asset);
-          const progress = resourceProgress[resourceKey('stickers', asset.id)];
+          const progress = resourceProgress[resourceProgressKey('stickers', asset.id)];
           return (
             <button
               key={asset.id}
@@ -1221,7 +1222,7 @@ function FontSelector({
 }) {
   const [systemFonts, setSystemFonts] = useState<SystemFont[]>([]);
   const [loading, setLoading] = useState(false);
-  const { resourceProgress } = useDocument();
+  const resourceProgress = useResourceProgressMap();
 
   useEffect(() => {
     let alive = true;
@@ -1251,7 +1252,7 @@ function FontSelector({
   const optionList = [
     { label: renderFontOption(defaultLabel), value: '' },
     ...fonts.map((font) => {
-      const progress = resourceProgress[resourceKey('fonts', font.id)];
+      const progress = resourceProgress[resourceProgressKey('fonts', font.id)];
       const label = `已打包：${fontDisplayName(font)}${progress ? ` · 同步 ${Math.round(progress.progress * 100)}%` : ''}`;
       return { label: renderFontOption(label), value: fontFamilyForAsset(font) };
     }),
