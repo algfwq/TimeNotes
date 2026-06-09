@@ -45,8 +45,8 @@ export function SelectionController({
   const lastLivePatchAtRef = useRef(0);
   const interactionStartDocumentRef = useRef(noteDocument);
   const editing = Boolean(selectedElementId && selectedElementId === editingElementId);
-  const keepRatio = selectedElement?.type === 'image' || selectedElement?.type === 'sticker';
-  const minSize = selectedElement?.type === 'audio' ? { width: 46, height: 46 } : { width: 1, height: 1 };
+  const keepRatio = selectedElement?.type === 'image' || selectedElement?.type === 'sticker' || selectedElement?.type === 'video';
+  const minSize = selectedElement?.type === 'audio' ? { width: 46, height: 46 } : selectedElement?.type === 'video' ? { width: 160, height: 90 } : { width: 1, height: 1 };
   const elementRatio = Number(selectedElement?.style?.aspectRatio ?? 0) || (selectedElement ? selectedElement.width / Math.max(1, selectedElement.height) : 1);
   const snapReferences = useMemo(
     // 对齐参考点来自页面边缘/中心和同页其他元素的边缘/中心，坐标都是页面坐标。

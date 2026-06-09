@@ -85,6 +85,8 @@ interface DocumentContextValue {
   deleteSticker: (id: string) => void;
   addAudio: (asset: AssetMeta) => void;
   deleteAudio: (id: string) => void;
+  addVideo: (asset: AssetMeta) => void;
+  deleteVideo: (id: string) => void;
   addFont: (font: AssetMeta) => void;
   getResourceAsset: (id?: string) => AssetMeta | undefined;
 }
@@ -92,7 +94,7 @@ interface DocumentContextValue {
 const DocumentContext = createContext<DocumentContextValue | null>(null);
 
 // v5 增加音频元素与独立音频素材池；v4 增加代码块元素；v3 开始把贴纸资源从普通图片素材中拆出。
-const currentFormatVersion = 5;
+const currentFormatVersion = 6;
 const currentAppVersion = '2.0.0';
 const localOrigin = 'timenotes-react';
 const resourceChunkOrigin = 'timenotes-resource-chunk';
@@ -253,6 +255,7 @@ function normalizeDocument(
   packageStickers: AssetMeta[] = [],
   packageFonts: AssetMeta[] = [],
   packageAudios: AssetMeta[] = [],
+  packageVideos: AssetMeta[] = [],
 ): NoteDocument {
   const seed = createSeedDocument();
   const pages = nextDocument.pages?.length ? nextDocument.pages : seed.pages;
@@ -276,6 +279,7 @@ function normalizeDocument(
     stickers: mergeAssets(nextDocument.stickers ?? [], packageStickers),
     fonts: mergeAssets(nextDocument.fonts ?? [], packageFonts),
     audios: mergeAssets(nextDocument.audios ?? [], packageAudios),
+    videos: mergeAssets(nextDocument.videos ?? [], packageVideos),
     templates: [],
   };
 }
@@ -293,6 +297,7 @@ function cloneDocumentForHistory(document: NoteDocument) {
     stickers: snapshot.stickers.map(stripTransientAssetData),
     fonts: snapshot.fonts.map(stripTransientAssetData),
     audios: snapshot.audios.map(stripTransientAssetData),
+    videos: snapshot.videos.map(stripTransientAssetData),
   };
 }
 
@@ -330,11 +335,12 @@ function stripDocumentForCollaboration(document: NoteDocument): NoteDocument {
     stickers: document.stickers.map(stripTransientAssetData),
     fonts: document.fonts.map(stripTransientAssetData),
     audios: document.audios.map(stripTransientAssetData),
+    videos: document.videos.map(stripTransientAssetData),
   };
 }
 
 function rememberResources(cache: Map<string, AssetMeta>, document: NoteDocument) {
-  [...document.assets, ...document.stickers, ...document.fonts, ...document.audios].forEach((asset) => {
+  [...document.assets, ...document.stickers, ...document.fonts, ...document.audios, ...document.videos].forEach((asset) => {
     if (asset.id && (asset.dataBase64 || asset.dataUrl)) {
       cache.set(asset.id, asset);
     }
@@ -359,6 +365,7 @@ function hydrateResourcesFromCache(document: NoteDocument, cache: Map<string, As
     stickers: document.stickers.map(hydrate),
     fonts: document.fonts.map(hydrate),
     audios: document.audios.map(hydrate),
+    videos: document.videos.map(hydrate),
   };
 }
 
@@ -387,6 +394,13 @@ function removeResourceFromDocument(document: NoteDocument, group: ResourceGroup
       ...document,
       audios: document.audios.filter((asset) => asset.id !== assetId),
       elements: document.elements.filter((element) => !(element.type === 'audio' && element.assetId === assetId)),
+    };
+  }
+  if (group === 'videos') {
+    return {
+      ...document,
+      videos: document.videos.filter((asset) => asset.id !== assetId),
+      elements: document.elements.filter((element) => !(element.type === 'video' && element.assetId === assetId)),
     };
   }
   return {
@@ -459,6 +473,7 @@ function resourceGroups(document: NoteDocument): Array<[ResourceGroup, AssetMeta
     ['stickers', document.stickers],
     ['fonts', document.fonts],
     ['audios', document.audios],
+    ['videos', document.videos],
   ];
 }
 
@@ -475,7 +490,7 @@ function resourceChunkKeyPrefix(key: string) {
 }
 
 function isResourceGroup(value: string): value is ResourceGroup {
-  return value === 'assets' || value === 'stickers' || value === 'fonts' || value === 'audios';
+  return value === 'assets' || value === 'stickers' || value === 'fonts' || value === 'audios' || value === 'videos';
 }
 
 function resourceSignature(asset: AssetMeta) {
@@ -833,6 +848,7 @@ function mergeCollaborationDocument(
     stickers: mergeAssetList(safeCurrent.stickers, normalizedIncoming.stickers),
     fonts: mergeAssetList(safeCurrent.fonts, normalizedIncoming.fonts),
     audios: mergeAssetList(safeCurrent.audios, normalizedIncoming.audios),
+    videos: mergeAssetList(safeCurrent.videos, normalizedIncoming.videos),
     pages: safeCurrent.pages.map((page) => (page.id === pageId ? incomingPage : page)),
     elements: [
       ...safeCurrent.elements.filter((element) => element.pageId !== pageId),
@@ -1311,7 +1327,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
   const loadPackage = useCallback(
     (note: NotePackage, sourcePath?: string) => {
       // 打开 .tnote 时优先以 document.json + 包内资源作为恢复源，Yjs state 只是协作增量的附加状态。
-      const normalized = normalizeDocument(note.document, note.assets ?? [], note.stickers ?? [], note.fonts ?? [], note.audios ?? []);
+      const normalized = normalizeDocument(note.document, note.assets ?? [], note.stickers ?? [], note.fonts ?? [], note.audios ?? [], note.videos ?? []);
       rememberResources(resourceCacheRef.current, normalized);
       const tab = createTab(normalized, 'edit', sourcePath);
       const tabYDoc = new Y.Doc();
@@ -1481,10 +1497,13 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       if (activeTabMode !== 'edit') {
         return;
       }
-      if (type === 'sticker' && !(patch.assetId ?? toolStyles.sticker.assetId)) {
+        if (type === 'sticker' && !(patch.assetId ?? toolStyles.sticker.assetId)) {
         return;
       }
       if (type === 'audio' && !patch.assetId) {
+        return;
+      }
+      if (type === 'video' && !patch.assetId) {
         return;
       }
       const id = createId('el');
@@ -1510,6 +1529,8 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
                   ? toolStyles.sticker.width
                   : type === 'audio'
                     ? 360
+                  : type === 'video'
+                    ? 448
                   : 180,
           height: isStroke
             ? activePage.height
@@ -1521,6 +1542,8 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
                   ? toolStyles.sticker.height
                   : type === 'audio'
                     ? 96
+                  : type === 'video'
+                    ? 252
                   : 150,
           rotation: 0,
           content: type === 'text' ? '<p>新的文字</p>' : type === 'code' ? defaultCodeBlockContent : undefined,
@@ -1547,6 +1570,8 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
                 ? { fit: 'contain' }
               : type === 'audio'
                 ? { audioTheme: 'light' }
+              : type === 'video'
+                ? { videoTheme: 'dark' }
               : type === 'tape'
                 ? { ...toolStyles.tape }
               : type === 'drawing'
@@ -1587,7 +1612,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       }
       const type =
         pendingPlacement?.type ??
-        (toolState === 'text' || toolState === 'code' || toolState === 'sticker' || toolState === 'image' || toolState === 'audio' ? toolState : undefined);
+        (toolState === 'text' || toolState === 'code' || toolState === 'sticker' || toolState === 'image' || toolState === 'audio' || toolState === 'video' ? toolState : undefined);
       if (!type) {
         return;
       }
@@ -1602,6 +1627,8 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
                 ? toolStyles.sticker.width
                 : type === 'audio'
                   ? 360
+                  : type === 'video'
+                    ? Number(patch.width) || 448
                   : 220),
       );
       const height = Number(
@@ -1614,6 +1641,8 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
                 ? toolStyles.sticker.height
                 : type === 'audio'
                   ? 96
+                  : type === 'video'
+                    ? Number(patch.height) || 252
                   : 160),
       );
       if (type === 'sticker' && !(patch.assetId ?? toolStyles.sticker.assetId)) {
@@ -1623,6 +1652,9 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       if (type === 'audio' && !patch.assetId) {
+        return;
+      }
+      if (type === 'video' && !patch.assetId) {
         return;
       }
       // 用户点的是希望元素出现的位置，所以用元素中心对齐点击点，同时限制在页面坐标范围内。
@@ -1934,6 +1966,33 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
     [document.elements, markResourceDeleted, updateDocument],
   );
 
+  const addVideo = useCallback(
+    (asset: AssetMeta) => {
+      clearResourceDeleted('videos', asset.id);
+      updateDocument((current) => {
+        const hydrated = hydrateAsset(asset);
+        const exists = current.videos.some((item) => item.id === hydrated.id);
+        return {
+          ...current,
+          videos: exists ? current.videos.map((item) => (item.id === hydrated.id ? hydrated : item)) : [...current.videos, hydrated],
+        };
+      }, { collaborationScope: { type: 'document' } });
+    },
+    [clearResourceDeleted, updateDocument],
+  );
+
+  const deleteVideo = useCallback(
+    (id: string) => {
+      markResourceDeleted('videos', id);
+      updateDocument((current) => removeResourceFromDocument(current, 'videos', id), { collaborationScope: { type: 'document' } });
+      setSelectedElementId((current) => {
+        const selected = document.elements.find((element) => element.id === current);
+        return selected?.type === 'video' && selected.assetId === id ? undefined : current;
+      });
+    },
+    [document.elements, markResourceDeleted, updateDocument],
+  );
+
   const addFont = useCallback(
     (font: AssetMeta) => {
       clearResourceDeleted('fonts', font.id);
@@ -1963,6 +2022,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
         stickers: normalizedDocument.stickers.map(stripTransientAssetData),
         fonts: normalizedDocument.fonts.map(stripTransientAssetData),
         audios: normalizedDocument.audios.map(stripTransientAssetData),
+        videos: normalizedDocument.videos.map(stripTransientAssetData),
       },
       document: {
         ...normalizedDocument,
@@ -1970,12 +2030,14 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
         stickers: normalizedDocument.stickers.map(stripTransientAssetData),
         fonts: normalizedDocument.fonts.map(stripTransientAssetData),
         audios: normalizedDocument.audios.map(stripTransientAssetData),
+        videos: normalizedDocument.videos.map(stripTransientAssetData),
       },
       yjsState: bytesToBase64(update),
       assets: normalizedDocument.assets,
       stickers: normalizedDocument.stickers,
       fonts: normalizedDocument.fonts,
       audios: normalizedDocument.audios,
+      videos: normalizedDocument.videos,
       thumbnail: '',
     };
   }, [activeYDoc, document]);
@@ -2057,6 +2119,8 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       deleteSticker,
       addAudio,
       deleteAudio,
+      addVideo,
+      deleteVideo,
       addFont,
       getResourceAsset,
     }),
@@ -2071,6 +2135,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       addFont,
       addPage,
       addAudio,
+      addVideo,
       addSticker,
       armPlacement,
       closeTab,
@@ -2084,6 +2149,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       deleteSelectedElement,
       deleteAsset,
       deleteAudio,
+      deleteVideo,
       deleteSticker,
       document,
       duplicateElement,

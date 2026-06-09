@@ -271,6 +271,106 @@ func TestSaveAndOpenNotePackageKeepsAudioAssetAndMetadata(t *testing.T) {
 	}
 }
 
+func TestSaveAndOpenNotePackageKeepsVideoAssetAndMetadata(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "video.tnote")
+	docService := &DocumentService{}
+	note := docService.NewDocument()
+	duration := 15.0
+	videoWidth := 1280.0
+	videoHeight := 720.0
+	video := AssetBlob{
+		AssetMeta: AssetMeta{
+			ID:               "video-1",
+			Name:             "demo.mp4",
+			Hash:             "video-hash",
+			MimeType:         "video/mp4",
+			Size:             1024,
+			Path:             "videos/video-hash.mp4",
+			Duration:         &duration,
+			VideoWidth:       &videoWidth,
+			VideoHeight:      &videoHeight,
+			CoverMimeType:    "image/jpeg",
+			CoverDataBase64:  "/9j/4AAQ=",
+		},
+		DataBase64: "AAAAIGZ0",
+	}
+	note.Document.Videos = []AssetMeta{video.AssetMeta}
+	note.Videos = []AssetBlob{video}
+	note.Document.Elements = []NoteElement{
+		{
+			ID:       "video-el",
+			PageID:   note.Document.Pages[0].ID,
+			Type:     "video",
+			X:        64,
+			Y:        96,
+			Width:    640,
+			Height:   360,
+			Rotation: 0,
+			ZIndex:   20,
+			AssetID:  video.ID,
+			Style: map[string]interface{}{
+				"videoTheme": "dark",
+			},
+		},
+	}
+
+	if err := docService.SaveNote(path, note); err != nil {
+		t.Fatalf("SaveNote failed: %v", err)
+	}
+
+	reader, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatalf("open zip: %v", err)
+	}
+	foundVideoEntry := false
+	for _, file := range reader.File {
+		if file.Name == video.Path {
+			foundVideoEntry = true
+			break
+		}
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatalf("close zip: %v", err)
+	}
+	if !foundVideoEntry {
+		t.Fatalf("expected video entry %q in package", video.Path)
+	}
+
+	opened, err := docService.OpenNote(path)
+	if err != nil {
+		t.Fatalf("OpenNote failed: %v", err)
+	}
+	if len(opened.Videos) != 1 {
+		t.Fatalf("videos = %d, want 1", len(opened.Videos))
+	}
+	if opened.Videos[0].DataBase64 != video.DataBase64 {
+		t.Fatalf("video dataBase64 was not preserved")
+	}
+	if !strings.HasPrefix(opened.Videos[0].DataURL, "data:video/mp4;base64,") {
+		t.Fatalf("video data URL = %q", opened.Videos[0].DataURL)
+	}
+	if opened.Document.Videos[0].Duration == nil || *opened.Document.Videos[0].Duration != duration {
+		t.Fatalf("video duration = %#v", opened.Document.Videos[0].Duration)
+	}
+	if opened.Document.Videos[0].VideoWidth == nil || *opened.Document.Videos[0].VideoWidth != videoWidth {
+		t.Fatalf("video width = %#v", opened.Document.Videos[0].VideoWidth)
+	}
+	if opened.Document.Videos[0].VideoHeight == nil || *opened.Document.Videos[0].VideoHeight != videoHeight {
+		t.Fatalf("video height = %#v", opened.Document.Videos[0].VideoHeight)
+	}
+	if len(opened.Document.Elements) != 1 {
+		t.Fatalf("elements = %d, want 1", len(opened.Document.Elements))
+	}
+	element := opened.Document.Elements[0]
+	if element.Type != "video" || element.AssetID != video.ID {
+		t.Fatalf("video element mismatch: %#v", element)
+	}
+	if element.X != 64 || element.Y != 96 || element.Width != 640 || element.Height != 360 {
+		t.Fatalf("video geometry was not preserved: %#v", element)
+	}
+}
+
 func TestSaveAndOpenNotePackageKeepsCodeBlock(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "code.tnote")

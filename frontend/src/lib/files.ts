@@ -2,7 +2,7 @@ import type { AssetMeta } from '../types';
 import { dataUrlToBase64 } from './base64';
 import { createId, hashText } from './ids';
 
-type AssetGroup = 'assets' | 'stickers' | 'fonts' | 'audios';
+type AssetGroup = 'assets' | 'stickers' | 'fonts' | 'audios' | 'videos';
 
 export interface ImageIntrinsicSize {
   width: number;
@@ -45,6 +45,19 @@ export function assetCoverDataUrl(asset?: Pick<AssetMeta, 'coverMimeType' | 'cov
   return undefined;
 }
 
+export function assetPosterDataUrl(asset?: Pick<AssetMeta, 'posterDataBase64' | 'posterDataUrl'> | null) {
+  if (!asset) {
+    return undefined;
+  }
+  if (asset.posterDataUrl) {
+    return asset.posterDataUrl;
+  }
+  if (asset.posterDataBase64) {
+    return `data:image/jpeg;base64,${asset.posterDataBase64}`;
+  }
+  return undefined;
+}
+
 export function mergeAssetWithCache(asset?: AssetMeta, cached?: AssetMeta) {
   if (!asset) {
     return cached;
@@ -75,6 +88,10 @@ export function isSupportedImageFile(file: Pick<File, 'type' | 'name'>) {
 
 export function isSupportedAudioFile(file: Pick<File, 'type' | 'name'>) {
   return file.type.startsWith('audio/') || /\.(mp3|m4a|aac|wav|ogg|oga|flac|webm)$/i.test(file.name);
+}
+
+export function isSupportedVideoFile(file: Pick<File, 'type' | 'name'>) {
+  return file.type.startsWith('video/') || /\.(mp4|webm|ogg|ogv|mov|avi|mkv|wmv)$/i.test(file.name);
 }
 
 export function getImageIntrinsicSize(src: string): Promise<ImageIntrinsicSize> {
@@ -126,7 +143,7 @@ export async function createAssetFromDataUrl(
   size = dataUrl.length,
 ): Promise<AssetMeta> {
   const hash = await hashText(dataUrl);
-  const id = hash.slice(0, 16) || createId(group === 'fonts' ? 'font' : group === 'stickers' ? 'sticker' : group === 'audios' ? 'audio' : 'asset');
+  const id = hash.slice(0, 16) || createId(group === 'fonts' ? 'font' : group === 'stickers' ? 'sticker' : group === 'audios' ? 'audio' : group === 'videos' ? 'video' : 'asset');
   return {
     id,
     name,
@@ -200,8 +217,26 @@ export function mimeTypeFromName(name: string) {
   if (lower.endsWith('.flac')) {
     return 'audio/flac';
   }
-  if (lower.endsWith('.webm')) {
+	if (lower.endsWith('.webm')) {
     return 'audio/webm';
+  }
+  if (lower.endsWith('.mp4')) {
+    return 'video/mp4';
+  }
+  if (lower.endsWith('.mov')) {
+    return 'video/quicktime';
+  }
+  if (lower.endsWith('.avi')) {
+    return 'video/x-msvideo';
+  }
+  if (lower.endsWith('.mkv')) {
+    return 'video/x-matroska';
+  }
+  if (lower.endsWith('.wmv')) {
+    return 'video/x-ms-wmv';
+  }
+  if (lower.endsWith('.ogv')) {
+    return 'video/ogg';
   }
   return 'application/octet-stream';
 }

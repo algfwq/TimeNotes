@@ -38,6 +38,12 @@ export function ImportFonts(paths: string[]): $CancellablePromise<$models.AssetB
     });
 }
 
+export function ImportVideos(paths: string[]): $CancellablePromise<$models.AssetBlob[]> {
+    return $Call.ByID(3644120976, paths).then(($result: any) => {
+        return $$createType3($result);
+    });
+}
+
 // Private type creation functions
 const $$createType0 = $models.SystemFont.createFrom;
 const $$createType1 = $Create.Array($$createType0);

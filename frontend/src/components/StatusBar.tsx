@@ -11,6 +11,7 @@ const toolLabels: Record<ToolMode, string> = {
   image: '图片',
   sticker: '贴纸',
   audio: '音频',
+  video: '视频',
   tape: '胶带笔',
   drawing: '画笔',
 };

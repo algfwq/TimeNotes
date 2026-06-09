@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	currentFormatVersion = 5
+	currentFormatVersion = 6
 	currentAppVersion    = "2.0.0"
 )
 
@@ -38,7 +38,7 @@ func (s *DocumentService) NewDocument() NotePackage {
 	now := time.Now().UTC().Format(time.RFC3339)
 	doc := seedDocument(now)
 	logEvent("info", "document_new", map[string]interface{}{"title": doc.Title, "pages": len(doc.Pages), "elements": len(doc.Elements)})
-	return packageFromDocument(doc, nil, nil, nil, nil, "")
+	return packageFromDocument(doc, nil, nil, nil, nil, nil, "")
 }
 
 func (s *DocumentService) OpenNote(path string) (NotePackage, error) {
@@ -56,6 +56,7 @@ func (s *DocumentService) OpenNote(path string) (NotePackage, error) {
 		"assets":   len(note.Assets),
 		"stickers": len(note.Stickers),
 		"audios":   len(note.Audios),
+		"videos":   len(note.Videos),
 	})
 	return note, nil
 }
@@ -78,6 +79,7 @@ func (s *DocumentService) SaveNote(path string, note NotePackage) error {
 		"assets":   len(note.Assets),
 		"stickers": len(note.Stickers),
 		"audios":   len(note.Audios),
+		"videos":   len(note.Videos),
 	})
 	return nil
 }
@@ -138,6 +140,20 @@ func (s *AssetService) ImportAudios(paths []string) ([]AssetBlob, error) {
 	}
 	logEvent("info", "audios_imported", map[string]interface{}{"count": len(audios)})
 	return audios, nil
+}
+
+func (s *AssetService) ImportVideos(paths []string) ([]AssetBlob, error) {
+	videos := make([]AssetBlob, 0, len(paths))
+	for _, path := range paths {
+		video, err := readAsset(path, "videos")
+		if err != nil {
+			logEvent("error", "video_import_failed", map[string]interface{}{"path": path, "error": err.Error()})
+			return nil, err
+		}
+		videos = append(videos, video)
+	}
+	logEvent("info", "videos_imported", map[string]interface{}{"count": len(videos)})
+	return videos, nil
 }
 
 func (s *AssetService) GetSystemFonts() []SystemFont {
@@ -208,6 +224,9 @@ func (note *NotePackage) normalize() {
 	if note.Document.Audios == nil {
 		note.Document.Audios = []AssetMeta{}
 	}
+	if note.Document.Videos == nil {
+		note.Document.Videos = []AssetMeta{}
+	}
 	if note.Document.Stickers == nil {
 		note.Document.Stickers = []AssetMeta{}
 	}
@@ -227,10 +246,11 @@ func (note *NotePackage) normalize() {
 		Stickers:      note.Document.Stickers,
 		Fonts:         note.Document.Fonts,
 		Audios:        note.Document.Audios,
+		Videos:        note.Document.Videos,
 	}
 }
 
-func packageFromDocument(doc NoteDocument, assets []AssetBlob, stickers []AssetBlob, fonts []AssetBlob, audios []AssetBlob, yjsState string) NotePackage {
+func packageFromDocument(doc NoteDocument, assets []AssetBlob, stickers []AssetBlob, fonts []AssetBlob, audios []AssetBlob, videos []AssetBlob, yjsState string) NotePackage {
 	// 内存里先拼成 NotePackage，再复用 normalize，避免新建和保存两条路径产生格式差异。
 	note := NotePackage{
 		Document: doc,
@@ -239,6 +259,7 @@ func packageFromDocument(doc NoteDocument, assets []AssetBlob, stickers []AssetB
 		Stickers: stickers,
 		Fonts:    fonts,
 		Audios:   audios,
+		Videos:   videos,
 	}
 	note.normalize()
 	return note
@@ -397,6 +418,11 @@ func writeNotePackage(path string, note NotePackage) error {
 			return err
 		}
 	}
+	for _, video := range note.Videos {
+		if err := writeAssetBlob(zw, "videos", video); err != nil {
+			return err
+		}
+	}
 	if note.Thumbnail != "" {
 		if raw, err := decodeDataURL(note.Thumbnail); err == nil {
 			if err := writeFile(zw, "thumbnail.png", raw); err != nil {
@@ -454,6 +480,9 @@ func readNotePackage(path string) (NotePackage, error) {
 	if len(doc.Audios) == 0 && len(manifest.Audios) > 0 {
 		doc.Audios = manifest.Audios
 	}
+	if len(doc.Videos) == 0 && len(manifest.Videos) > 0 {
+		doc.Videos = manifest.Videos
+	}
 
 	var yjsState string
 	if manifest.YjsStatePath != "" {
@@ -466,9 +495,11 @@ func readNotePackage(path string) (NotePackage, error) {
 	stickers, stickerWarnings := readAssetBlobs(files, manifest.Stickers)
 	fonts, fontWarnings := readAssetBlobs(files, manifest.Fonts)
 	audios, audioWarnings := readAssetBlobs(files, manifest.Audios)
+	videos, videoWarnings := readAssetBlobs(files, manifest.Videos)
 	warnings = append(warnings, stickerWarnings...)
 	warnings = append(warnings, fontWarnings...)
 	warnings = append(warnings, audioWarnings...)
+	warnings = append(warnings, videoWarnings...)
 	thumbnail := ""
 	if raw, err := readFile(files, "thumbnail.png"); err == nil {
 		thumbnail = "data:image/png;base64," + base64.StdEncoding.EncodeToString(raw)
@@ -482,6 +513,7 @@ func readNotePackage(path string) (NotePackage, error) {
 		Stickers:  stickers,
 		Fonts:     fonts,
 		Audios:    audios,
+		Videos:    videos,
 		Thumbnail: thumbnail,
 		Warnings:  warnings,
 	}
@@ -600,6 +632,10 @@ func migrateDocument(doc *NoteDocument, fromVersion int) {
 		// v5 增加独立音频素材池；旧文档只补空列表。
 		doc.Audios = []AssetMeta{}
 	}
+	if fromVersion < 6 && doc.Videos == nil {
+		// v6 增加独立视频素材池和视频元素类型。
+		doc.Videos = []AssetMeta{}
+	}
 	doc.FormatVersion = currentFormatVersion
 }
 
@@ -660,6 +696,16 @@ func detectAssetMimeType(name string, path string) string {
 		return "audio/flac"
 	case ".webm":
 		return "audio/webm"
+	case ".mp4":
+		return "video/mp4"
+	case ".mov":
+		return "video/quicktime"
+	case ".avi":
+		return "video/x-msvideo"
+	case ".mkv":
+		return "video/x-matroska"
+	case ".wmv":
+		return "video/x-ms-wmv"
 	default:
 		return "application/octet-stream"
 	}
@@ -691,6 +737,20 @@ func extensionForMimeType(mimeType string) string {
 		return ".flac"
 	case "audio/webm":
 		return ".webm"
+	case "video/mp4":
+		return ".mp4"
+	case "video/webm":
+		return ".webm"
+	case "video/ogg":
+		return ".ogg"
+	case "video/quicktime":
+		return ".mov"
+	case "video/x-msvideo":
+		return ".avi"
+	case "video/x-matroska":
+		return ".mkv"
+	case "video/x-ms-wmv":
+		return ".wmv"
 	default:
 		return ".bin"
 	}
@@ -811,6 +871,11 @@ func renderPortableHTML(note NotePackage) string {
 			assetMap[audio.ID] = audio.DataURL
 		}
 	}
+	for _, video := range note.Videos {
+		if video.DataURL != "" {
+			assetMap[video.ID] = video.DataURL
+		}
+	}
 	assetJSON, _ := json.Marshal(assetMap)
 	page := NotePage{Width: 794, Height: 1123, Background: "#fffdf7"}
 	if len(note.Document.Pages) > 0 {
@@ -868,6 +933,29 @@ func renderPortableHTML(note NotePackage) string {
 				`<div class="audio-body"><div class="audio-title">` + html.EscapeString(title) + `</div>` +
 				`<div class="audio-artist">` + html.EscapeString(artist) + `</div>` +
 				`<audio controls preload="metadata" src="` + html.EscapeString(src) + `"></audio></div></section>`)
+		case "video":
+			src := assetMap[el.AssetID]
+			poster := ""
+			for _, videoAsset := range note.Document.Videos {
+				if videoAsset.ID == el.AssetID {
+					if videoAsset.CoverDataURL != "" {
+						poster = videoAsset.CoverDataURL
+					} else if videoAsset.CoverDataBase64 != "" {
+						poster = "data:" + firstNonEmpty(videoAsset.CoverMimeType, "image/jpeg") + ";base64," + videoAsset.CoverDataBase64
+					} else if videoAsset.PosterDataURL != "" {
+						poster = videoAsset.PosterDataURL
+					} else if videoAsset.PosterDataBase64 != "" {
+						poster = "data:image/jpeg;base64," + videoAsset.PosterDataBase64
+					}
+					break
+				}
+			}
+			posterAttr := ""
+			if poster != "" {
+				posterAttr = ` poster="` + html.EscapeString(poster) + `"`
+			}
+			body.WriteString(`<section class="note-element video-player" style="` + style + `">` +
+				`<video controls preload="metadata" src="` + html.EscapeString(src) + `"` + posterAttr + `></video></section>`)
 		case "tape":
 			color := "#f7d974"
 			if v, ok := el.Style["background"].(string); ok {
@@ -926,6 +1014,7 @@ func seedDocument(now string) NoteDocument {
 		Stickers:      []AssetMeta{},
 		Fonts:         []AssetMeta{},
 		Audios:        []AssetMeta{},
+		Videos:        []AssetMeta{},
 		Templates:     []TemplateDef{},
 	}
 }

@@ -7,6 +7,7 @@ import { assetDataUrl, isGifAsset, mergeAssetWithCache } from '../../lib/files';
 import { AudioElement } from './AudioElement';
 import { CodeBlockElement } from './CodeBlockElement';
 import { RichTextElement } from './RichTextElement';
+import { VideoElement } from './VideoElement';
 
 const directDragLiveSyncIntervalMs = 120;
 
@@ -24,12 +25,12 @@ export function ElementRenderer({
   const isStrokePath = (element.type === 'drawing' || element.type === 'tape') && Boolean(element.points?.length);
   const drawingToolActive = tool === 'drawing' || tool === 'tape';
   const documentAsset = useMemo(
-    () => [...document.assets, ...document.stickers, ...document.audios].find((item) => item.id === element.assetId),
-    [document.assets, document.stickers, document.audios, element.assetId],
+    () => [...document.assets, ...document.stickers, ...document.audios, ...document.videos].find((item) => item.id === element.assetId),
+    [document.assets, document.stickers, document.audios, document.videos, element.assetId],
   );
   const cachedAsset = getResourceAsset(element.assetId);
   const asset = useMemo(() => mergeAssetWithCache(documentAsset, cachedAsset), [cachedAsset, documentAsset]);
-  const progress = element.assetId ? resourceProgress[resourceProgressKey(element.type === 'audio' ? 'audios' : element.type === 'sticker' ? 'stickers' : 'assets', element.assetId)] : undefined;
+  const progress = element.assetId ? resourceProgress[resourceProgressKey(element.type === 'audio' ? 'audios' : element.type === 'video' ? 'videos' : element.type === 'sticker' ? 'stickers' : 'assets', element.assetId)] : undefined;
   const baseStyle: React.CSSProperties = {
     left: element.x,
     top: element.y,
@@ -56,7 +57,7 @@ export function ElementRenderer({
         if (event.button !== 0) {
           return;
         }
-        if (isAudioInteractiveTarget(event.target)) {
+        if (isAudioInteractiveTarget(event.target) || isVideoInteractiveTarget(event.target)) {
           return;
         }
         selectElement(element.id);
@@ -102,6 +103,10 @@ function canDirectDragElement(element: NoteElement, tool: string) {
 
 function isAudioInteractiveTarget(target: EventTarget) {
   return target instanceof HTMLElement && Boolean(target.closest('[data-audio-interactive]'));
+}
+
+function isVideoInteractiveTarget(target: EventTarget) {
+  return target instanceof HTMLElement && Boolean(target.closest('[data-video-interactive]'));
 }
 
 function beginDirectElementDrag(
@@ -254,6 +259,9 @@ function renderElement(element: NoteElement, selected: boolean, editing: boolean
   }
   if (element.type === 'audio') {
     return <AudioElement element={element} asset={asset} progress={progress} />;
+  }
+  if (element.type === 'video') {
+    return <VideoElement element={element} asset={asset} progress={progress} />;
   }
   if ((element.type === 'drawing' || element.type === 'tape') && element.points?.length) {
     return <StrokeSvg element={element} selected={selected} />;

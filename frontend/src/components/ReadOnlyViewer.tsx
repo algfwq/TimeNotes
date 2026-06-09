@@ -9,6 +9,7 @@ import { useDocument } from '../providers/DocumentProvider';
 import { resourceProgressKey, useResourceProgressMap } from '../providers/ResourceProgressStore';
 import { PageBackground } from './PageBackground';
 import { AudioElement } from './elements/AudioElement';
+import { VideoElement } from './elements/VideoElement';
 import { CodeBlockPreview } from './elements/CodeBlockElement';
 
 const defaultInlineCodeFontFamily = '"Cascadia Code", "Fira Code", Consolas, "SFMono-Regular", monospace';
@@ -126,6 +127,7 @@ export function ReadOnlyViewer() {
             assets={document.assets}
             stickers={document.stickers}
             audios={document.audios}
+            videos={document.videos}
             resourceProgress={resourceProgress}
             getResourceAsset={getResourceAsset}
           />
@@ -141,6 +143,7 @@ function ReadOnlyPage({
   assets,
   stickers,
   audios,
+  videos,
   resourceProgress,
   getResourceAsset,
 }: {
@@ -149,10 +152,11 @@ function ReadOnlyPage({
   assets: AssetMeta[];
   stickers: AssetMeta[];
   audios: AssetMeta[];
+  videos: AssetMeta[];
   resourceProgress: Record<string, ResourceTransferProgress>;
   getResourceAsset: (id?: string) => AssetMeta | undefined;
 }) {
-  const elementAssets = [...assets, ...stickers, ...audios];
+  const elementAssets = [...assets, ...stickers, ...audios, ...videos];
   return (
     <main className="relative overflow-hidden" style={{ width: page.width, height: page.height, background: page.background }}>
       <PageBackground page={page} assets={assets} />
@@ -306,6 +310,16 @@ function ReadOnlyElement({
     return (
       <div style={base}>
         <AudioElement element={element} asset={asset} progress={progress} readOnly />
+      </div>
+    );
+  }
+
+  if (element.type === 'video') {
+    const asset = mergeAssetWithCache(assets.find((item) => item.id === element.assetId), getResourceAsset(element.assetId));
+    const progress = element.assetId ? resourceProgress[resourceProgressKey('videos', element.assetId)] : undefined;
+    return (
+      <div style={base}>
+        <VideoElement element={element} asset={asset} progress={progress} readOnly />
       </div>
     );
   }

@@ -1,4 +1,4 @@
-export type ElementType = 'text' | 'code' | 'image' | 'sticker' | 'audio' | 'tape' | 'shape' | 'drawing';
+export type ElementType = 'text' | 'code' | 'image' | 'sticker' | 'audio' | 'video' | 'tape' | 'shape' | 'drawing';
 
 export interface NotePage {
   id: string;
@@ -62,6 +62,10 @@ export interface AssetMeta {
   coverMimeType?: string;
   coverDataBase64?: string;
   coverDataUrl?: string;
+  videoWidth?: number;
+  videoHeight?: number;
+  posterDataBase64?: string;
+  posterDataUrl?: string;
 }
 
 export interface TemplateDef {
@@ -83,6 +87,7 @@ export interface NoteDocument {
   stickers: AssetMeta[];
   fonts: AssetMeta[];
   audios: AssetMeta[];
+  videos: AssetMeta[];
   templates: TemplateDef[];
 }
 
@@ -98,6 +103,7 @@ export interface NoteManifest {
   stickers: AssetMeta[];
   fonts: AssetMeta[];
   audios: AssetMeta[];
+  videos: AssetMeta[];
 }
 
 export interface NotePackage {
@@ -108,10 +114,11 @@ export interface NotePackage {
   stickers: AssetMeta[];
   fonts: AssetMeta[];
   audios: AssetMeta[];
+  videos: AssetMeta[];
   thumbnail: string;
 }
 
-export type ToolMode = 'select' | 'pan' | 'text' | 'code' | 'image' | 'sticker' | 'audio' | 'tape' | 'drawing';
+export type ToolMode = 'select' | 'pan' | 'text' | 'code' | 'image' | 'sticker' | 'audio' | 'video' | 'tape' | 'drawing';
 
 export interface ToolStyleState {
   text: {
@@ -155,11 +162,11 @@ export interface ToolStyleState {
 }
 
 export interface PendingPlacement {
-  type: Extract<ElementType, 'text' | 'code' | 'image' | 'sticker' | 'audio'>;
+  type: Extract<ElementType, 'text' | 'code' | 'image' | 'sticker' | 'audio' | 'video'>;
   patch?: Partial<NoteElement>;
 }
 
-export type ResourceGroup = 'assets' | 'stickers' | 'fonts' | 'audios';
+export type ResourceGroup = 'assets' | 'stickers' | 'fonts' | 'audios' | 'videos';
 
 export interface ResourceTransferProgress {
   key: string;

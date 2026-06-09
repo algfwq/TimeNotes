@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Empty, Toast, Upload } from '@douyinfe/semi-ui';
-import { IconCrop, IconDelete, IconImage, IconMusic, IconPlayCircle, IconUpload } from '@douyinfe/semi-icons';
+import { IconCrop, IconDelete, IconImage, IconMusic, IconPlayCircle, IconUpload, IconVideo } from '@douyinfe/semi-icons';
 import { readAudioMetadata } from '../../lib/audioMetadata';
+import { readVideoMetadata } from '../../lib/videoMetadata';
 import {
   assetCoverDataUrl,
   assetDataUrl,
+  assetPosterDataUrl,
   createAssetFromDataUrl,
   createAssetFromFile,
   getImagePlacementSize,
   isGifAsset,
   isSupportedAudioFile,
   isSupportedImageFile,
+  isSupportedVideoFile,
   mergeAssetWithCache,
 } from '../../lib/files';
 import { useDocument } from '../../providers/DocumentProvider';
@@ -18,15 +21,17 @@ import { resourceProgressKey, useResourceProgressMap } from '../../providers/Res
 import { ImageCropModal } from '../ImageCropModal';
 import type { AssetMeta } from '../../types';
 
-const materialAccept = '.png,.jpg,.jpeg,.gif,.webp,.svg,.mp3,.m4a,.aac,.wav,.ogg,.oga,.flac,.webm,image/*,audio/*';
+const materialAccept = '.png,.jpg,.jpeg,.gif,.webp,.svg,.mp3,.m4a,.aac,.wav,.ogg,.oga,.flac,.webm,.mp4,.mov,.avi,.mkv,.wmv,image/*,audio/*,video/*';
 
 export function AssetLibrary() {
-  const { document, addAsset, addAudio, armPlacement, deleteAsset, deleteAudio, replaceAsset, getResourceAsset } = useDocument();
+  const { document, addAsset, addAudio, addVideo, armPlacement, deleteAsset, deleteAudio, deleteVideo, replaceAsset, getResourceAsset } = useDocument();
   const resourceProgress = useResourceProgressMap();
   const [menu, setMenu] = useState<{ x: number; y: number; assetId: string } | null>(null);
   const [audioMenu, setAudioMenu] = useState<{ x: number; y: number; assetId: string } | null>(null);
+  const [videoMenu, setVideoMenu] = useState<{ x: number; y: number; assetId: string } | null>(null);
   const [cropAssetId, setCropAssetId] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [importingFiles, setImportingFiles] = useState<{ name: string; kind: 'image' | 'audio' | 'video' }[]>([]);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const dragDepthRef = useRef(0);
 
@@ -35,9 +40,17 @@ export function AssetLibrary() {
       if (!isSupportedImageFile(file)) {
         return;
       }
-      const asset = await createAssetFromFile(file, 'assets');
-      addAsset(asset);
-      Toast.success('素材已导入，点击素材后在画布上放置');
+      const entry = { name: file.name, kind: 'image' as const };
+      setImportingFiles((list) => [...list, entry]);
+      try {
+        const asset = await createAssetFromFile(file, 'assets');
+        addAsset(asset);
+        Toast.success('素材已导入，点击素材后在画布上放置');
+      } catch (error) {
+        Toast.error(`素材导入失败：${String(error)}`);
+      } finally {
+        setImportingFiles((list) => list.filter((item) => item !== entry));
+      }
     },
     [addAsset],
   );
@@ -48,15 +61,40 @@ export function AssetLibrary() {
         Toast.warning('请选择音频文件');
         return;
       }
+      const entry = { name: file.name, kind: 'audio' as const };
+      setImportingFiles((list) => [...list, entry]);
       try {
         const [asset, metadata] = await Promise.all([createAssetFromFile(file, 'audios'), readAudioMetadata(file)]);
         addAudio({ ...asset, ...metadata });
         Toast.success('音频已导入，点击后在画布上放置');
       } catch (error) {
         Toast.error(`音频导入失败：${String(error)}`);
+      } finally {
+        setImportingFiles((list) => list.filter((item) => item !== entry));
       }
     },
     [addAudio],
+  );
+
+  const importVideoFile = useCallback(
+    async (file: File) => {
+      if (!isSupportedVideoFile(file)) {
+        Toast.warning('请选择视频文件');
+        return;
+      }
+      const entry = { name: file.name, kind: 'video' as const };
+      setImportingFiles((list) => [...list, entry]);
+      try {
+        const [asset, metadata] = await Promise.all([createAssetFromFile(file, 'videos'), readVideoMetadata(file)]);
+        addVideo({ ...asset, ...metadata });
+        Toast.success('视频已导入，点击后在画布上放置');
+      } catch (error) {
+        Toast.error(`视频导入失败：${String(error)}`);
+      } finally {
+        setImportingFiles((list) => list.filter((item) => item !== entry));
+      }
+    },
+    [addVideo],
   );
 
   const importMaterialFile = useCallback(
@@ -69,9 +107,13 @@ export function AssetLibrary() {
         await importAudioFile(file);
         return;
       }
+      if (isSupportedVideoFile(file)) {
+        await importVideoFile(file);
+        return;
+      }
       Toast.warning(`不支持的素材：${file.name}`);
     },
-    [importAudioFile, importImageFile],
+    [importAudioFile, importImageFile, importVideoFile],
   );
 
   const importMaterialFiles = useCallback(
@@ -79,7 +121,7 @@ export function AssetLibrary() {
       const supported = files.filter(isSupportedMaterialFile);
       if (supported.length === 0) {
         if (files.length > 0) {
-          Toast.warning('没有可导入的图片、GIF 或音频素材');
+          Toast.warning('没有可导入的图片、GIF、音频或视频素材');
         }
         return;
       }
@@ -142,6 +184,7 @@ export function AssetLibrary() {
     const close = () => {
       setMenu(null);
       setAudioMenu(null);
+      setVideoMenu(null);
     };
     window.addEventListener('click', close);
     window.addEventListener('resize', close);
@@ -171,10 +214,30 @@ export function AssetLibrary() {
     Toast.info('已选择音频，请在画布上点击放置位置');
   };
 
+  const chooseVideo = (asset: AssetMeta) => {
+    const videoWidth = asset.videoWidth || 640;
+    const videoHeight = asset.videoHeight || 360;
+    const maxWidth = 560;
+    const scale = Math.min(maxWidth / videoWidth, 1);
+    const width = Math.max(160, Math.round(videoWidth * scale));
+    const height = Math.max(90, Math.round(videoHeight * scale));
+    const aspectRatio = videoWidth / Math.max(1, videoHeight);
+    armPlacement({
+      type: 'video',
+      patch: {
+        assetId: asset.id,
+        width,
+        height,
+        style: { videoTheme: 'dark', aspectRatio },
+      },
+    });
+    Toast.info('已选择视频，请在画布上点击放置位置');
+  };
+
   const cropAsset = mergeAssetWithCache(document.assets.find((asset) => asset.id === cropAssetId), getResourceAsset(cropAssetId ?? undefined));
   const cropSrc = cropAsset && !isGifAsset(cropAsset) ? assetDataUrl(cropAsset) : undefined;
   const menuAsset = menu ? mergeAssetWithCache(document.assets.find((asset) => asset.id === menu.assetId), getResourceAsset(menu.assetId)) : undefined;
-  const hasAnyAsset = document.assets.length > 0 || document.audios.length > 0;
+  const hasAnyAsset = document.assets.length > 0 || document.audios.length > 0 || document.videos.length > 0;
   const applyAssetCrop = async (dataUrl: string) => {
     if (cropAsset && !isGifAsset(cropAsset)) {
       const nextAsset = await createAssetFromDataUrl(dataUrl, `${cropAsset.name}-裁剪.png`, 'assets', 'image/png');
@@ -247,6 +310,25 @@ export function AssetLibrary() {
       </Upload>
 
       <div className="mt-2 text-xs text-black/45">可直接 Ctrl+V 粘贴剪切板素材</div>
+
+      {importingFiles.length > 0 ? (
+        <div className="mt-3 flex flex-col gap-2">
+          {importingFiles.map((entry) => (
+            <div
+              key={entry.name}
+              className="flex items-center gap-3 rounded-[8px] border border-dashed border-[#2f6fed]/30 bg-[#2f6fed]/5 px-3 py-2"
+            >
+              <div className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-[#2f6fed]/30 border-t-[#2f6fed]" />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-xs font-medium text-black/70">{entry.name}</div>
+                <div className="text-[11px] text-black/40">
+                  {entry.kind === 'video' ? '正在解析视频...' : entry.kind === 'audio' ? '正在解析音频...' : '正在导入素材...'}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {document.assets.length > 0 ? (
         <div className="mt-4 grid grid-cols-2 gap-3">
@@ -325,6 +407,47 @@ export function AssetLibrary() {
         </div>
       ) : null}
 
+      {document.videos.length > 0 ? (
+        <div className="mt-4 flex flex-col gap-3">
+          {document.videos.map((asset) => {
+            const hydratedAsset = mergeAssetWithCache(asset, getResourceAsset(asset.id)) ?? asset;
+            const cover = assetCoverDataUrl(hydratedAsset) || assetPosterDataUrl(hydratedAsset);
+            const progress = resourceProgress[resourceProgressKey('videos', asset.id)];
+            const durationText = formatDuration(hydratedAsset.duration);
+            return (
+              <button
+                key={asset.id}
+                type="button"
+                className="group flex min-w-0 items-center gap-3 rounded-[8px] border border-black/10 bg-white p-2 text-left shadow-sm transition hover:border-[#2f6fed]/45"
+                onClick={() => chooseVideo(hydratedAsset)}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setVideoMenu({ x: event.clientX, y: event.clientY, assetId: asset.id });
+                }}
+              >
+                <div className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-[7px] bg-[#111827] text-white">
+                  {cover ? <img className="h-full w-full object-cover" src={cover} alt="" /> : <IconVideo />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium">{hydratedAsset.name}</div>
+                  <div className="truncate text-xs text-black/45">{durationText || '未知时长'}</div>
+                  {progress ? (
+                    <div className="mt-2">
+                      <div className="h-1.5 overflow-hidden rounded-full bg-black/10">
+                        <div className="h-full rounded-full bg-[#2f6fed]" style={{ width: `${Math.round(progress.progress * 100)}%` }} />
+                      </div>
+                      <div className="mt-1 text-[11px] text-black/40">传输中 {Math.round(progress.progress * 100)}%</div>
+                    </div>
+                  ) : null}
+                </div>
+                <IconPlayCircle className="shrink-0 text-black/28 group-hover:text-[#2f6fed]" />
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
       {!hasAnyAsset ? (
         <div className="mt-10 rounded-[8px] border border-dashed border-black/15 bg-white/60 py-8">
           <Empty image={<IconImage size="extra-large" />} description="还没有导入素材" />
@@ -354,6 +477,14 @@ export function AssetLibrary() {
           deleteAudio(assetId);
           setAudioMenu(null);
           Toast.success('音频已删除');
+        }}
+      />
+      <VideoContextMenu
+        state={videoMenu}
+        onDelete={(assetId) => {
+          deleteVideo(assetId);
+          setVideoMenu(null);
+          Toast.success('视频已删除');
         }}
       />
       <ImageCropModal title="裁剪素材" visible={Boolean(cropSrc)} src={cropSrc} onClose={() => setCropAssetId(null)} onApply={applyAssetCrop} />
@@ -397,7 +528,7 @@ function AssetContextMenu({
 }
 
 function isSupportedMaterialFile(file: Pick<File, 'type' | 'name'>) {
-  return isSupportedImageFile(file) || isSupportedAudioFile(file);
+  return isSupportedImageFile(file) || isSupportedAudioFile(file) || isSupportedVideoFile(file);
 }
 
 function hasFileDrag(dataTransfer?: DataTransfer | null) {
@@ -454,6 +585,25 @@ function AudioContextMenu({ state, onDelete }: { state: { x: number; y: number; 
       <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left text-red-600 hover:bg-black/5" onClick={() => onDelete(state.assetId)}>
         <IconDelete />
         <span>删除音频</span>
+      </button>
+    </div>
+  );
+}
+
+function VideoContextMenu({ state, onDelete }: { state: { x: number; y: number; assetId: string } | null; onDelete: (assetId: string) => void }) {
+  if (!state) {
+    return null;
+  }
+  return (
+    <div
+      className="fixed z-[900] min-w-36 rounded-[8px] border border-black/10 bg-white py-1 text-sm shadow-xl"
+      style={{ left: state.x, top: state.y }}
+      onClick={(event) => event.stopPropagation()}
+      onContextMenu={(event) => event.preventDefault()}
+    >
+      <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left text-red-600 hover:bg-black/5" onClick={() => onDelete(state.assetId)}>
+        <IconDelete />
+        <span>删除视频</span>
       </button>
     </div>
   );

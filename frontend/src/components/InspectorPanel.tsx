@@ -16,10 +16,11 @@ import {
   IconMusic,
   IconText,
   IconUpload,
+  IconVideo,
 } from '@douyinfe/semi-icons';
 import { AssetService } from '../../bindings/changeme';
 import { builtinStickers } from '../data/builtinStickers';
-import { assetCoverDataUrl, assetDataUrl, createAssetFromDataUrl, createAssetFromFile, createAssetFromUrl, getImagePlacementSize, isGifAsset, isSupportedImageFile } from '../lib/files';
+import { assetCoverDataUrl, assetDataUrl, assetPosterDataUrl, createAssetFromDataUrl, createAssetFromFile, createAssetFromUrl, getImagePlacementSize, isGifAsset, isSupportedImageFile } from '../lib/files';
 import { fontDisplayName, fontFamilyForAsset } from '../lib/fonts';
 import { codeLanguageLabel, codeLanguageOptions, normalizeCodeLanguage } from '../lib/codeHighlighting';
 import { useCollaboration } from '../providers/CollaborationProvider';
@@ -82,7 +83,7 @@ export function InspectorPanel() {
         .sort((first, second) => second.zIndex - first.zIndex),
     [activePageId, document.elements],
   );
-  const elementAssets = useMemo(() => [...document.assets, ...document.stickers, ...document.audios], [document.assets, document.stickers, document.audios]);
+  const elementAssets = useMemo(() => [...document.assets, ...document.stickers, ...document.audios, ...document.videos], [document.assets, document.stickers, document.audios, document.videos]);
 
   useEffect(() => {
     // 画布或其他组件可以派发事件打开“控制”页，避免跨组件传很多 UI 状态。
@@ -167,6 +168,7 @@ export function InspectorPanel() {
             assets={document.assets}
             stickers={document.stickers}
             audios={document.audios}
+            videos={document.videos}
             fonts={document.fonts}
             onPatchElement={(patch) => selectedElement && updateElement(selectedElement.id, patch)}
             onEditText={() => selectedElement && startEditing(selectedElement.id)}
@@ -549,6 +551,7 @@ function ControlsPanel({
   assets,
   stickers,
   audios,
+  videos,
   fonts,
   onPatchElement,
   onEditText,
@@ -569,6 +572,7 @@ function ControlsPanel({
   assets: AssetMeta[];
   stickers: AssetMeta[];
   audios: AssetMeta[];
+  videos: AssetMeta[];
   fonts: AssetMeta[];
   onPatchElement: (patch: Partial<NoteElement>) => void;
   onEditText: () => void;
@@ -598,6 +602,7 @@ function ControlsPanel({
           assets={assets}
           stickers={stickers}
           audios={audios}
+          videos={videos}
           fonts={fonts}
           onPatch={onPatchElement}
           onEditText={onEditText}
@@ -632,6 +637,7 @@ function ElementControls({
   assets,
   stickers,
   audios,
+  videos,
   fonts,
   onPatch,
   onEditText,
@@ -646,6 +652,7 @@ function ElementControls({
   assets: AssetMeta[];
   stickers: AssetMeta[];
   audios: AssetMeta[];
+  videos: AssetMeta[];
   fonts: AssetMeta[];
   onPatch: (patch: Partial<NoteElement>) => void;
   onEditText: () => void;
@@ -765,6 +772,13 @@ function ElementControls({
     return (
       <PanelCard title="音频属性">
         <AudioControls element={element} audios={audios} onPatch={onPatch} />
+      </PanelCard>
+    );
+  }
+  if (element.type === 'video') {
+    return (
+      <PanelCard title="视频属性">
+        <VideoControls element={element} videos={videos} onPatch={onPatch} />
       </PanelCard>
     );
   }
@@ -1198,6 +1212,56 @@ function AudioControls({ element, audios, onPatch }: { element: NoteElement; aud
           ]}
           onChange={(audioTheme) => onPatch({ style: { ...style, audioTheme: String(audioTheme) } })}
         />
+      </label>
+    </div>
+  );
+}
+
+function VideoControls({ element, videos, onPatch }: { element: NoteElement; videos: AssetMeta[]; onPatch: (patch: Partial<NoteElement>) => void }) {
+  const style = element.style ?? {};
+  const asset = videos.find((item) => item.id === element.assetId);
+  const cover = assetCoverDataUrl(asset) || assetPosterDataUrl(asset);
+  const durationText = asset?.duration ? formatDuration(asset.duration) : '';
+  const videoWidth = asset?.videoWidth;
+  const videoHeight = asset?.videoHeight;
+  return (
+    <div>
+      <div className="mb-3 flex gap-3 rounded-[8px] border border-black/10 bg-white p-2">
+        <div className="grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-[7px] bg-[#111827] text-white">
+          {cover ? <img className="h-full w-full object-cover" src={cover} alt="" /> : <IconVideo />}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium">{asset?.name || '视频素材缺失'}</div>
+          <div className="truncate text-xs text-black/45">
+            {videoWidth && videoHeight ? `${videoWidth}×${videoHeight}` : ''}
+            {durationText ? (videoWidth && videoHeight ? ' · ' : '') + durationText : ''}
+          </div>
+          {durationText ? <div className="mt-1 text-[11px] text-black/40">时长 {durationText}</div> : null}
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <NumberField label="宽度" value={Math.round(element.width)} min={160} max={1920} onChange={(width) => onPatch({ width })} />
+        <NumberField label="高度" value={Math.round(element.height)} min={90} max={1080} onChange={(height) => onPatch({ height })} />
+      </div>
+      <label className="mt-3 block">
+        <span className="mb-1 block text-xs text-black/45">播放器主题</span>
+        <Select
+          value={String(style.videoTheme ?? 'dark')}
+          style={{ width: '100%' }}
+          optionList={[
+            { label: '深色', value: 'dark' },
+            { label: '明亮', value: 'light' },
+          ]}
+          onChange={(videoTheme) => onPatch({ style: { ...style, videoTheme: String(videoTheme) } })}
+        />
+      </label>
+      <label className="mt-3 flex items-center gap-2">
+        <Checkbox checked={Boolean(style.loop)} onChange={(event) => onPatch({ style: { ...style, loop: Boolean((event.target as HTMLInputElement).checked) } })} />
+        <span className="text-xs text-black/65">循环播放</span>
+      </label>
+      <label className="mt-1 flex items-center gap-2">
+        <Checkbox checked={Boolean(style.muted)} onChange={(event) => onPatch({ style: { ...style, muted: Boolean((event.target as HTMLInputElement).checked) } })} />
+        <span className="text-xs text-black/65">静音</span>
       </label>
     </div>
   );

@@ -9,6 +9,7 @@ type NotePackage struct {
 	Stickers  []AssetBlob   `json:"stickers"`
 	Fonts     []AssetBlob   `json:"fonts"`
 	Audios    []AssetBlob   `json:"audios"`
+	Videos    []AssetBlob   `json:"videos"`
 	Thumbnail string        `json:"thumbnail"`
 	Warnings  []ServiceNote `json:"warnings,omitempty"`
 }
@@ -26,6 +27,7 @@ type NoteManifest struct {
 	Stickers      []AssetMeta `json:"stickers"`
 	Fonts         []AssetMeta `json:"fonts"`
 	Audios        []AssetMeta `json:"audios"`
+	Videos        []AssetMeta `json:"videos"`
 }
 
 type NoteDocument struct {
@@ -41,6 +43,7 @@ type NoteDocument struct {
 	Stickers  []AssetMeta   `json:"stickers"`
 	Fonts     []AssetMeta   `json:"fonts"`
 	Audios    []AssetMeta   `json:"audios"`
+	Videos    []AssetMeta   `json:"videos"`
 	Templates []TemplateDef `json:"templates"`
 }
 
@@ -91,6 +94,11 @@ type AssetMeta struct {
 	CoverMimeType   string   `json:"coverMimeType,omitempty"`
 	CoverDataBase64 string   `json:"coverDataBase64,omitempty"`
 	CoverDataURL    string   `json:"coverDataUrl,omitempty"`
+
+	VideoWidth        *float64 `json:"videoWidth,omitempty"`
+	VideoHeight       *float64 `json:"videoHeight,omitempty"`
+	PosterDataBase64  string   `json:"posterDataBase64,omitempty"`
+	PosterDataURL     string   `json:"posterDataUrl,omitempty"`
 }
 
 type AssetBlob struct {

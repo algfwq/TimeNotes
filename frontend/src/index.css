@@ -242,6 +242,14 @@ textarea {
   cursor: pointer;
 }
 
+.timenote-element[data-type="video"] {
+  cursor: grab;
+}
+
+.timenote-element[data-type="video"] [data-video-interactive] {
+  cursor: pointer;
+}
+
 .timenotes-audio-player {
   display: flex;
   width: 100%;
@@ -600,4 +608,112 @@ textarea {
 
 .semi-slider {
   min-width: 0;
+}
+
+.timenotes-video-player {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 8px;
+}
+
+.timenotes-video-player .semi-video-player {
+  width: 100%;
+  height: 100%;
+}
+
+.timenotes-video-placeholder {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border: 1px dashed rgba(31, 41, 55, 0.15);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.timenotes-video-dark.timenotes-video-placeholder {
+  background: rgba(15, 23, 42, 0.7);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.timenotes-video-poster {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: #111827;
+}
+
+.timenotes-video-missing-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.timenotes-video-play-btn {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.85);
+  color: #1f2937;
+  cursor: pointer;
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+
+.timenotes-video-play-btn:hover {
+  transform: scale(1.08);
+  background: #fff;
+}
+
+.timenotes-video-transfer-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.timenotes-video-transfer-bar {
+  flex: 1;
+  height: 5px;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.timenotes-video-transfer-bar > div {
+  height: 100%;
+  min-width: 6px;
+  border-radius: inherit;
+  background: #2f6fed;
+  transition: width 0.18s ease;
+}
+
+.timenotes-video-transfer-text {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.75);
+  white-space: nowrap;
+}
+
+.timenotes-video-compact .timenotes-video-missing-overlay {
+  flex-direction: row;
+  padding: 8px;
+}
+
+.timenotes-video-button .timenotes-video-missing-overlay {
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
 }
