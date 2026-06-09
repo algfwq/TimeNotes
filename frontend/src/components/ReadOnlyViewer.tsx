@@ -1,7 +1,7 @@
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from 'react';
-import { Button, Pagination, Slider, Typography } from '@douyinfe/semi-ui';
-import { IconRefresh } from '@douyinfe/semi-icons';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from 'react';
+import { Button, Slider, Typography } from '@douyinfe/semi-ui';
+import { IconChevronLeft, IconChevronRight, IconRefresh } from '@douyinfe/semi-icons';
 import type { AssetMeta, NoteElement, NotePage, ResourceTransferProgress } from '../types';
 import { findClosestLinkHref, openExternalLink } from '../lib/externalLinks';
 import { assetDataUrl, mergeAssetWithCache } from '../lib/files';
@@ -13,62 +13,128 @@ import { VideoElement } from './elements/VideoElement';
 import { CodeBlockPreview } from './elements/CodeBlockElement';
 
 const defaultInlineCodeFontFamily = '"Cascadia Code", "Fira Code", Consolas, "SFMono-Regular", monospace';
+const SPINE_WIDTH = 40;
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 2.4;
+
+interface SpreadPages {
+  left: NotePage | null;
+  right: NotePage | null;
+}
 
 export function ReadOnlyViewer() {
   const { document, activePage, setActivePage, getResourceAsset } = useDocument();
   const resourceProgress = useResourceProgressMap();
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const panStartRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+
   const [scale, setScale] = useState(0.8);
   const [fitScale, setFitScale] = useState(0.8);
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  const pageIndex = Math.max(0, document.pages.findIndex((page) => page.id === activePage.id));
+  const [spreadIndex, setSpreadIndex] = useState(0);
+
+  const firstPage = document.pages[0];
+  const samplePage = firstPage ?? ({ width: 800, height: 1100 } as NotePage);
+
+  const isEvenPages = document.pages.length % 2 === 0;
+  const totalSpreads = isEvenPages
+    ? Math.ceil(document.pages.length / 2)
+    : Math.ceil((document.pages.length + 1) / 2);
+
+  const getSpreadPages = useCallback(
+    (s: number): SpreadPages => {
+      if (isEvenPages) {
+        const leftIdx = s * 2;
+        const rightIdx = s * 2 + 1;
+        return {
+          left: leftIdx < document.pages.length ? document.pages[leftIdx] : null,
+          right: rightIdx < document.pages.length ? document.pages[rightIdx] : null,
+        };
+      }
+      const leftIdx = s * 2 - 1;
+      const rightIdx = s * 2;
+      return {
+        left: leftIdx >= 0 && leftIdx < document.pages.length ? document.pages[leftIdx] : null,
+        right: rightIdx >= 0 && rightIdx < document.pages.length ? document.pages[rightIdx] : null,
+      };
+    },
+    [document.pages, isEvenPages],
+  );
+
+  const currentSpread = getSpreadPages(spreadIndex);
 
   useLayoutEffect(() => {
-    const updateScale = () => {
+    const updateFit = () => {
       const rect = wrapRef.current?.getBoundingClientRect();
-      if (!rect) {
-        return;
-      }
-      const next = Math.min((rect.width - 80) / activePage.width, (rect.height - 120) / activePage.height, 1.05);
+      if (!rect) return;
+      const pw = samplePage.width;
+      const ph = samplePage.height;
+      const combinedW = pw * 2 + SPINE_WIDTH + 80;
+      const next = Math.min((rect.width - 60) / combinedW, (rect.height - 130) / ph, 1.0);
       const normalized = Math.max(0.28, Number(next.toFixed(2)));
       setFitScale(normalized);
       setScale((current) => (current === fitScale ? normalized : current));
     };
-    updateScale();
-    window.addEventListener('resize', updateScale);
-    return () => window.removeEventListener('resize', updateScale);
-  }, [activePage.height, activePage.width, fitScale]);
+    updateFit();
+    window.addEventListener('resize', updateFit);
+    return () => window.removeEventListener('resize', updateFit);
+  }, [samplePage.height, samplePage.width, fitScale]);
 
-  const elements = useMemo(
-    () =>
-      document.elements
-        .filter((element) => element.pageId === activePage.id)
-        .slice()
-        .sort((first, second) => first.zIndex - second.zIndex),
-    [activePage.id, document.elements],
+  useEffect(() => {
+    if (spreadIndex >= totalSpreads) {
+      setSpreadIndex(Math.max(0, totalSpreads - 1));
+    }
+  }, [totalSpreads, spreadIndex]);
+
+  useEffect(() => {
+    const idx = Math.max(0, document.pages.findIndex((p) => p.id === activePage.id));
+    const even = document.pages.length % 2 === 0;
+    const spread = idx < 0 ? 0 : even ? Math.floor(idx / 2) : Math.floor((idx + 1) / 2);
+    if (spread !== spreadIndex) {
+      setSpreadIndex(spread);
+    }
+  }, [activePage.id, document.pages, spreadIndex]);
+
+  const goToSpread = useCallback(
+    (target: number) => {
+      if (target < 0 || target >= totalSpreads) return;
+      if (target === spreadIndex) return;
+      const spread = getSpreadPages(target);
+      const active = spread.right ?? spread.left;
+      if (active) setActivePage(active.id);
+      setSpreadIndex(target);
+      setPan({ x: 0, y: 0 });
+    },
+    [totalSpreads, spreadIndex, getSpreadPages, setActivePage],
   );
 
-  const changePage = (currentPage: number) => {
-    const next = document.pages[currentPage - 1];
-    if (next) {
-      setActivePage(next.id);
-      setPan({ x: 0, y: 0 });
-    }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        goToSpread(spreadIndex + 1);
+      }
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        goToSpread(spreadIndex - 1);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [goToSpread, spreadIndex]);
+
+  const startPan = (e: ReactPointerEvent) => {
+    e.preventDefault();
+    panStartRef.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
   };
 
-  const startPan = (event: ReactPointerEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    panStartRef.current = { x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y };
-  };
-
-  const movePan = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!panStartRef.current) {
-      return;
-    }
+  const movePan = (e: ReactPointerEvent) => {
+    if (!panStartRef.current) return;
     setPan({
-      x: panStartRef.current.panX + event.clientX - panStartRef.current.x,
-      y: panStartRef.current.panY + event.clientY - panStartRef.current.y,
+      x: panStartRef.current.panX + e.clientX - panStartRef.current.x,
+      y: panStartRef.current.panY + e.clientY - panStartRef.current.y,
     });
   };
 
@@ -76,25 +142,71 @@ export function ReadOnlyViewer() {
     panStartRef.current = null;
   };
 
-  const handleWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const next = Math.min(2.4, Math.max(0.25, scale + (event.deltaY > 0 ? -0.06 : 0.06)));
-    setScale(Number(next.toFixed(2)));
+  const handleWheel = (e: ReactWheelEvent) => {
+    e.preventDefault();
+    setScale((s) => Number(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, s + (e.deltaY > 0 ? -0.06 : 0.06))).toFixed(2)));
   };
 
+  const pageElementsMap = useMemo(() => {
+    const map = new Map<string, NoteElement[]>();
+    for (const el of document.elements) {
+      const list = map.get(el.pageId);
+      if (list) {
+        list.push(el);
+      } else {
+        map.set(el.pageId, [el]);
+      }
+    }
+    for (const list of map.values()) {
+      list.sort((a, b) => a.zIndex - b.zIndex);
+    }
+    return map;
+  }, [document.elements]);
+
+  const renderPageContent = (page: NotePage | null) => {
+    if (!page) return null;
+    const elements = pageElementsMap.get(page.id) ?? [];
+    return (
+      <ReadOnlyPage
+        page={page}
+        elements={elements}
+        assets={document.assets}
+        stickers={document.stickers}
+        audios={document.audios}
+        videos={document.videos}
+        resourceProgress={resourceProgress}
+        getResourceAsset={getResourceAsset}
+      />
+    );
+  };
+
+  const displayedLeft = currentSpread.left;
+  const displayedRight = currentSpread.right;
+  const firstIdx = displayedLeft ? document.pages.indexOf(displayedLeft) : displayedRight ? document.pages.indexOf(displayedRight) : -1;
+  const lastIdx = displayedRight ? document.pages.indexOf(displayedRight) : displayedLeft ? document.pages.indexOf(displayedLeft) : -1;
+
+  const atStart = spreadIndex === 0;
+  const atEnd = spreadIndex >= totalSpreads - 1;
+
   return (
-    <div ref={wrapRef} className="flex h-full min-h-0 flex-col bg-[#e8e2d6]">
+    <div ref={wrapRef} className="flex h-full min-h-0 flex-col" style={{ background: '#c4b998' }}>
       <div className="flex min-h-12 shrink-0 flex-wrap items-center justify-between gap-3 border-b border-black/10 bg-white/70 px-4 py-2">
         <div>
           <Typography.Text strong>{document.title}</Typography.Text>
           <span className="ml-3 text-xs text-black/45">
-            {pageIndex + 1} / {document.pages.length}
+            {firstIdx >= 0 ? `${firstIdx + 1}${lastIdx !== firstIdx ? `-${lastIdx + 1}` : ''}` : '0'} / {document.pages.length}
           </span>
         </div>
-        <Pagination total={document.pages.length} pageSize={1} currentPage={pageIndex + 1} onPageChange={changePage} size="small" />
+        <div className="flex items-center gap-1">
+          <Button size="small" icon={<IconChevronLeft />} disabled={atStart} onClick={() => goToSpread(spreadIndex - 1)} />
+          <span className="mx-1 min-w-[4ch] text-center text-xs text-black/55 tabular-nums">
+            {spreadIndex + 1}/{totalSpreads}
+          </span>
+          <Button size="small" icon={<IconChevronRight />} disabled={atEnd} onClick={() => goToSpread(spreadIndex + 1)} />
+        </div>
         <div className="flex w-64 items-center gap-3">
           <span className="shrink-0 text-xs text-black/55">{Math.round(scale * 100)}%</span>
-          <Slider value={scale * 100} min={25} max={240} step={5} onChange={(value) => setScale(Number(value) / 100)} />
+          <Slider value={scale * 100} min={25} max={240} step={5} onChange={(v) => setScale(Number(v) / 100)} />
           <Button
             size="small"
             icon={<IconRefresh />}
@@ -105,8 +217,10 @@ export function ReadOnlyViewer() {
           />
         </div>
       </div>
+
       <div
-        className="relative min-h-0 flex-1 cursor-grab overflow-hidden active:cursor-grabbing"
+        className="relative min-h-0 flex-1 overflow-hidden"
+        style={{ cursor: 'grab' }}
         onPointerDown={startPan}
         onPointerMove={movePan}
         onPointerUp={endPan}
@@ -114,26 +228,60 @@ export function ReadOnlyViewer() {
         onWheel={handleWheel}
       >
         <div
-          className="absolute left-1/2 top-8 origin-top shadow-page"
+          className="absolute left-1/2 top-1/2"
           style={{
-            width: activePage.width,
-            height: activePage.height,
-            transform: `translate(-50%, 0) translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
+            transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
           }}
         >
-          <ReadOnlyPage
-            page={activePage}
-            elements={elements}
-            assets={document.assets}
-            stickers={document.stickers}
-            audios={document.audios}
-            videos={document.videos}
-            resourceProgress={resourceProgress}
-            getResourceAsset={getResourceAsset}
-          />
+          <div className="flex">
+            <BookPageSlot page={displayedLeft} content={renderPageContent(displayedLeft)} defaultWidth={samplePage.width} defaultHeight={samplePage.height} />
+            <div className="book-spine flex-shrink-0" style={{ width: SPINE_WIDTH }} />
+            <BookPageSlot page={displayedRight} content={renderPageContent(displayedRight)} defaultWidth={samplePage.width} defaultHeight={samplePage.height} />
+          </div>
         </div>
       </div>
     </div>
+  );
+}
+
+function BookPageSlot({
+  page,
+  content,
+  defaultWidth,
+  defaultHeight,
+}: {
+  page: NotePage | null;
+  content: React.ReactNode;
+  defaultWidth: number;
+  defaultHeight: number;
+}) {
+  const w = page?.width ?? defaultWidth;
+  const h = page?.height ?? defaultHeight;
+  if (content) {
+    return <div className="shadow-page flex-shrink-0">{content}</div>;
+  }
+  return (
+    <div className="book-blank-page flex-shrink-0 shadow-page" style={{ width: w, height: h, background: '#fffaf0' }}>
+      <BlankPageLines pageWidth={w} pageHeight={h} />
+    </div>
+  );
+}
+
+function BlankPageLines({ pageWidth, pageHeight }: { pageWidth: number; pageHeight: number }) {
+  const lines: { y: number }[] = [];
+  const lineSpacing = 34;
+  const startY = 64;
+  for (let y = startY; y < pageHeight - 32; y += lineSpacing) {
+    lines.push({ y });
+  }
+  const marginLeft = Math.round(pageWidth * 0.07);
+  return (
+    <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 ${pageWidth} ${pageHeight}`} width={pageWidth} height={pageHeight}>
+      <line x1={marginLeft - 6} y1={42} x2={marginLeft - 6} y2={pageHeight - 42} stroke="rgba(189,79,79,0.22)" strokeWidth={1} />
+      {lines.map((l) => (
+        <line key={l.y} x1={marginLeft} y1={l.y} x2={pageWidth - marginLeft * 0.6} y2={l.y} stroke="rgba(0,0,0,0.10)" strokeWidth={0.5} />
+      ))}
+    </svg>
   );
 }
 
@@ -182,12 +330,12 @@ function ReadOnlyElement({
   getResourceAsset: (id?: string) => AssetMeta | undefined;
 }) {
   const style = element.style ?? {};
-  const handleLinkPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const handleLinkPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (findClosestLinkHref(event.target)) {
       event.stopPropagation();
     }
   };
-  const handleLinkClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+  const handleLinkClick = (event: React.MouseEvent<HTMLDivElement>) => {
     const href = findClosestLinkHref(event.target);
     if (!href) {
       return;
