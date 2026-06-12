@@ -38,6 +38,12 @@ export function ImportFonts(paths: string[]): $CancellablePromise<$models.AssetB
     });
 }
 
+export function ImportModels(paths: string[]): $CancellablePromise<$models.AssetBlob[]> {
+    return $Call.ByID(3650096666, paths).then(($result: any) => {
+        return $$createType3($result);
+    });
+}
+
 export function ImportVideos(paths: string[]): $CancellablePromise<$models.AssetBlob[]> {
     return $Call.ByID(3644120976, paths).then(($result: any) => {
         return $$createType3($result);

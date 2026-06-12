@@ -143,6 +143,7 @@ export class NoteDocument {
     "fonts": AssetMeta[];
     "audios": AssetMeta[];
     "videos": AssetMeta[];
+    "models": AssetMeta[];
     "templates": TemplateDef[];
 
     /** Creates a new NoteDocument instance. */
@@ -180,6 +181,9 @@ export class NoteDocument {
         if (!("videos" in $$source)) {
             this["videos"] = [];
         }
+        if (!("models" in $$source)) {
+            this["models"] = [];
+        }
         if (!("templates" in $$source)) {
             this["templates"] = [];
         }
@@ -198,7 +202,8 @@ export class NoteDocument {
         const $$createField8_0 = $$createType5;
         const $$createField9_0 = $$createType5;
         const $$createField10_0 = $$createType5;
-        const $$createField11_0 = $$createType7;
+        const $$createField11_0 = $$createType5;
+        const $$createField12_0 = $$createType7;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("pages" in $$parsedSource) {
             $$parsedSource["pages"] = $$createField4_0($$parsedSource["pages"]);
@@ -221,8 +226,11 @@ export class NoteDocument {
         if ("videos" in $$parsedSource) {
             $$parsedSource["videos"] = $$createField10_0($$parsedSource["videos"]);
         }
+        if ("models" in $$parsedSource) {
+            $$parsedSource["models"] = $$createField11_0($$parsedSource["models"]);
+        }
         if ("templates" in $$parsedSource) {
-            $$parsedSource["templates"] = $$createField11_0($$parsedSource["templates"]);
+            $$parsedSource["templates"] = $$createField12_0($$parsedSource["templates"]);
         }
         return new NoteDocument($$parsedSource as Partial<NoteDocument>);
     }
@@ -312,6 +320,7 @@ export class NoteManifest {
     "fonts": AssetMeta[];
     "audios": AssetMeta[];
     "videos": AssetMeta[];
+    "models": AssetMeta[];
 
     /** Creates a new NoteManifest instance. */
     constructor($$source: Partial<NoteManifest> = {}) {
@@ -351,6 +360,9 @@ export class NoteManifest {
         if (!("videos" in $$source)) {
             this["videos"] = [];
         }
+        if (!("models" in $$source)) {
+            this["models"] = [];
+        }
 
         Object.assign(this, $$source);
     }
@@ -364,6 +376,7 @@ export class NoteManifest {
         const $$createField9_0 = $$createType5;
         const $$createField10_0 = $$createType5;
         const $$createField11_0 = $$createType5;
+        const $$createField12_0 = $$createType5;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("assets" in $$parsedSource) {
             $$parsedSource["assets"] = $$createField7_0($$parsedSource["assets"]);
@@ -379,6 +392,9 @@ export class NoteManifest {
         }
         if ("videos" in $$parsedSource) {
             $$parsedSource["videos"] = $$createField11_0($$parsedSource["videos"]);
+        }
+        if ("models" in $$parsedSource) {
+            $$parsedSource["models"] = $$createField12_0($$parsedSource["models"]);
         }
         return new NoteManifest($$parsedSource as Partial<NoteManifest>);
     }
@@ -396,6 +412,7 @@ export class NotePackage {
     "fonts": AssetBlob[];
     "audios": AssetBlob[];
     "videos": AssetBlob[];
+    "models": AssetBlob[];
     "thumbnail": string;
     "warnings"?: ServiceNote[];
 
@@ -425,6 +442,9 @@ export class NotePackage {
         if (!("videos" in $$source)) {
             this["videos"] = [];
         }
+        if (!("models" in $$source)) {
+            this["models"] = [];
+        }
         if (!("thumbnail" in $$source)) {
             this["thumbnail"] = "";
         }
@@ -443,7 +463,8 @@ export class NotePackage {
         const $$createField5_0 = $$createType13;
         const $$createField6_0 = $$createType13;
         const $$createField7_0 = $$createType13;
-        const $$createField9_0 = $$createType15;
+        const $$createField8_0 = $$createType13;
+        const $$createField10_0 = $$createType15;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("manifest" in $$parsedSource) {
             $$parsedSource["manifest"] = $$createField0_0($$parsedSource["manifest"]);
@@ -466,8 +487,11 @@ export class NotePackage {
         if ("videos" in $$parsedSource) {
             $$parsedSource["videos"] = $$createField7_0($$parsedSource["videos"]);
         }
+        if ("models" in $$parsedSource) {
+            $$parsedSource["models"] = $$createField8_0($$parsedSource["models"]);
+        }
         if ("warnings" in $$parsedSource) {
-            $$parsedSource["warnings"] = $$createField9_0($$parsedSource["warnings"]);
+            $$parsedSource["warnings"] = $$createField10_0($$parsedSource["warnings"]);
         }
         return new NotePackage($$parsedSource as Partial<NotePackage>);
     }

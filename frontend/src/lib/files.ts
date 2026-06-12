@@ -2,7 +2,7 @@ import type { AssetMeta } from '../types';
 import { dataUrlToBase64 } from './base64';
 import { createId, hashText } from './ids';
 
-type AssetGroup = 'assets' | 'stickers' | 'fonts' | 'audios' | 'videos';
+type AssetGroup = 'assets' | 'stickers' | 'fonts' | 'audios' | 'videos' | 'models';
 
 export interface ImageIntrinsicSize {
   width: number;
@@ -94,6 +94,10 @@ export function isSupportedVideoFile(file: Pick<File, 'type' | 'name'>) {
   return file.type.startsWith('video/') || /\.(mp4|webm|ogg|ogv|mov|avi|mkv|wmv)$/i.test(file.name);
 }
 
+export function isSupportedModelFile(file: Pick<File, 'type' | 'name'>) {
+  return file.type === 'model/gltf-binary' || file.type === 'model/gltf+json' || /\.(glb|gltf)$/i.test(file.name);
+}
+
 export function getImageIntrinsicSize(src: string): Promise<ImageIntrinsicSize> {
   return new Promise((resolve, reject) => {
     const image = new Image();
@@ -143,7 +147,7 @@ export async function createAssetFromDataUrl(
   size = dataUrl.length,
 ): Promise<AssetMeta> {
   const hash = await hashText(dataUrl);
-  const id = hash.slice(0, 16) || createId(group === 'fonts' ? 'font' : group === 'stickers' ? 'sticker' : group === 'audios' ? 'audio' : group === 'videos' ? 'video' : 'asset');
+  const id = hash.slice(0, 16) || createId(group === 'fonts' ? 'font' : group === 'stickers' ? 'sticker' : group === 'audios' ? 'audio' : group === 'videos' ? 'video' : group === 'models' ? 'model' : 'asset');
   return {
     id,
     name,
@@ -237,6 +241,12 @@ export function mimeTypeFromName(name: string) {
   }
   if (lower.endsWith('.ogv')) {
     return 'video/ogg';
+  }
+  if (lower.endsWith('.glb')) {
+    return 'model/gltf-binary';
+  }
+  if (lower.endsWith('.gltf')) {
+    return 'model/gltf+json';
   }
   return 'application/octet-stream';
 }

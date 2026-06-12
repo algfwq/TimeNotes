@@ -87,6 +87,8 @@ interface DocumentContextValue {
   deleteAudio: (id: string) => void;
   addVideo: (asset: AssetMeta) => void;
   deleteVideo: (id: string) => void;
+  addModel: (asset: AssetMeta) => void;
+  deleteModel: (id: string) => void;
   addFont: (font: AssetMeta) => void;
   getResourceAsset: (id?: string) => AssetMeta | undefined;
 }
@@ -256,6 +258,7 @@ function normalizeDocument(
   packageFonts: AssetMeta[] = [],
   packageAudios: AssetMeta[] = [],
   packageVideos: AssetMeta[] = [],
+  packageModels: AssetMeta[] = [],
 ): NoteDocument {
   const seed = createSeedDocument();
   const pages = nextDocument.pages?.length ? nextDocument.pages : seed.pages;
@@ -280,6 +283,7 @@ function normalizeDocument(
     fonts: mergeAssets(nextDocument.fonts ?? [], packageFonts),
     audios: mergeAssets(nextDocument.audios ?? [], packageAudios),
     videos: mergeAssets(nextDocument.videos ?? [], packageVideos),
+    models: mergeAssets(nextDocument.models ?? [], packageModels),
     templates: [],
   };
 }
@@ -298,6 +302,7 @@ function cloneDocumentForHistory(document: NoteDocument) {
     fonts: snapshot.fonts.map(stripTransientAssetData),
     audios: snapshot.audios.map(stripTransientAssetData),
     videos: snapshot.videos.map(stripTransientAssetData),
+    models: snapshot.models.map(stripTransientAssetData),
   };
 }
 
@@ -340,7 +345,7 @@ function stripDocumentForCollaboration(document: NoteDocument): NoteDocument {
 }
 
 function rememberResources(cache: Map<string, AssetMeta>, document: NoteDocument) {
-  [...document.assets, ...document.stickers, ...document.fonts, ...document.audios, ...document.videos].forEach((asset) => {
+  [...document.assets, ...document.stickers, ...document.fonts, ...document.audios, ...document.videos, ...document.models].forEach((asset) => {
     if (asset.id && (asset.dataBase64 || asset.dataUrl)) {
       cache.set(asset.id, asset);
     }
@@ -366,6 +371,7 @@ function hydrateResourcesFromCache(document: NoteDocument, cache: Map<string, As
     fonts: document.fonts.map(hydrate),
     audios: document.audios.map(hydrate),
     videos: document.videos.map(hydrate),
+    models: document.models.map(hydrate),
   };
 }
 
@@ -401,6 +407,13 @@ function removeResourceFromDocument(document: NoteDocument, group: ResourceGroup
       ...document,
       videos: document.videos.filter((asset) => asset.id !== assetId),
       elements: document.elements.filter((element) => !(element.type === 'video' && element.assetId === assetId)),
+    };
+  }
+  if (group === 'models') {
+    return {
+      ...document,
+      models: document.models.filter((asset) => asset.id !== assetId),
+      elements: document.elements.filter((element) => !(element.type === 'model' && element.assetId === assetId)),
     };
   }
   return {
@@ -474,6 +487,7 @@ function resourceGroups(document: NoteDocument): Array<[ResourceGroup, AssetMeta
     ['fonts', document.fonts],
     ['audios', document.audios],
     ['videos', document.videos],
+    ['models', document.models],
   ];
 }
 
@@ -490,7 +504,7 @@ function resourceChunkKeyPrefix(key: string) {
 }
 
 function isResourceGroup(value: string): value is ResourceGroup {
-  return value === 'assets' || value === 'stickers' || value === 'fonts' || value === 'audios' || value === 'videos';
+  return value === 'assets' || value === 'stickers' || value === 'fonts' || value === 'audios' || value === 'videos' || value === 'models';
 }
 
 function resourceSignature(asset: AssetMeta) {
@@ -1327,7 +1341,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
   const loadPackage = useCallback(
     (note: NotePackage, sourcePath?: string) => {
       // 打开 .tnote 时优先以 document.json + 包内资源作为恢复源，Yjs state 只是协作增量的附加状态。
-      const normalized = normalizeDocument(note.document, note.assets ?? [], note.stickers ?? [], note.fonts ?? [], note.audios ?? [], note.videos ?? []);
+      const normalized = normalizeDocument(note.document, note.assets ?? [], note.stickers ?? [], note.fonts ?? [], note.audios ?? [], note.videos ?? [], note.models ?? []);
       rememberResources(resourceCacheRef.current, normalized);
       const tab = createTab(normalized, 'edit', sourcePath);
       const tabYDoc = new Y.Doc();
@@ -1506,6 +1520,9 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       if (type === 'video' && !patch.assetId) {
         return;
       }
+      if (type === 'model' && !patch.assetId) {
+        return;
+      }
       const id = createId('el');
       const isStroke = (type === 'drawing' || type === 'tape') && Boolean(patch.points?.length);
       updateDocument((current) => {
@@ -1612,7 +1629,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       }
       const type =
         pendingPlacement?.type ??
-        (toolState === 'text' || toolState === 'code' || toolState === 'sticker' || toolState === 'image' || toolState === 'audio' || toolState === 'video' ? toolState : undefined);
+        (toolState === 'text' || toolState === 'code' || toolState === 'sticker' || toolState === 'image' || toolState === 'audio' || toolState === 'video' || toolState === 'model' ? toolState : undefined);
       if (!type) {
         return;
       }
@@ -1627,9 +1644,11 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
                 ? toolStyles.sticker.width
                 : type === 'audio'
                   ? 360
-                  : type === 'video'
-                    ? Number(patch.width) || 448
-                  : 220),
+                : type === 'video'
+                  ? Number(patch.width) || 448
+                : type === 'model'
+                  ? 320
+                : 220),
       );
       const height = Number(
         patch.height ??
@@ -1643,6 +1662,8 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
                   ? 96
                   : type === 'video'
                     ? Number(patch.height) || 252
+                  : type === 'model'
+                    ? 240
                   : 160),
       );
       if (type === 'sticker' && !(patch.assetId ?? toolStyles.sticker.assetId)) {
@@ -1655,6 +1676,9 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       if (type === 'video' && !patch.assetId) {
+        return;
+      }
+      if (type === 'model' && !patch.assetId) {
         return;
       }
       // 用户点的是希望元素出现的位置，所以用元素中心对齐点击点，同时限制在页面坐标范围内。
@@ -1993,6 +2017,33 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
     [document.elements, markResourceDeleted, updateDocument],
   );
 
+  const addModel = useCallback(
+    (asset: AssetMeta) => {
+      clearResourceDeleted('models', asset.id);
+      updateDocument((current) => {
+        const hydrated = hydrateAsset(asset);
+        const exists = current.models.some((item) => item.id === hydrated.id);
+        return {
+          ...current,
+          models: exists ? current.models.map((item) => (item.id === hydrated.id ? hydrated : item)) : [...current.models, hydrated],
+        };
+      }, { collaborationScope: { type: 'document' } });
+    },
+    [clearResourceDeleted, updateDocument],
+  );
+
+  const deleteModel = useCallback(
+    (id: string) => {
+      markResourceDeleted('models', id);
+      updateDocument((current) => removeResourceFromDocument(current, 'models', id), { collaborationScope: { type: 'document' } });
+      setSelectedElementId((current) => {
+        const selected = document.elements.find((element) => element.id === current);
+        return selected?.type === 'model' && selected.assetId === id ? undefined : current;
+      });
+    },
+    [document.elements, markResourceDeleted, updateDocument],
+  );
+
   const addFont = useCallback(
     (font: AssetMeta) => {
       clearResourceDeleted('fonts', font.id);
@@ -2023,6 +2074,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
         fonts: normalizedDocument.fonts.map(stripTransientAssetData),
         audios: normalizedDocument.audios.map(stripTransientAssetData),
         videos: normalizedDocument.videos.map(stripTransientAssetData),
+        models: normalizedDocument.models.map(stripTransientAssetData),
       },
       document: {
         ...normalizedDocument,
@@ -2031,6 +2083,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
         fonts: normalizedDocument.fonts.map(stripTransientAssetData),
         audios: normalizedDocument.audios.map(stripTransientAssetData),
         videos: normalizedDocument.videos.map(stripTransientAssetData),
+        models: normalizedDocument.models.map(stripTransientAssetData),
       },
       yjsState: bytesToBase64(update),
       assets: normalizedDocument.assets,
@@ -2038,6 +2091,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       fonts: normalizedDocument.fonts,
       audios: normalizedDocument.audios,
       videos: normalizedDocument.videos,
+      models: normalizedDocument.models,
       thumbnail: '',
     };
   }, [activeYDoc, document]);
@@ -2121,6 +2175,8 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       deleteAudio,
       addVideo,
       deleteVideo,
+      addModel,
+      deleteModel,
       addFont,
       getResourceAsset,
     }),
@@ -2136,6 +2192,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       addPage,
       addAudio,
       addVideo,
+      addModel,
       addSticker,
       armPlacement,
       closeTab,
@@ -2150,6 +2207,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       deleteAsset,
       deleteAudio,
       deleteVideo,
+      deleteModel,
       deleteSticker,
       document,
       duplicateElement,

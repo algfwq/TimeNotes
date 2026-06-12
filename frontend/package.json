@@ -12,6 +12,8 @@
   "dependencies": {
     "@douyinfe/semi-icons": "^2.96.0",
     "@douyinfe/semi-ui": "^2.96.0",
+    "@react-three/drei": "^9.122.0",
+    "@react-three/fiber": "^8.18.0",
     "@tiptap/extension-collaboration": "^3.22.5",
     "@tiptap/extension-collaboration-caret": "^3.22.5",
     "@tiptap/pm": "^3.22.5",
@@ -28,6 +30,7 @@
     "react-dom": "^18.2.0",
     "react-konva": "^18.2.14",
     "react-moveable": "^0.56.0",
+    "three": "^0.184.0",
     "yjs": "^13.6.30"
   },
   "devDependencies": {

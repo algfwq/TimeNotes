@@ -83,7 +83,7 @@ export function InspectorPanel() {
         .sort((first, second) => second.zIndex - first.zIndex),
     [activePageId, document.elements],
   );
-  const elementAssets = useMemo(() => [...document.assets, ...document.stickers, ...document.audios, ...document.videos], [document.assets, document.stickers, document.audios, document.videos]);
+  const elementAssets = useMemo(() => [...document.assets, ...document.stickers, ...document.audios, ...document.videos, ...document.models], [document.assets, document.stickers, document.audios, document.videos, document.models]);
 
   useEffect(() => {
     // 画布或其他组件可以派发事件打开“控制”页，避免跨组件传很多 UI 状态。
@@ -169,6 +169,7 @@ export function InspectorPanel() {
             stickers={document.stickers}
             audios={document.audios}
             videos={document.videos}
+            models={document.models}
             fonts={document.fonts}
             onPatchElement={(patch) => selectedElement && updateElement(selectedElement.id, patch)}
             onEditText={() => selectedElement && startEditing(selectedElement.id)}
@@ -552,6 +553,7 @@ function ControlsPanel({
   stickers,
   audios,
   videos,
+  models,
   fonts,
   onPatchElement,
   onEditText,
@@ -573,6 +575,7 @@ function ControlsPanel({
   stickers: AssetMeta[];
   audios: AssetMeta[];
   videos: AssetMeta[];
+  models: AssetMeta[];
   fonts: AssetMeta[];
   onPatchElement: (patch: Partial<NoteElement>) => void;
   onEditText: () => void;
@@ -603,6 +606,7 @@ function ControlsPanel({
           stickers={stickers}
           audios={audios}
           videos={videos}
+          models={models}
           fonts={fonts}
           onPatch={onPatchElement}
           onEditText={onEditText}
@@ -638,6 +642,7 @@ function ElementControls({
   stickers,
   audios,
   videos,
+  models,
   fonts,
   onPatch,
   onEditText,
@@ -653,6 +658,7 @@ function ElementControls({
   stickers: AssetMeta[];
   audios: AssetMeta[];
   videos: AssetMeta[];
+  models: AssetMeta[];
   fonts: AssetMeta[];
   onPatch: (patch: Partial<NoteElement>) => void;
   onEditText: () => void;
@@ -779,6 +785,13 @@ function ElementControls({
     return (
       <PanelCard title="视频属性">
         <VideoControls element={element} videos={videos} onPatch={onPatch} />
+      </PanelCard>
+    );
+  }
+  if (element.type === 'model') {
+    return (
+      <PanelCard title="模型属性">
+        <ModelControls element={element} onPatch={onPatch} />
       </PanelCard>
     );
   }
@@ -1267,6 +1280,25 @@ function VideoControls({ element, videos, onPatch }: { element: NoteElement; vid
   );
 }
 
+function ModelControls({ element, onPatch }: { element: NoteElement; onPatch: (patch: Partial<NoteElement>) => void }) {
+  return (
+    <div>
+      <div className="mb-3 rounded-[8px] border border-dashed border-black/15 bg-[#e8e2d6]/60 p-3 text-center">
+        <svg className="mx-auto mb-1 text-black/30" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+          <path d="M12 2L2 7l10 5 10-5-10-5z" />
+          <path d="M2 17l10 5 10-5" />
+          <path d="M2 12l10 5 10-5" />
+        </svg>
+        <div className="text-xs text-black/45">3D 模型控件</div>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <NumberField label="宽度" value={Math.round(element.width)} min={80} max={1920} onChange={(width) => onPatch({ width })} />
+        <NumberField label="高度" value={Math.round(element.height)} min={80} max={1080} onChange={(height) => onPatch({ height })} />
+      </div>
+    </div>
+  );
+}
+
 function FontSelector({
   label = '字体',
   defaultLabel = '默认字体',
@@ -1592,6 +1624,17 @@ function LayerPreview({ element, assets }: { element: NoteElement; assets: Asset
       </div>
     );
   }
+  if (element.type === 'model') {
+    return (
+      <div className="grid h-11 w-14 shrink-0 place-items-center rounded-[6px] border border-black/10 bg-[#e8e2d6] text-black/35">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <path d="M12 2L2 7l10 5 10-5-10-5z" />
+          <path d="M2 17l10 5 10-5" />
+          <path d="M2 12l10 5 10-5" />
+        </svg>
+      </div>
+    );
+  }
   if (element.type === 'drawing' || element.type === 'tape') {
     return (
       <div className="h-11 w-14 shrink-0 rounded-[6px] border border-black/10 bg-white p-2">
@@ -1629,6 +1672,10 @@ function layerTitle(element: NoteElement, assets: AssetMeta[]) {
   }
   if (element.type === 'drawing') {
     return '画笔笔迹';
+  }
+  if (element.type === 'model') {
+    const asset = assets.find((item) => item.id === element.assetId);
+    return asset?.name || '3D 模型';
   }
   return element.type;
 }

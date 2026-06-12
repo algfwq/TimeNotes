@@ -13,6 +13,7 @@ import {
   isGifAsset,
   isSupportedAudioFile,
   isSupportedImageFile,
+  isSupportedModelFile,
   isSupportedVideoFile,
   mergeAssetWithCache,
 } from '../../lib/files';
@@ -21,17 +22,18 @@ import { resourceProgressKey, useResourceProgressMap } from '../../providers/Res
 import { ImageCropModal } from '../ImageCropModal';
 import type { AssetMeta } from '../../types';
 
-const materialAccept = '.png,.jpg,.jpeg,.gif,.webp,.svg,.mp3,.m4a,.aac,.wav,.ogg,.oga,.flac,.webm,.mp4,.mov,.avi,.mkv,.wmv,image/*,audio/*,video/*';
+const materialAccept = '.png,.jpg,.jpeg,.gif,.webp,.svg,.mp3,.m4a,.aac,.wav,.ogg,.oga,.flac,.webm,.mp4,.mov,.avi,.mkv,.wmv,.glb,.gltf,image/*,audio/*,video/*';
 
 export function AssetLibrary() {
-  const { document, addAsset, addAudio, addVideo, armPlacement, deleteAsset, deleteAudio, deleteVideo, replaceAsset, getResourceAsset } = useDocument();
+  const { document, addAsset, addAudio, addVideo, addModel, armPlacement, deleteAsset, deleteAudio, deleteVideo, deleteModel, replaceAsset, getResourceAsset } = useDocument();
   const resourceProgress = useResourceProgressMap();
   const [menu, setMenu] = useState<{ x: number; y: number; assetId: string } | null>(null);
   const [audioMenu, setAudioMenu] = useState<{ x: number; y: number; assetId: string } | null>(null);
   const [videoMenu, setVideoMenu] = useState<{ x: number; y: number; assetId: string } | null>(null);
+  const [modelMenu, setModelMenu] = useState<{ x: number; y: number; assetId: string } | null>(null);
   const [cropAssetId, setCropAssetId] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
-  const [importingFiles, setImportingFiles] = useState<{ name: string; kind: 'image' | 'audio' | 'video' }[]>([]);
+  const [importingFiles, setImportingFiles] = useState<{ name: string; kind: 'image' | 'audio' | 'video' | 'model' }[]>([]);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const dragDepthRef = useRef(0);
 
@@ -97,6 +99,27 @@ export function AssetLibrary() {
     [addVideo],
   );
 
+  const importModelFile = useCallback(
+    async (file: File) => {
+      if (!isSupportedModelFile(file)) {
+        Toast.warning('请选择 GLB/GLTF 模型文件');
+        return;
+      }
+      const entry = { name: file.name, kind: 'model' as const };
+      setImportingFiles((list) => [...list, entry]);
+      try {
+        const asset = await createAssetFromFile(file, 'models');
+        addModel(asset);
+        Toast.success('3D 模型已导入，点击后在画布上放置');
+      } catch (error) {
+        Toast.error(`3D 模型导入失败：${String(error)}`);
+      } finally {
+        setImportingFiles((list) => list.filter((item) => item !== entry));
+      }
+    },
+    [addModel],
+  );
+
   const importMaterialFile = useCallback(
     async (file: File) => {
       if (isSupportedImageFile(file)) {
@@ -111,9 +134,13 @@ export function AssetLibrary() {
         await importVideoFile(file);
         return;
       }
+      if (isSupportedModelFile(file)) {
+        await importModelFile(file);
+        return;
+      }
       Toast.warning(`不支持的素材：${file.name}`);
     },
-    [importAudioFile, importImageFile, importVideoFile],
+    [importAudioFile, importImageFile, importModelFile, importVideoFile],
   );
 
   const importMaterialFiles = useCallback(
@@ -185,6 +212,7 @@ export function AssetLibrary() {
       setMenu(null);
       setAudioMenu(null);
       setVideoMenu(null);
+      setModelMenu(null);
     };
     window.addEventListener('click', close);
     window.addEventListener('resize', close);
@@ -234,10 +262,22 @@ export function AssetLibrary() {
     Toast.info('已选择视频，请在画布上点击放置位置');
   };
 
+  const chooseModel = (asset: AssetMeta) => {
+    armPlacement({
+      type: 'model',
+      patch: {
+        assetId: asset.id,
+        width: 320,
+        height: 240,
+      },
+    });
+    Toast.info('已选择 3D 模型，请在画布上点击放置位置');
+  };
+
   const cropAsset = mergeAssetWithCache(document.assets.find((asset) => asset.id === cropAssetId), getResourceAsset(cropAssetId ?? undefined));
   const cropSrc = cropAsset && !isGifAsset(cropAsset) ? assetDataUrl(cropAsset) : undefined;
   const menuAsset = menu ? mergeAssetWithCache(document.assets.find((asset) => asset.id === menu.assetId), getResourceAsset(menu.assetId)) : undefined;
-  const hasAnyAsset = document.assets.length > 0 || document.audios.length > 0 || document.videos.length > 0;
+  const hasAnyAsset = document.assets.length > 0 || document.audios.length > 0 || document.videos.length > 0 || document.models.length > 0;
   const applyAssetCrop = async (dataUrl: string) => {
     if (cropAsset && !isGifAsset(cropAsset)) {
       const nextAsset = await createAssetFromDataUrl(dataUrl, `${cropAsset.name}-裁剪.png`, 'assets', 'image/png');
@@ -322,7 +362,7 @@ export function AssetLibrary() {
               <div className="min-w-0 flex-1">
                 <div className="truncate text-xs font-medium text-black/70">{entry.name}</div>
                 <div className="text-[11px] text-black/40">
-                  {entry.kind === 'video' ? '正在解析视频...' : entry.kind === 'audio' ? '正在解析音频...' : '正在导入素材...'}
+                  {entry.kind === 'video' ? '正在解析视频...' : entry.kind === 'audio' ? '正在解析音频...' : entry.kind === 'model' ? '正在导入 3D 模型...' : '正在导入素材...'}
                 </div>
               </div>
             </div>
@@ -448,6 +488,53 @@ export function AssetLibrary() {
         </div>
       ) : null}
 
+      {document.models.length > 0 ? (
+        <div className="mt-4 flex flex-col gap-3">
+          {document.models.map((asset) => {
+            const hydratedAsset = mergeAssetWithCache(asset, getResourceAsset(asset.id)) ?? asset;
+            const progress = resourceProgress[resourceProgressKey('models', asset.id)];
+            return (
+              <button
+                key={asset.id}
+                type="button"
+                className="group flex min-w-0 items-center gap-3 rounded-[8px] border border-black/10 bg-white p-2 text-left shadow-sm transition hover:border-[#2f6fed]/45"
+                onClick={() => chooseModel(hydratedAsset)}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setModelMenu({ x: event.clientX, y: event.clientY, assetId: asset.id });
+                }}
+              >
+                <div className="grid h-14 w-14 shrink-0 place-items-center rounded-[7px] bg-[#e8e2d6] text-black/35">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                    <path d="M2 17l10 5 10-5" />
+                    <path d="M2 12l10 5 10-5" />
+                  </svg>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium">{hydratedAsset.name}</div>
+                  <div className="truncate text-xs text-black/45">{formatFileSize(hydratedAsset.size)}</div>
+                  {progress ? (
+                    <div className="mt-2">
+                      <div className="h-1.5 overflow-hidden rounded-full bg-black/10">
+                        <div className="h-full rounded-full bg-[#2f6fed]" style={{ width: `${Math.round(progress.progress * 100)}%` }} />
+                      </div>
+                      <div className="mt-1 text-[11px] text-black/40">传输中 {Math.round(progress.progress * 100)}%</div>
+                    </div>
+                  ) : null}
+                </div>
+                <svg className="shrink-0 text-black/20 group-hover:text-[#2f6fed]" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                  <path d="M2 17l10 5 10-5" />
+                  <path d="M2 12l10 5 10-5" />
+                </svg>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
       {!hasAnyAsset ? (
         <div className="mt-10 rounded-[8px] border border-dashed border-black/15 bg-white/60 py-8">
           <Empty image={<IconImage size="extra-large" />} description="还没有导入素材" />
@@ -485,6 +572,14 @@ export function AssetLibrary() {
           deleteVideo(assetId);
           setVideoMenu(null);
           Toast.success('视频已删除');
+        }}
+      />
+      <ModelContextMenu
+        state={modelMenu}
+        onDelete={(assetId) => {
+          deleteModel(assetId);
+          setModelMenu(null);
+          Toast.success('3D 模型已删除');
         }}
       />
       <ImageCropModal title="裁剪素材" visible={Boolean(cropSrc)} src={cropSrc} onClose={() => setCropAssetId(null)} onApply={applyAssetCrop} />
@@ -528,7 +623,7 @@ function AssetContextMenu({
 }
 
 function isSupportedMaterialFile(file: Pick<File, 'type' | 'name'>) {
-  return isSupportedImageFile(file) || isSupportedAudioFile(file) || isSupportedVideoFile(file);
+  return isSupportedImageFile(file) || isSupportedAudioFile(file) || isSupportedVideoFile(file) || isSupportedModelFile(file);
 }
 
 function hasFileDrag(dataTransfer?: DataTransfer | null) {
@@ -616,4 +711,36 @@ function formatDuration(value?: number) {
   const minutes = Math.floor(value / 60);
   const seconds = Math.floor(value % 60);
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+function formatFileSize(bytes?: number) {
+  if (!bytes) {
+    return '';
+  }
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1048576) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${(bytes / 1048576).toFixed(1)} MB`;
+}
+
+function ModelContextMenu({ state, onDelete }: { state: { x: number; y: number; assetId: string } | null; onDelete: (assetId: string) => void }) {
+  if (!state) {
+    return null;
+  }
+  return (
+    <div
+      className="fixed z-[900] min-w-36 rounded-[8px] border border-black/10 bg-white py-1 text-sm shadow-xl"
+      style={{ left: state.x, top: state.y }}
+      onClick={(event) => event.stopPropagation()}
+      onContextMenu={(event) => event.preventDefault()}
+    >
+      <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left text-red-600 hover:bg-black/5" onClick={() => onDelete(state.assetId)}>
+        <IconDelete />
+        <span>删除 3D 模型</span>
+      </button>
+    </div>
+  );
 }

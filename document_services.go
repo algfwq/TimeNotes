@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	currentFormatVersion = 6
+	currentFormatVersion = 7
 	currentAppVersion    = "2.0.0"
 )
 
@@ -38,7 +38,7 @@ func (s *DocumentService) NewDocument() NotePackage {
 	now := time.Now().UTC().Format(time.RFC3339)
 	doc := seedDocument(now)
 	logEvent("info", "document_new", map[string]interface{}{"title": doc.Title, "pages": len(doc.Pages), "elements": len(doc.Elements)})
-	return packageFromDocument(doc, nil, nil, nil, nil, nil, "")
+	return packageFromDocument(doc, nil, nil, nil, nil, nil, nil, "")
 }
 
 func (s *DocumentService) OpenNote(path string) (NotePackage, error) {
@@ -57,6 +57,7 @@ func (s *DocumentService) OpenNote(path string) (NotePackage, error) {
 		"stickers": len(note.Stickers),
 		"audios":   len(note.Audios),
 		"videos":   len(note.Videos),
+		"models":   len(note.Models),
 	})
 	return note, nil
 }
@@ -80,6 +81,7 @@ func (s *DocumentService) SaveNote(path string, note NotePackage) error {
 		"stickers": len(note.Stickers),
 		"audios":   len(note.Audios),
 		"videos":   len(note.Videos),
+		"models":   len(note.Models),
 	})
 	return nil
 }
@@ -156,6 +158,20 @@ func (s *AssetService) ImportVideos(paths []string) ([]AssetBlob, error) {
 	return videos, nil
 }
 
+func (s *AssetService) ImportModels(paths []string) ([]AssetBlob, error) {
+	models := make([]AssetBlob, 0, len(paths))
+	for _, path := range paths {
+		model, err := readAsset(path, "models")
+		if err != nil {
+			logEvent("error", "model_import_failed", map[string]interface{}{"path": path, "error": err.Error()})
+			return nil, err
+		}
+		models = append(models, model)
+	}
+	logEvent("info", "models_imported", map[string]interface{}{"count": len(models)})
+	return models, nil
+}
+
 func (s *AssetService) GetSystemFonts() []SystemFont {
 	// 这里只扫描常见系统字体目录并返回路径，不提前读取字体二进制，避免打开右侧面板时阻塞。
 	fonts := listSystemFonts()
@@ -227,6 +243,9 @@ func (note *NotePackage) normalize() {
 	if note.Document.Videos == nil {
 		note.Document.Videos = []AssetMeta{}
 	}
+	if note.Document.Models == nil {
+		note.Document.Models = []AssetMeta{}
+	}
 	if note.Document.Stickers == nil {
 		note.Document.Stickers = []AssetMeta{}
 	}
@@ -247,10 +266,11 @@ func (note *NotePackage) normalize() {
 		Fonts:         note.Document.Fonts,
 		Audios:        note.Document.Audios,
 		Videos:        note.Document.Videos,
+		Models:        note.Document.Models,
 	}
 }
 
-func packageFromDocument(doc NoteDocument, assets []AssetBlob, stickers []AssetBlob, fonts []AssetBlob, audios []AssetBlob, videos []AssetBlob, yjsState string) NotePackage {
+func packageFromDocument(doc NoteDocument, assets []AssetBlob, stickers []AssetBlob, fonts []AssetBlob, audios []AssetBlob, videos []AssetBlob, models []AssetBlob, yjsState string) NotePackage {
 	// 内存里先拼成 NotePackage，再复用 normalize，避免新建和保存两条路径产生格式差异。
 	note := NotePackage{
 		Document: doc,
@@ -260,6 +280,7 @@ func packageFromDocument(doc NoteDocument, assets []AssetBlob, stickers []AssetB
 		Fonts:    fonts,
 		Audios:   audios,
 		Videos:   videos,
+		Models:   models,
 	}
 	note.normalize()
 	return note
@@ -423,6 +444,11 @@ func writeNotePackage(path string, note NotePackage) error {
 			return err
 		}
 	}
+	for _, model := range note.Models {
+		if err := writeAssetBlob(zw, "models", model); err != nil {
+			return err
+		}
+	}
 	if note.Thumbnail != "" {
 		if raw, err := decodeDataURL(note.Thumbnail); err == nil {
 			if err := writeFile(zw, "thumbnail.png", raw); err != nil {
@@ -483,6 +509,9 @@ func readNotePackage(path string) (NotePackage, error) {
 	if len(doc.Videos) == 0 && len(manifest.Videos) > 0 {
 		doc.Videos = manifest.Videos
 	}
+	if len(doc.Models) == 0 && len(manifest.Models) > 0 {
+		doc.Models = manifest.Models
+	}
 
 	var yjsState string
 	if manifest.YjsStatePath != "" {
@@ -496,10 +525,12 @@ func readNotePackage(path string) (NotePackage, error) {
 	fonts, fontWarnings := readAssetBlobs(files, manifest.Fonts)
 	audios, audioWarnings := readAssetBlobs(files, manifest.Audios)
 	videos, videoWarnings := readAssetBlobs(files, manifest.Videos)
+	models, modelWarnings := readAssetBlobs(files, manifest.Models)
 	warnings = append(warnings, stickerWarnings...)
 	warnings = append(warnings, fontWarnings...)
 	warnings = append(warnings, audioWarnings...)
 	warnings = append(warnings, videoWarnings...)
+	warnings = append(warnings, modelWarnings...)
 	thumbnail := ""
 	if raw, err := readFile(files, "thumbnail.png"); err == nil {
 		thumbnail = "data:image/png;base64," + base64.StdEncoding.EncodeToString(raw)
@@ -514,6 +545,7 @@ func readNotePackage(path string) (NotePackage, error) {
 		Fonts:     fonts,
 		Audios:    audios,
 		Videos:    videos,
+		Models:    models,
 		Thumbnail: thumbnail,
 		Warnings:  warnings,
 	}
@@ -636,6 +668,10 @@ func migrateDocument(doc *NoteDocument, fromVersion int) {
 		// v6 增加独立视频素材池和视频元素类型。
 		doc.Videos = []AssetMeta{}
 	}
+	if fromVersion < 7 && doc.Models == nil {
+		// v7 增加独立 3D 模型素材池和模型元素类型。
+		doc.Models = []AssetMeta{}
+	}
 	doc.FormatVersion = currentFormatVersion
 }
 
@@ -706,6 +742,10 @@ func detectAssetMimeType(name string, path string) string {
 		return "video/x-matroska"
 	case ".wmv":
 		return "video/x-ms-wmv"
+	case ".glb":
+		return "model/gltf-binary"
+	case ".gltf":
+		return "model/gltf+json"
 	default:
 		return "application/octet-stream"
 	}
@@ -751,6 +791,10 @@ func extensionForMimeType(mimeType string) string {
 		return ".mkv"
 	case "video/x-ms-wmv":
 		return ".wmv"
+	case "model/gltf-binary":
+		return ".glb"
+	case "model/gltf+json":
+		return ".gltf"
 	default:
 		return ".bin"
 	}
@@ -876,6 +920,11 @@ func renderPortableHTML(note NotePackage) string {
 			assetMap[video.ID] = video.DataURL
 		}
 	}
+	for _, model := range note.Models {
+		if model.DataURL != "" {
+			assetMap[model.ID] = model.DataURL
+		}
+	}
 	assetJSON, _ := json.Marshal(assetMap)
 	page := NotePage{Width: 794, Height: 1123, Background: "#fffdf7"}
 	if len(note.Document.Pages) > 0 {
@@ -962,6 +1011,13 @@ func renderPortableHTML(note NotePackage) string {
 				color = v
 			}
 			body.WriteString(`<div class="note-element tape" style="` + style + `background:` + html.EscapeString(color) + `"></div>`)
+		case "model":
+			modelAsset := findAssetMeta(note.Document.Models, el.AssetID)
+			label := modelAsset.Name
+			if label == "" {
+				label = "3D Model"
+			}
+			body.WriteString(`<div class="note-element model-placeholder" style="` + style + `background:linear-gradient(135deg,#e8e2d6,#d4cebc);border:2px solid #b8ae9c;display:grid;place-items:center;font-family:Inter,Segoe UI,sans-serif;font-size:14px;color:#6b6254">` + html.EscapeString(label) + `</div>`)
 		default:
 			body.WriteString(`<div class="note-element shape" style="` + style + `"></div>`)
 		}
@@ -1015,6 +1071,7 @@ func seedDocument(now string) NoteDocument {
 		Fonts:         []AssetMeta{},
 		Audios:        []AssetMeta{},
 		Videos:        []AssetMeta{},
+		Models:        []AssetMeta{},
 		Templates:     []TemplateDef{},
 	}
 }

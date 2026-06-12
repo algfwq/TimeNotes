@@ -46,6 +46,9 @@ export function SelectionController({
   const interactionStartDocumentRef = useRef(noteDocument);
   const editing = Boolean(selectedElementId && selectedElementId === editingElementId);
   const keepRatio = selectedElement?.type === 'image' || selectedElement?.type === 'sticker' || selectedElement?.type === 'video';
+  const isModel = selectedElement?.type === 'model';
+  const allowDrag = !editing && !isModel;
+  const allowTransform = !editing;
   const minSize = selectedElement?.type === 'audio' ? { width: 46, height: 46 } : selectedElement?.type === 'video' ? { width: 160, height: 90 } : { width: 1, height: 1 };
   const elementRatio = Number(selectedElement?.style?.aspectRatio ?? 0) || (selectedElement ? selectedElement.width / Math.max(1, selectedElement.height) : 1);
   const snapReferences = useMemo(
@@ -68,6 +71,14 @@ export function SelectionController({
     const frame = window.requestAnimationFrame(() => moveableRef.current?.updateRect?.());
     return () => window.cancelAnimationFrame(frame);
   }, [selectedElement, target, zoom]);
+
+  useEffect(() => {
+    const handle = () => {
+      moveableRef.current?.updateRect?.();
+    };
+    window.addEventListener('timenotes-moveable-update', handle);
+    return () => window.removeEventListener('timenotes-moveable-update', handle);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -184,9 +195,9 @@ export function SelectionController({
         container={paperRef.current?.parentElement ?? undefined}
         zoom={zoom}
         origin={false}
-        draggable={!editing}
-        resizable={!editing}
-        rotatable={!editing}
+        draggable={allowDrag}
+        resizable={allowTransform}
+        rotatable={allowTransform}
         snappable={interacting}
         snapThreshold={snapThreshold}
         snapRenderThreshold={snapThreshold}

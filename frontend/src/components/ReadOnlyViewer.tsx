@@ -10,6 +10,7 @@ import { resourceProgressKey, useResourceProgressMap } from '../providers/Resour
 import { PageBackground } from './PageBackground';
 import { AudioElement } from './elements/AudioElement';
 import { VideoElement } from './elements/VideoElement';
+import { ModelElement } from './elements/ModelElement';
 import { CodeBlockPreview } from './elements/CodeBlockElement';
 
 const defaultInlineCodeFontFamily = '"Cascadia Code", "Fira Code", Consolas, "SFMono-Regular", monospace';
@@ -27,6 +28,7 @@ export function ReadOnlyViewer() {
   const resourceProgress = useResourceProgressMap();
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const panStartRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  const sidesheetOpenRef = useRef(false);
 
   const [scale, setScale] = useState(0.8);
   const [fitScale, setFitScale] = useState(0.8);
@@ -81,6 +83,24 @@ export function ReadOnlyViewer() {
   }, [samplePage.height, samplePage.width, fitScale]);
 
   useEffect(() => {
+    const refresh = () => {
+      const node = window.document.querySelector<HTMLElement>('.semi-sidesheet');
+      if (!node) {
+        sidesheetOpenRef.current = false;
+        return;
+      }
+      const style = window.getComputedStyle(node);
+      const rect = node.getBoundingClientRect();
+      sidesheetOpenRef.current =
+        style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0 && (rect.width > 0 || rect.height > 0);
+    };
+    refresh();
+    const observer = new MutationObserver(refresh);
+    observer.observe(window.document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
     if (spreadIndex >= totalSpreads) {
       setSpreadIndex(Math.max(0, totalSpreads - 1));
     }
@@ -126,11 +146,13 @@ export function ReadOnlyViewer() {
   }, [goToSpread, spreadIndex]);
 
   const startPan = (e: ReactPointerEvent) => {
+    if (sidesheetOpenRef.current) return;
     e.preventDefault();
     panStartRef.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
   };
 
   const movePan = (e: ReactPointerEvent) => {
+    if (sidesheetOpenRef.current) return;
     if (!panStartRef.current) return;
     setPan({
       x: panStartRef.current.panX + e.clientX - panStartRef.current.x,
@@ -143,6 +165,7 @@ export function ReadOnlyViewer() {
   };
 
   const handleWheel = (e: ReactWheelEvent) => {
+    if (sidesheetOpenRef.current) return;
     e.preventDefault();
     setScale((s) => Number(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, s + (e.deltaY > 0 ? -0.06 : 0.06))).toFixed(2)));
   };
@@ -174,6 +197,7 @@ export function ReadOnlyViewer() {
         stickers={document.stickers}
         audios={document.audios}
         videos={document.videos}
+        models={document.models}
         resourceProgress={resourceProgress}
         getResourceAsset={getResourceAsset}
       />
@@ -292,6 +316,7 @@ function ReadOnlyPage({
   stickers,
   audios,
   videos,
+  models,
   resourceProgress,
   getResourceAsset,
 }: {
@@ -301,10 +326,11 @@ function ReadOnlyPage({
   stickers: AssetMeta[];
   audios: AssetMeta[];
   videos: AssetMeta[];
+  models: AssetMeta[];
   resourceProgress: Record<string, ResourceTransferProgress>;
   getResourceAsset: (id?: string) => AssetMeta | undefined;
 }) {
-  const elementAssets = [...assets, ...stickers, ...audios, ...videos];
+  const elementAssets = [...assets, ...stickers, ...audios, ...videos, ...models];
   return (
     <main className="relative overflow-hidden" style={{ width: page.width, height: page.height, background: page.background }}>
       <PageBackground page={page} assets={assets} />
@@ -468,6 +494,17 @@ function ReadOnlyElement({
     return (
       <div style={base}>
         <VideoElement element={element} asset={asset} progress={progress} readOnly />
+      </div>
+    );
+  }
+
+  if (element.type === 'model') {
+    const asset = mergeAssetWithCache(assets.find((item) => item.id === element.assetId), getResourceAsset(element.assetId));
+    const cachedAsset = getResourceAsset(element.assetId);
+    const progress = element.assetId ? resourceProgress[resourceProgressKey('models', element.assetId)] : undefined;
+    return (
+      <div style={base}>
+        <ModelElement element={element} asset={asset} progress={progress} readOnly cachedAsset={cachedAsset} />
       </div>
     );
   }

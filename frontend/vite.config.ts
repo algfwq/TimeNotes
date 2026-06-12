@@ -15,6 +15,7 @@ export default defineConfig({
           canvas: ["konva", "react-konva", "react-moveable"],
           editor: ["@tiptap/react", "@tiptap/starter-kit"],
           collaboration: ["yjs"],
+          threejs: ["three", "@react-three/fiber", "@react-three/drei"],
         },
       },
     },

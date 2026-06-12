@@ -10,6 +10,7 @@ type NotePackage struct {
 	Fonts     []AssetBlob   `json:"fonts"`
 	Audios    []AssetBlob   `json:"audios"`
 	Videos    []AssetBlob   `json:"videos"`
+	Models    []AssetBlob   `json:"models"`
 	Thumbnail string        `json:"thumbnail"`
 	Warnings  []ServiceNote `json:"warnings,omitempty"`
 }
@@ -28,6 +29,7 @@ type NoteManifest struct {
 	Fonts         []AssetMeta `json:"fonts"`
 	Audios        []AssetMeta `json:"audios"`
 	Videos        []AssetMeta `json:"videos"`
+	Models        []AssetMeta `json:"models"`
 }
 
 type NoteDocument struct {
@@ -44,6 +46,7 @@ type NoteDocument struct {
 	Fonts     []AssetMeta   `json:"fonts"`
 	Audios    []AssetMeta   `json:"audios"`
 	Videos    []AssetMeta   `json:"videos"`
+	Models    []AssetMeta   `json:"models"`
 	Templates []TemplateDef `json:"templates"`
 }
 

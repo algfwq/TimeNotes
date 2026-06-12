@@ -13,7 +13,7 @@ const elements: NoteElement[] = [];
 export function createSeedDocument(): NoteDocument {
   const now = new Date().toISOString();
   return {
-    formatVersion: 6,
+    formatVersion: 7,
     title: 'TimeNotes 手账',
     createdAt: now,
     updatedAt: now,
@@ -24,6 +24,7 @@ export function createSeedDocument(): NoteDocument {
     fonts: [],
     audios: [],
     videos: [],
+    models: [],
     templates: [],
   };
 }
