@@ -5,6 +5,7 @@ import { SideSheet } from '@douyinfe/semi-ui';
 import * as THREE from 'three';
 import type { AssetMeta, NoteElement, ResourceTransferProgress } from '../../types';
 import { assetDataUrl, mergeAssetWithCache } from '../../lib/files';
+import { useCollaboration } from '../../providers/CollaborationProvider';
 
 interface ModelElementProps {
   element: NoteElement;
@@ -19,12 +20,10 @@ export function ModelElement({ element, asset, progress, readOnly, cachedAsset }
   const src = useMemo(() => assetDataUrl(mergedAsset), [mergedAsset]);
   const [enlarged, setEnlarged] = useState(false);
   const [hovered, setHovered] = useState(false);
+  const { isConnected } = useCollaboration();
+  const isCollab = isConnected;
 
   const stopPointer = useCallback((event: React.SyntheticEvent) => {
-    event.stopPropagation();
-  }, []);
-
-  const stopWheel = useCallback((event: React.SyntheticEvent) => {
     event.stopPropagation();
   }, []);
 
@@ -61,18 +60,16 @@ export function ModelElement({ element, asset, progress, readOnly, cachedAsset }
     <>
       <div
         className="relative h-full w-full overflow-hidden rounded-[8px]"
-        data-model-interactive="true"
         onPointerEnter={() => setHovered(true)}
         onPointerLeave={() => setHovered(false)}
-        onPointerDown={stopPointer}
-        onWheel={stopWheel}
+        onWheel={stopPointer}
       >
         <div className="h-full w-full" style={{ pointerEvents: 'auto' }}>
           <Canvas
             camera={{ position: [3, 2, 5], fov: 45 }}
-            gl={{ antialias: true, alpha: true, preserveDrawingBuffer: false }}
+            gl={{ antialias: !isCollab, alpha: true, preserveDrawingBuffer: false, powerPreference: isCollab ? 'low-power' : 'high-performance' }}
             style={{ background: 'linear-gradient(135deg, #e8e2d6, #d9d3c7)' }}
-            dpr={[1, 1.5]}
+            dpr={isCollab ? 0.5 : [1, 2]}
           >
             <ambientLight intensity={0.6} />
             <directionalLight position={[5, 8, 5]} intensity={0.8} />
@@ -81,7 +78,7 @@ export function ModelElement({ element, asset, progress, readOnly, cachedAsset }
               <ModelScene src={src} />
             </Suspense>
             <OrbitControls
-              enableDamping
+              enableDamping={!isCollab}
               dampingFactor={0.08}
               minDistance={0.5}
               maxDistance={20}
@@ -92,7 +89,6 @@ export function ModelElement({ element, asset, progress, readOnly, cachedAsset }
         {hovered && (
           <button
             type="button"
-            data-model-interactive="true"
             className="absolute right-2 top-2 z-10 grid h-7 w-7 place-items-center rounded-full bg-black/40 text-white backdrop-blur-sm transition hover:bg-black/60"
             onPointerDown={stopPointer}
             onClick={(event) => {
@@ -182,8 +178,7 @@ function ModelViewerSideSheet({ visible, src, name, onClose }: { visible: boolea
             <SideSheetModelScene src={src} />
           </Suspense>
           <OrbitControls
-            enableDamping
-            dampingFactor={0.06}
+            enableDamping={false}
             minDistance={0.3}
             maxDistance={30}
             makeDefault

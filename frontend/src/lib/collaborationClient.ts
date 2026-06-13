@@ -667,17 +667,21 @@ export class CollaborationClient {
     }
   }
 
-  // 服务端已有快照时，先清理本地协作用的 snapshot/resources 槽位，避免旧本地文档再反向覆盖远端状态。
+  // 服务端已有快照时，清理其他客户端的协作用快照，但保留本地当前的 entry。
+  // 如果全部清空再应用服务端状态，会导致本地方主刚刚插入的元素/资源被"回滚"消失。
   private resetLocalCollaborationState() {
+    const localClientID = String(this.options.yDoc.clientID);
+    const localDocKey = collaborationDocumentKeyPrefix + localClientID;
     this.options.yDoc.transact(() => {
       const snapshots = this.options.yDoc.getMap('snapshot');
       Array.from(snapshots.keys()).forEach((key) => {
+        if (key === localDocKey) {
+          return;
+        }
         if (key === 'document' || key.startsWith(collaborationDocumentKeyPrefix)) {
           snapshots.delete(key);
         }
       });
-      const resources = this.options.yDoc.getMap('resources');
-      Array.from(resources.keys()).forEach((key) => resources.delete(key));
     }, remoteOrigin);
   }
 

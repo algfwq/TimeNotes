@@ -341,6 +341,7 @@ function stripDocumentForCollaboration(document: NoteDocument): NoteDocument {
     fonts: document.fonts.map(stripTransientAssetData),
     audios: document.audios.map(stripTransientAssetData),
     videos: document.videos.map(stripTransientAssetData),
+    models: document.models.map(stripTransientAssetData),
   };
 }
 
@@ -596,6 +597,22 @@ function syncResourcesToYjs(
         return;
       }
       const key = resourceKey(group, asset.id);
+      // 快速路径：资源是内容哈希命名的。如果 Yjs map 里已经有同 id + 同 hash + 同 size 的条目，
+      // 说明内容没变，直接跳过昂贵的 hydrate/compact（避免为大模型反复拼接数 MB data URL 阻塞主线程）。
+      const existingEntry = resourceMap.get(key);
+      if (
+        isResourceEntry(existingEntry) &&
+        existingEntry.asset?.id === asset.id &&
+        Boolean(asset.hash) &&
+        existingEntry.asset?.hash === asset.hash &&
+        existingEntry.asset?.size === asset.size
+      ) {
+        localKeys.add(key);
+        if (existingEntry.signature) {
+          signatures.set(key, existingEntry.signature);
+        }
+        return;
+      }
       const hydrated = hydrateResourceForSync(asset, cache);
       if (!hydrated.dataBase64 && !hydrated.dataUrl) {
         return;
@@ -863,16 +880,28 @@ function mergeCollaborationDocument(
     fonts: mergeAssetList(safeCurrent.fonts, normalizedIncoming.fonts),
     audios: mergeAssetList(safeCurrent.audios, normalizedIncoming.audios),
     videos: mergeAssetList(safeCurrent.videos, normalizedIncoming.videos),
+    models: mergeAssetList(safeCurrent.models, normalizedIncoming.models),
     pages: safeCurrent.pages.map((page) => (page.id === pageId ? incomingPage : page)),
-    elements: [
-      ...safeCurrent.elements.filter((element) => element.pageId !== pageId),
-      ...normalizedIncoming.elements.filter((element) => element.pageId === pageId),
-    ],
+    elements: mergePageElements(safeCurrent, normalizedIncoming, pageId),
   });
 }
 
 function clampNumber(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function mergePageElements(current: NoteDocument, incoming: NoteDocument, pageId: string): NoteElement[] {
+  const merged = new Map<string, NoteElement>();
+  current.elements.forEach((el) => {
+    if (el.pageId !== pageId) merged.set(el.id, el);
+  });
+  incoming.elements.forEach((el) => {
+    if (el.pageId === pageId) merged.set(el.id, el);
+  });
+  current.elements.forEach((el) => {
+    if (el.pageId === pageId && !merged.has(el.id)) merged.set(el.id, el);
+  });
+  return Array.from(merged.values());
 }
 
 function clampElementToPage(element: NoteElement, pages: NotePage[]): NoteElement {

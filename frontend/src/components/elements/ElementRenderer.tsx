@@ -221,6 +221,8 @@ function TextMoveHandle({
     const start = { x: event.clientX, y: event.clientY, elementX: element.x, elementY: element.y };
     const target = event.currentTarget.closest<HTMLElement>('[data-element-id]');
     let nextPosition = { x: element.x, y: element.y };
+    let lastMoveableUpdate = 0;
+    const moveableUpdateIntervalMs = 32;
     const move = (moveEvent: PointerEvent) => {
       nextPosition = {
         x: clamp(Math.round(start.elementX + (moveEvent.clientX - start.x) / zoom), 0, Math.max(0, page.width - element.width)),
@@ -230,7 +232,11 @@ function TextMoveHandle({
         target.style.left = `${nextPosition.x}px`;
         target.style.top = `${nextPosition.y}px`;
       }
-      window.dispatchEvent(new CustomEvent('timenotes-moveable-update'));
+      const now = performance.now();
+      if (now - lastMoveableUpdate >= moveableUpdateIntervalMs) {
+        lastMoveableUpdate = now;
+        window.dispatchEvent(new CustomEvent('timenotes-moveable-update'));
+      }
     };
     const end = () => {
       if (nextPosition.x !== element.x || nextPosition.y !== element.y) {
