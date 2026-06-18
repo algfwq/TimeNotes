@@ -349,6 +349,7 @@ function FlipSheet({
   const sheetW = flip.sheetFront?.width ?? flip.sheetBack?.width ?? sampleWidth;
   const sheetH = flip.sheetFront?.height ?? flip.sheetBack?.height ?? sampleHeight;
   const sheetLeft = isNext ? leftSlotWidth + spineWidth : 0;
+  const transformOrigin = isNext ? `${-spineWidth / 2}px center` : `calc(100% + ${spineWidth / 2}px) center`;
 
   const finish = useCallback(() => {
     if (doneRef.current) return;
@@ -375,7 +376,7 @@ function FlipSheet({
   return (
     <div
       className={`book-flip-sheet ${isNext ? 'book-flip-sheet--next' : 'book-flip-sheet--prev'}`}
-      style={{ left: sheetLeft, width: sheetW, height: sheetH, animationDuration: `${durationMs}ms` }}
+      style={{ left: sheetLeft, width: sheetW, height: sheetH, transformOrigin, animationDuration: `${durationMs}ms` }}
       onAnimationEnd={(event) => {
         if (event.animationName.startsWith('bookFlip')) finish();
       }}
