@@ -211,7 +211,7 @@ function TextMoveHandle({
   element: NoteElement;
   page: { width: number; height: number };
   zoom: number;
-  onMove: (id: string, patch: Partial<NoteElement>) => void;
+  onMove: (id: string, patch: Partial<NoteElement>, options?: { history?: boolean }) => void;
   onBegin: () => void;
 }) {
   const beginDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
@@ -221,8 +221,19 @@ function TextMoveHandle({
     const start = { x: event.clientX, y: event.clientY, elementX: element.x, elementY: element.y };
     const target = event.currentTarget.closest<HTMLElement>('[data-element-id]');
     let nextPosition = { x: element.x, y: element.y };
+    let liveTimer: number | undefined;
+    let lastLiveAt = 0;
     let lastMoveableUpdate = 0;
     const moveableUpdateIntervalMs = 32;
+
+    const flushLive = () => {
+      if (nextPosition.x === element.x && nextPosition.y === element.y) {
+        return;
+      }
+      lastLiveAt = performance.now();
+      onMove(element.id, nextPosition, { history: false });
+    };
+
     const move = (moveEvent: PointerEvent) => {
       nextPosition = {
         x: clamp(Math.round(start.elementX + (moveEvent.clientX - start.x) / zoom), 0, Math.max(0, page.width - element.width)),
@@ -232,6 +243,21 @@ function TextMoveHandle({
         target.style.left = `${nextPosition.x}px`;
         target.style.top = `${nextPosition.y}px`;
       }
+      // 每 ~120ms 同步一次位置到 Yjs，让协作者看见拖动过程。
+      const elapsed = performance.now() - lastLiveAt;
+      if (elapsed >= directDragLiveSyncIntervalMs) {
+        if (liveTimer) {
+          window.clearTimeout(liveTimer);
+          liveTimer = undefined;
+        }
+        flushLive();
+      } else if (!liveTimer) {
+        liveTimer = window.setTimeout(() => {
+          liveTimer = undefined;
+          flushLive();
+        }, directDragLiveSyncIntervalMs - elapsed);
+      }
+      // 保持 Moveable 辅助线更新频率（约 32ms）。
       const now = performance.now();
       if (now - lastMoveableUpdate >= moveableUpdateIntervalMs) {
         lastMoveableUpdate = now;
@@ -239,6 +265,10 @@ function TextMoveHandle({
       }
     };
     const end = () => {
+      if (liveTimer) {
+        window.clearTimeout(liveTimer);
+        liveTimer = undefined;
+      }
       if (nextPosition.x !== element.x || nextPosition.y !== element.y) {
         onMove(element.id, nextPosition);
       }
