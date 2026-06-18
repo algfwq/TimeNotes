@@ -17,10 +17,20 @@ const defaultInlineCodeFontFamily = '"Cascadia Code", "Fira Code", Consolas, "SF
 const SPINE_WIDTH = 40;
 const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 2.4;
+const FLIP_DURATION = 680;
 
 interface SpreadPages {
   left: NotePage | null;
   right: NotePage | null;
+}
+
+interface FlipState {
+  direction: 'next' | 'prev';
+  toIndex: number;
+  bgLeft: NotePage | null;
+  bgRight: NotePage | null;
+  sheetFront: NotePage | null;
+  sheetBack: NotePage | null;
 }
 
 export function ReadOnlyViewer() {
@@ -34,6 +44,7 @@ export function ReadOnlyViewer() {
   const [fitScale, setFitScale] = useState(0.8);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [spreadIndex, setSpreadIndex] = useState(0);
+  const [flip, setFlip] = useState<FlipState | null>(null);
 
   const firstPage = document.pages[0];
   const samplePage = firstPage ?? ({ width: 800, height: 1100 } as NotePage);
@@ -107,25 +118,56 @@ export function ReadOnlyViewer() {
   }, [totalSpreads, spreadIndex]);
 
   useEffect(() => {
+    if (flip) return;
     const idx = Math.max(0, document.pages.findIndex((p) => p.id === activePage.id));
     const even = document.pages.length % 2 === 0;
     const spread = idx < 0 ? 0 : even ? Math.floor(idx / 2) : Math.floor((idx + 1) / 2);
     if (spread !== spreadIndex) {
       setSpreadIndex(spread);
     }
-  }, [activePage.id, document.pages, spreadIndex]);
+  }, [activePage.id, document.pages, spreadIndex, flip]);
 
-  const goToSpread = useCallback(
+  const commitFlip = useCallback(
     (target: number) => {
-      if (target < 0 || target >= totalSpreads) return;
-      if (target === spreadIndex) return;
       const spread = getSpreadPages(target);
       const active = spread.right ?? spread.left;
       if (active) setActivePage(active.id);
       setSpreadIndex(target);
       setPan({ x: 0, y: 0 });
+      setFlip(null);
     },
-    [totalSpreads, spreadIndex, getSpreadPages, setActivePage],
+    [getSpreadPages, setActivePage],
+  );
+
+  const goToSpread = useCallback(
+    (target: number) => {
+      if (flip) return;
+      if (target < 0 || target >= totalSpreads) return;
+      if (target === spreadIndex) return;
+      const direction: FlipState['direction'] = target > spreadIndex ? 'next' : 'prev';
+      const from = getSpreadPages(spreadIndex);
+      const to = getSpreadPages(target);
+      setFlip(
+        direction === 'next'
+          ? {
+              direction,
+              toIndex: target,
+              bgLeft: from.left,
+              bgRight: to.right,
+              sheetFront: from.right,
+              sheetBack: to.left,
+            }
+          : {
+              direction,
+              toIndex: target,
+              bgLeft: to.left,
+              bgRight: from.right,
+              sheetFront: from.left,
+              sheetBack: to.right,
+            },
+      );
+    },
+    [flip, totalSpreads, spreadIndex, getSpreadPages],
   );
 
   useEffect(() => {
@@ -204,17 +246,19 @@ export function ReadOnlyViewer() {
     );
   };
 
-  const displayedLeft = currentSpread.left;
-  const displayedRight = currentSpread.right;
-  const firstIdx = displayedLeft ? document.pages.indexOf(displayedLeft) : displayedRight ? document.pages.indexOf(displayedRight) : -1;
-  const lastIdx = displayedRight ? document.pages.indexOf(displayedRight) : displayedLeft ? document.pages.indexOf(displayedLeft) : -1;
+  const displayedLeft = flip ? flip.bgLeft : currentSpread.left;
+  const displayedRight = flip ? flip.bgRight : currentSpread.right;
+  const firstIdx = currentSpread.left ? document.pages.indexOf(currentSpread.left) : currentSpread.right ? document.pages.indexOf(currentSpread.right) : -1;
+  const lastIdx = currentSpread.right ? document.pages.indexOf(currentSpread.right) : currentSpread.left ? document.pages.indexOf(currentSpread.left) : -1;
 
   const atStart = spreadIndex === 0;
   const atEnd = spreadIndex >= totalSpreads - 1;
 
+  const leftSlotWidth = displayedLeft?.width ?? samplePage.width;
+
   return (
-    <div ref={wrapRef} className="flex h-full min-h-0 flex-col" style={{ background: '#c4b998' }}>
-      <div className="flex min-h-12 shrink-0 flex-wrap items-center justify-between gap-3 border-b border-black/10 bg-white/70 px-4 py-2">
+    <div ref={wrapRef} className="reading-mode-stage flex h-full min-h-0 flex-col">
+      <div className="book-toolbar flex min-h-12 shrink-0 flex-wrap items-center justify-between gap-3 px-4 py-2">
         <div>
           <Typography.Text strong>{document.title}</Typography.Text>
           <span className="ml-3 text-xs text-black/45">
@@ -222,17 +266,18 @@ export function ReadOnlyViewer() {
           </span>
         </div>
         <div className="flex items-center gap-1">
-          <Button size="small" icon={<IconChevronLeft />} disabled={atStart} onClick={() => goToSpread(spreadIndex - 1)} />
+          <Button size="small" theme="borderless" icon={<IconChevronLeft />} disabled={atStart || Boolean(flip)} onClick={() => goToSpread(spreadIndex - 1)} />
           <span className="mx-1 min-w-[4ch] text-center text-xs text-black/55 tabular-nums">
             {spreadIndex + 1}/{totalSpreads}
           </span>
-          <Button size="small" icon={<IconChevronRight />} disabled={atEnd} onClick={() => goToSpread(spreadIndex + 1)} />
+          <Button size="small" theme="borderless" icon={<IconChevronRight />} disabled={atEnd || Boolean(flip)} onClick={() => goToSpread(spreadIndex + 1)} />
         </div>
         <div className="flex w-64 items-center gap-3">
           <span className="shrink-0 text-xs text-black/55">{Math.round(scale * 100)}%</span>
           <Slider value={scale * 100} min={25} max={240} step={5} onChange={(v) => setScale(Number(v) / 100)} />
           <Button
             size="small"
+            theme="borderless"
             icon={<IconRefresh />}
             onClick={() => {
               setScale(fitScale);
@@ -257,12 +302,91 @@ export function ReadOnlyViewer() {
             transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
           }}
         >
-          <div className="flex">
+          <div className="book-flip-perspective relative flex">
             <BookPageSlot page={displayedLeft} content={renderPageContent(displayedLeft)} defaultWidth={samplePage.width} defaultHeight={samplePage.height} />
             <div className="book-spine flex-shrink-0" style={{ width: SPINE_WIDTH }} />
             <BookPageSlot page={displayedRight} content={renderPageContent(displayedRight)} defaultWidth={samplePage.width} defaultHeight={samplePage.height} />
+            {flip ? (
+              <FlipSheet
+                flip={flip}
+                leftSlotWidth={leftSlotWidth}
+                spineWidth={SPINE_WIDTH}
+                sampleWidth={samplePage.width}
+                sampleHeight={samplePage.height}
+                durationMs={FLIP_DURATION}
+                renderContent={renderPageContent}
+                onDone={() => commitFlip(flip.toIndex)}
+              />
+            ) : null}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function FlipSheet({
+  flip,
+  leftSlotWidth,
+  spineWidth,
+  sampleWidth,
+  sampleHeight,
+  durationMs,
+  renderContent,
+  onDone,
+}: {
+  flip: FlipState;
+  leftSlotWidth: number;
+  spineWidth: number;
+  sampleWidth: number;
+  sampleHeight: number;
+  durationMs: number;
+  renderContent: (page: NotePage | null) => React.ReactNode;
+  onDone: () => void;
+}) {
+  const doneRef = useRef(false);
+  const isNext = flip.direction === 'next';
+  const sheetW = flip.sheetFront?.width ?? flip.sheetBack?.width ?? sampleWidth;
+  const sheetH = flip.sheetFront?.height ?? flip.sheetBack?.height ?? sampleHeight;
+  const sheetLeft = isNext ? leftSlotWidth + spineWidth : 0;
+
+  const finish = useCallback(() => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    onDone();
+  }, [onDone]);
+
+  useEffect(() => {
+    doneRef.current = false;
+    const timer = window.setTimeout(finish, durationMs + 160);
+    return () => window.clearTimeout(timer);
+  }, [finish, durationMs]);
+
+  const renderFace = (page: NotePage | null) =>
+    page ? renderContent(page) : <div className="book-blank-page" style={{ width: sheetW, height: sheetH, background: '#fffaf0' }}><BlankPageLines pageWidth={sheetW} pageHeight={sheetH} /></div>;
+
+  const frontShade = isNext
+    ? 'linear-gradient(90deg, rgba(0,0,0,0.34), rgba(0,0,0,0) 58%)'
+    : 'linear-gradient(270deg, rgba(0,0,0,0.34), rgba(0,0,0,0) 58%)';
+  const backShade = isNext
+    ? 'linear-gradient(270deg, rgba(0,0,0,0.30), rgba(0,0,0,0) 58%)'
+    : 'linear-gradient(90deg, rgba(0,0,0,0.30), rgba(0,0,0,0) 58%)';
+
+  return (
+    <div
+      className={`book-flip-sheet ${isNext ? 'book-flip-sheet--next' : 'book-flip-sheet--prev'}`}
+      style={{ left: sheetLeft, width: sheetW, height: sheetH, animationDuration: `${durationMs}ms` }}
+      onAnimationEnd={(event) => {
+        if (event.animationName.startsWith('bookFlip')) finish();
+      }}
+    >
+      <div className="book-flip-face book-flip-face--front" style={{ width: sheetW, height: sheetH }}>
+        {renderFace(flip.sheetFront)}
+        <div className="book-flip-shade book-flip-shade--out" style={{ backgroundImage: frontShade, animationDuration: `${durationMs}ms` }} />
+      </div>
+      <div className="book-flip-face book-flip-face--back" style={{ width: sheetW, height: sheetH }}>
+        {renderFace(flip.sheetBack)}
+        <div className="book-flip-shade book-flip-shade--in" style={{ backgroundImage: backShade, animationDuration: `${durationMs}ms` }} />
       </div>
     </div>
   );
@@ -282,10 +406,10 @@ function BookPageSlot({
   const w = page?.width ?? defaultWidth;
   const h = page?.height ?? defaultHeight;
   if (content) {
-    return <div className="shadow-page flex-shrink-0">{content}</div>;
+    return <div className="book-page shadow-page flex-shrink-0">{content}</div>;
   }
   return (
-    <div className="book-blank-page flex-shrink-0 shadow-page" style={{ width: w, height: h, background: '#fffaf0' }}>
+    <div className="book-page book-blank-page flex-shrink-0 shadow-page" style={{ width: w, height: h, background: '#fffaf0' }}>
       <BlankPageLines pageWidth={w} pageHeight={h} />
     </div>
   );
