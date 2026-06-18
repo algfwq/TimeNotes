@@ -32,6 +32,17 @@ html,
   overscroll-behavior: none;
 }
 
+/*
+ * 3D 模型内嵌画布处于 transform: scale(zoom) 的纸张坐标系内。
+ * react-three-fiber 用 getBoundingClientRect 测量得到的是已缩放尺寸，
+ * 再以内联 px 写回 canvas，导致被祖先 scale 二次缩放、缩到左上角。
+ * 强制画布始终铺满容器，规避这次内联尺寸带来的二次缩放。
+ */
+.timenotes-model-view canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
 body {
   min-width: 0;
   min-height: 100vh;

@@ -5,7 +5,6 @@ import { SideSheet } from '@douyinfe/semi-ui';
 import * as THREE from 'three';
 import type { AssetMeta, NoteElement, ResourceTransferProgress } from '../../types';
 import { assetDataUrl, mergeAssetWithCache } from '../../lib/files';
-import { useCollaboration } from '../../providers/CollaborationProvider';
 
 interface ModelElementProps {
   element: NoteElement;
@@ -20,8 +19,6 @@ export function ModelElement({ element, asset, progress, readOnly, cachedAsset }
   const src = useMemo(() => assetDataUrl(mergedAsset), [mergedAsset]);
   const [enlarged, setEnlarged] = useState(false);
   const [hovered, setHovered] = useState(false);
-  const { isConnected } = useCollaboration();
-  const isCollab = isConnected;
 
   const stopPointer = useCallback((event: React.SyntheticEvent) => {
     event.stopPropagation();
@@ -59,18 +56,18 @@ export function ModelElement({ element, asset, progress, readOnly, cachedAsset }
   return (
     <>
       <div
-        className="relative h-full w-full overflow-hidden rounded-[8px]"
+        className="timenotes-model-view relative h-full w-full overflow-hidden rounded-[8px]"
         onPointerEnter={() => setHovered(true)}
         onPointerLeave={() => setHovered(false)}
         onWheel={stopPointer}
       >
-        <div className="h-full w-full" style={{ pointerEvents: 'auto' }}>
-          <Canvas
-            camera={{ position: [3, 2, 5], fov: 45 }}
-            gl={{ antialias: !isCollab, alpha: true, preserveDrawingBuffer: false, powerPreference: isCollab ? 'low-power' : 'high-performance' }}
-            style={{ background: 'linear-gradient(135deg, #e8e2d6, #d9d3c7)' }}
-            dpr={isCollab ? 0.5 : [1, 2]}
-          >
+        <Canvas
+          flat
+          camera={{ position: [3, 2, 5], fov: 45 }}
+          gl={{ antialias: true, alpha: true, preserveDrawingBuffer: false, powerPreference: 'high-performance' }}
+          style={{ position: 'absolute', inset: 0, background: 'linear-gradient(135deg, #e8e2d6, #d9d3c7)' }}
+          dpr={[1, 2]}
+        >
             <ambientLight intensity={0.6} />
             <directionalLight position={[5, 8, 5]} intensity={0.8} />
             <directionalLight position={[-3, 2, -3]} intensity={0.3} />
@@ -78,14 +75,13 @@ export function ModelElement({ element, asset, progress, readOnly, cachedAsset }
               <ModelScene src={src} />
             </Suspense>
             <OrbitControls
-              enableDamping={!isCollab}
+              enableDamping={true}
               dampingFactor={0.08}
               minDistance={0.5}
               maxDistance={20}
               makeDefault
             />
           </Canvas>
-        </div>
         {hovered && (
           <button
             type="button"
@@ -163,11 +159,11 @@ function ModelViewerSideSheet({ visible, src, name, onClose }: { visible: boolea
       bodyStyle={{ padding: 0, height: '100%', display: 'flex', flexDirection: 'column' }}
       style={{ width: 'min(800px, 88vw)' }}
     >
-      <div className="min-h-0 flex-1" style={{ background: '#1a1a2e' }} onWheel={stopWheel}>
+      <div className="flex min-h-0 flex-1" style={{ background: '#1a1a2e' }} onWheel={stopWheel}>
         <Canvas
           camera={{ position: [4, 3, 6], fov: 40 }}
           gl={{ antialias: true, alpha: false, preserveDrawingBuffer: false }}
-          style={{ background: 'linear-gradient(135deg, #16213e 0%, #1a1a2e 50%, #0f3460 100%)' }}
+          style={{ flex: '1 1 auto', minWidth: 0, minHeight: 0, background: 'linear-gradient(135deg, #16213e 0%, #1a1a2e 50%, #0f3460 100%)' }}
           dpr={[1, 1.5]}
         >
           <ambientLight intensity={0.5} />
