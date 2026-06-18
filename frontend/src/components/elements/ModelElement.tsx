@@ -59,6 +59,7 @@ export function ModelElement({ element, asset, progress, readOnly, cachedAsset }
         className="timenotes-model-view relative h-full w-full overflow-hidden rounded-[8px]"
         onPointerEnter={() => setHovered(true)}
         onPointerLeave={() => setHovered(false)}
+        onPointerDown={stopPointer}
         onWheel={stopPointer}
       >
         <Canvas
