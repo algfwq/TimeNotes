@@ -10,6 +10,7 @@ import {
   type ResourceTransferInvalidation,
 } from './resourceTransferBus';
 import type { AssetMeta, ChatMessage, PresenceUser, ResourceGroup } from '../types';
+import { VoiceClient, type VoiceSignal, type VoiceState } from './voiceClient';
 
 type Transport = NonNullable<PresenceUser['transport']>;
 
@@ -96,6 +97,11 @@ interface FileResourceCompletePayload {
   relay?: boolean;
 }
 
+interface VoiceDataPayload {
+  chunkBase64?: string;
+  seq?: number;
+}
+
 interface JoinRequestPayload {
   requestId: string;
   user: PresenceUser;
@@ -123,6 +129,7 @@ interface CollaborationClientOptions {
   onKicked: (reason: string) => void;
   onRoomClosed: (message: string) => void;
   onError: (message: string) => void;
+  onVoiceState?: (state: VoiceState) => void;
 }
 
 interface PeerConnection {
@@ -143,7 +150,7 @@ interface IncomingFileTransfer {
 
 const remoteOrigin = 'timenotes-collaboration-remote';
 const resourceChunkOrigin = 'timenotes-resource-chunk';
-const dataChannelNames = ['doc', 'presence', 'chat', 'file'] as const;
+const dataChannelNames = ['doc', 'presence', 'chat', 'file', 'voice'] as const;
 type DataChannelName = (typeof dataChannelNames)[number];
 type RealtimeChannelName = Exclude<DataChannelName, 'file'>;
 const collaborationDocumentKeyPrefix = 'document:';
@@ -207,6 +214,7 @@ export class CollaborationClient {
   private p2pFileTransferActiveUntil = 0;
   private sendingFileTransfer = false;
   private closing = false;
+  private voiceClient: VoiceClient | null = null;
   private readonly onYUpdate: (update: Uint8Array, origin: unknown) => void;
   private readonly unsubscribeOutboundResourceTransfer: () => void;
   private readonly unsubscribeResourceTransferInvalidated: () => void;
@@ -251,6 +259,8 @@ export class CollaborationClient {
     });
     this.peers.clear();
     this.peerUsers.clear();
+    this.voiceClient?.destroy();
+    this.voiceClient = null;
     this.socket?.close();
     this.socket = undefined;
     this.options.onPeers([]);
@@ -301,6 +311,22 @@ export class CollaborationClient {
       return;
     }
     this.sendSocket(this.makeEnvelope('peer_kick', { clientId, reason }));
+  }
+
+  async startMic(): Promise<void> {
+    await this.voiceClient?.startMic();
+  }
+
+  stopMic(): void {
+    this.voiceClient?.stopMic();
+  }
+
+  async toggleMic(): Promise<void> {
+    await this.voiceClient?.toggleMic();
+  }
+
+  getVoiceState(): VoiceState | null {
+    return this.voiceClient?.state ?? null;
   }
 
   // WebSocket 是协作房间的控制面：首帧 auth 通过房间密钥鉴权，后续承载信令和中转包。
@@ -388,6 +414,19 @@ export class CollaborationClient {
       case 'pong':
         this.applyPong(env.payload as PongPayload);
         break;
+      case 'voice_signal':
+        if (env.from) {
+          void this.voiceClient?.handleVoiceSignal(env.from, env.payload as VoiceSignal);
+        }
+        break;
+      case 'voice_data':
+        this.handleVoiceDataRelay(env);
+        break;
+      case 'voice_ctrl':
+        if (env.from) {
+          this.voiceClient?.handleVoiceControl(env.from, (env.payload as { ctrl?: string })?.ctrl as 'stop');
+        }
+        break;
       case 'relay':
         this.handleRelay(env);
         break;
@@ -431,6 +470,7 @@ export class CollaborationClient {
     this.publishPresence();
     this.startPresenceHeartbeat();
     this.startLatencyProbe();
+    this.initVoiceClient();
     if (!hasStoredState) {
       this.sendFullStateUpdate();
       window.setTimeout(() => this.sendSnapshot(), 800);
@@ -1044,6 +1084,7 @@ export class CollaborationClient {
     this.emitPeers();
     if (isNewPeer) {
       announceResourceTransportReady();
+      this.voiceClient?.handlePeerConnected(peer.id);
       if (notify) {
         this.options.onPeerJoined(peer);
       }
@@ -1060,6 +1101,7 @@ export class CollaborationClient {
       this.peers.delete(peerID);
     }
     this.emitPeers();
+    this.voiceClient?.handlePeerDisconnected(peerID);
     if (leavingUser) {
       this.options.onPeerLeft({ ...leavingUser, transport: 'offline' });
     }
@@ -1123,6 +1165,10 @@ export class CollaborationClient {
     channel.onmessage = (event) => {
       if (label === 'file' && typeof event.data !== 'string') {
         void this.applyFileBinaryChunk(peer.id, event.data as ArrayBuffer | Blob);
+        return;
+      }
+      if (label === 'voice' && typeof event.data !== 'string') {
+        this.voiceClient?.handleVoiceChunk(peer.id, event.data as ArrayBuffer);
         return;
       }
       this.handleEnvelope(JSON.parse(String(event.data)), 'p2p');
@@ -1288,6 +1334,71 @@ export class CollaborationClient {
 
   private isP2PFileTransferActive() {
     return performance.now() < this.p2pFileTransferActiveUntil;
+  }
+
+  private initVoiceClient(): void {
+    if (this.voiceClient) {
+      this.voiceClient.destroy();
+    }
+    this.voiceClient = new VoiceClient({
+      iceServers: this.iceServers(),
+      sendSignal: (peerId, signal) => this.sendVoiceSignalEnvelope(peerId, signal),
+      sendRelayChunk: (chunk) => this.sendVoiceRelayChunk(chunk),
+      sendVoiceControl: (ctrl) => this.sendVoiceControlEnvelope(ctrl),
+      onChange: (state) => this.options.onVoiceState?.(state),
+    });
+    // 为已有对等方建立连接。
+    this.peerUsers.forEach((_, peerId) => {
+      this.voiceClient?.handlePeerConnected(peerId);
+    });
+  }
+
+  private sendVoiceSignalEnvelope(peerId: string, signal: VoiceSignal): void {
+    this.sendSocket(this.makeEnvelope('voice_signal', signal, peerId));
+  }
+
+  private sendVoiceRelayChunk(chunk: ArrayBuffer): void {
+    if (!this.connected) {
+      return;
+    }
+    // 优先 P2P voice DataChannel；失败时走 WebSocket relay。
+    if (!this.options.forceRelay && this.canSendToAllPeers('voice')) {
+      this.sendBinaryToAllPeers('voice', new Uint8Array(chunk));
+      // 同时 relay 一份给无法 P2P 的对等方。
+      const relayNeeded = this.needsRelay('voice');
+      if (relayNeeded) {
+        this.sendRelayEnvelope(
+          this.makeEnvelope('voice_data', { chunkBase64: bytesToBase64(new Uint8Array(chunk)) }),
+        );
+      }
+    } else {
+      this.sendRelayEnvelope(
+        this.makeEnvelope('voice_data', { chunkBase64: bytesToBase64(new Uint8Array(chunk)) }),
+      );
+    }
+  }
+
+  private handleVoiceDataRelay(env: Envelope): void {
+    const payload = env.payload as VoiceDataPayload;
+    if (!payload?.chunkBase64 || !env.from) {
+      return;
+    }
+    try {
+      const chunk = base64ToBytes(payload.chunkBase64);
+      this.voiceClient?.handleVoiceChunk(env.from, chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength) as ArrayBuffer);
+    } catch {
+      // 解码失败静默丢弃。
+    }
+  }
+
+  private sendVoiceControlEnvelope(ctrl: 'stop'): void {
+    if (!this.connected) {
+      return;
+    }
+    const env = this.makeEnvelope('voice_ctrl', { ctrl });
+    // 通过 voice DataChannel P2P 发送，同时 relay 一份。
+    this.sendToPeers('voice', env);
+    this.sendRelayEnvelope(env);
   }
 
   private clearTimers() {
@@ -1463,7 +1574,7 @@ function mergeIceServers(...groups: RTCIceServer[][]): RTCIceServer[] {
 
 // presence 通道可以丢包，文档、文件和聊天必须有序可靠。
 function channelOptions(name: DataChannelName): RTCDataChannelInit {
-  if (name === 'presence') {
+  if (name === 'presence' || name === 'voice') {
     return { ordered: false, maxRetransmits: 0 };
   }
   return { ordered: true };

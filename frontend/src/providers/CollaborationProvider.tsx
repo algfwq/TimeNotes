@@ -3,6 +3,7 @@ import { Modal, Notification, Toast } from '@douyinfe/semi-ui';
 import { CollaborationClient } from '../lib/collaborationClient';
 import { useDocument } from './DocumentProvider';
 import type { ChatMessage, PresenceUser } from '../types';
+import type { VoiceState } from '../lib/voiceClient';
 
 interface ConnectOptions {
   url: string;
@@ -35,6 +36,12 @@ interface CollaborationContextValue {
   kickPeer: (clientId: string) => void;
   updateCursor: (cursor?: CursorPosition | null) => void;
   setForceRelay: (forceRelay: boolean) => void;
+  // 语音相关
+  micEnabled: boolean;
+  isSpeaking: boolean;
+  speakingPeers: string[];
+  startMic: () => Promise<void>;
+  stopMic: () => void;
 }
 
 const CollaborationContext = createContext<CollaborationContextValue | null>(null);
@@ -56,6 +63,9 @@ export function CollaborationProvider({ children }: { children: React.ReactNode 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [latencyMs, setLatencyMs] = useState<number | undefined>();
   const [forceRelay, setForceRelayState] = useState(false);
+  const [micEnabled, setMicEnabled] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [speakingPeers, setSpeakingPeers] = useState<string[]>([]);
   const [localUser, setLocalUser] = useState<PresenceUser>(() => ({
     id: getLocalUserId(),
     name: '本机',
@@ -74,6 +84,9 @@ export function CollaborationProvider({ children }: { children: React.ReactNode 
     setMessages([]);
     setStatus('离线');
     setLatencyMs(undefined);
+    setMicEnabled(false);
+    setIsSpeaking(false);
+    setSpeakingPeers([]);
     setLocalUser((current) => ({ ...current, role: undefined, transport: 'offline' }));
     if (wasConnected && reason !== 'reconnect' && reason !== 'unmount' && reason !== 'room-closed') {
       Toast.warning(reason === 'tab-change' ? '已退出当前协作：协作只作用于发起联机的标签页。' : '已退出当前协作');
@@ -173,6 +186,11 @@ export function CollaborationProvider({ children }: { children: React.ReactNode 
           disconnect('room-closed');
         },
         onError: setStatus,
+        onVoiceState: (state: VoiceState) => {
+          setMicEnabled(state.micEnabled);
+          setIsSpeaking(state.isSpeaking);
+          setSpeakingPeers(state.speakingPeers);
+        },
       });
     },
     [activePageId, activeTabId, disconnect, editingElementId, forceRelay, localUser, selectedElementId, yDoc],
@@ -197,6 +215,18 @@ export function CollaborationProvider({ children }: { children: React.ReactNode 
     // 强制中转只影响 TimeNotes 应用层传输路径，不会把服务器伪装成浏览器 ICE TURN。
     setForceRelayState(nextForceRelay);
     clientRef.current?.setForceRelay(nextForceRelay);
+  }, []);
+
+  const startMic = useCallback(async () => {
+    await clientRef.current?.startMic();
+    setMicEnabled(true);
+  }, []);
+
+  const stopMic = useCallback(() => {
+    clientRef.current?.stopMic();
+    setMicEnabled(false);
+    setIsSpeaking(false);
+    setSpeakingPeers([]);
   }, []);
 
   useEffect(() => {
@@ -226,6 +256,11 @@ export function CollaborationProvider({ children }: { children: React.ReactNode 
         isConnected,
         isHost,
         canManagePages: isHost,
+        micEnabled,
+        isSpeaking,
+        speakingPeers,
+        startMic,
+        stopMic,
         connect,
         disconnect,
         sendChat,
@@ -234,7 +269,7 @@ export function CollaborationProvider({ children }: { children: React.ReactNode 
         setForceRelay,
       };
     },
-    [connect, disconnect, forceRelay, kickPeer, latencyMs, localUser, messages, peers, sendChat, setForceRelay, status, updateCursor],
+    [connect, disconnect, forceRelay, kickPeer, latencyMs, localUser, messages, peers, sendChat, setForceRelay, status, updateCursor, micEnabled, isSpeaking, speakingPeers, startMic, stopMic],
   );
 
   return <CollaborationContext.Provider value={value}>{children}</CollaborationContext.Provider>;

@@ -1,4 +1,5 @@
-import { Slider, Tag } from '@douyinfe/semi-ui';
+import { Slider, Tag, Button } from '@douyinfe/semi-ui';
+import { IconMicrophone, IconMicrophoneOff } from '@douyinfe/semi-icons';
 import { useCollaboration } from '../providers/CollaborationProvider';
 import { useDocument } from '../providers/DocumentProvider';
 import type { ToolMode } from '../types';
@@ -19,10 +20,19 @@ const toolLabels: Record<ToolMode, string> = {
 
 export function StatusBar() {
   const { document, selectedElementId, zoom, setZoom, tool, activePage } = useDocument();
-  const { status, peers, latencyMs, isConnected } = useCollaboration();
+  const { status, peers, latencyMs, isConnected, micEnabled, isSpeaking, speakingPeers, startMic, stopMic } = useCollaboration();
   const transport = !isConnected ? '离线' : peers.length === 0 ? '等待成员' : peers.some((peer) => peer.transport === 'p2p') ? 'P2P' : '中转';
   const latencyLabel = latencyMs === undefined ? '-- ms' : `${latencyMs} ms`;
   const latencyColor = latencyMs === undefined ? 'grey' : latencyMs < 80 ? 'green' : latencyMs < 180 ? 'orange' : 'red';
+
+  const handleToggleMic = () => {
+    if (micEnabled) {
+      stopMic();
+    } else {
+      void startMic();
+    }
+  };
+
   return (
     <div className="flex h-12 min-w-0 items-center justify-between gap-3 overflow-hidden px-4 text-xs text-black/58">
       <div className="flex min-w-0 items-center gap-3 overflow-hidden">
@@ -40,6 +50,31 @@ export function StatusBar() {
           延迟 {latencyLabel}
         </Tag>
         <span>{peers.length} 位协作者</span>
+        {isConnected && (
+          <>
+            <Button
+              size="small"
+              theme="borderless"
+              type={micEnabled ? 'primary' : 'tertiary'}
+              icon={micEnabled ? <IconMicrophone /> : <IconMicrophoneOff />}
+              onClick={handleToggleMic}
+              title={micEnabled ? '关闭麦克风' : '打开麦克风'}
+            />
+            {speakingPeers.map((peerId) => {
+              const peer = peers.find((p) => p.id === peerId);
+              return (
+                <Tag key={peerId} size="small" color="blue">
+                  {peer?.name || peerId.slice(-8)} 正在说话
+                </Tag>
+              );
+            })}
+            {isSpeaking && (
+              <Tag size="small" color="blue">
+                你正在说话
+              </Tag>
+            )}
+          </>
+        )}
       </div>
       <div className="flex w-64 shrink-0 items-center gap-3">
         <span className="shrink-0">缩放 {Math.round(zoom * 100)}%</span>
