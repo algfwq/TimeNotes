@@ -1341,6 +1341,7 @@ export class CollaborationClient {
       this.voiceClient.destroy();
     }
     this.voiceClient = new VoiceClient({
+      selfId: this.options.user.id,
       iceServers: this.iceServers(),
       sendSignal: (peerId, signal) => this.sendVoiceSignalEnvelope(peerId, signal),
       sendRelayChunk: (chunk) => this.sendVoiceRelayChunk(chunk),
