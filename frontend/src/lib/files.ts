@@ -95,7 +95,8 @@ export function isSupportedVideoFile(file: Pick<File, 'type' | 'name'>) {
 }
 
 export function isSupportedModelFile(file: Pick<File, 'type' | 'name'>) {
-  return file.type === 'model/gltf-binary' || file.type === 'model/gltf+json' || /\.(glb|gltf)$/i.test(file.name);
+  // 仅接受自包含的 GLB；.gltf 依赖外部 .bin/贴图，单文件导入无法解析。
+  return file.type === 'model/gltf-binary' || /\.glb$/i.test(file.name);
 }
 
 export function getImageIntrinsicSize(src: string): Promise<ImageIntrinsicSize> {

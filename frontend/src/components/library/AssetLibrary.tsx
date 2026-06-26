@@ -22,7 +22,7 @@ import { resourceProgressKey, useResourceProgressMap } from '../../providers/Res
 import { ImageCropModal } from '../ImageCropModal';
 import type { AssetMeta } from '../../types';
 
-const materialAccept = '.png,.jpg,.jpeg,.gif,.webp,.svg,.mp3,.m4a,.aac,.wav,.ogg,.oga,.flac,.webm,.mp4,.mov,.avi,.mkv,.wmv,.glb,.gltf,image/*,audio/*,video/*';
+const materialAccept = '.png,.jpg,.jpeg,.gif,.webp,.svg,.mp3,.m4a,.aac,.wav,.ogg,.oga,.flac,.webm,.mp4,.mov,.avi,.mkv,.wmv,.glb,image/*,audio/*,video/*';
 
 export function AssetLibrary() {
   const { document, addAsset, addAudio, addVideo, addModel, armPlacement, deleteAsset, deleteAudio, deleteVideo, deleteModel, replaceAsset, getResourceAsset } = useDocument();
@@ -102,7 +102,7 @@ export function AssetLibrary() {
   const importModelFile = useCallback(
     async (file: File) => {
       if (!isSupportedModelFile(file)) {
-        Toast.warning('请选择 GLB/GLTF 模型文件');
+        Toast.warning('请选择 GLB 模型文件');
         return;
       }
       const entry = { name: file.name, kind: 'model' as const };
