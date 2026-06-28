@@ -891,17 +891,10 @@ function clampNumber(value: number, min: number, max: number) {
 }
 
 function mergePageElements(current: NoteDocument, incoming: NoteDocument, pageId: string): NoteElement[] {
-  const merged = new Map<string, NoteElement>();
-  current.elements.forEach((el) => {
-    if (el.pageId !== pageId) merged.set(el.id, el);
-  });
-  incoming.elements.forEach((el) => {
-    if (el.pageId === pageId) merged.set(el.id, el);
-  });
-  current.elements.forEach((el) => {
-    if (el.pageId === pageId && !merged.has(el.id)) merged.set(el.id, el);
-  });
-  return Array.from(merged.values());
+  return [
+    ...current.elements.filter((element) => element.pageId !== pageId),
+    ...incoming.elements.filter((element) => element.pageId === pageId),
+  ];
 }
 
 function clampElementToPage(element: NoteElement, pages: NotePage[]): NoteElement {
