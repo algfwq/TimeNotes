@@ -34,8 +34,9 @@ const noteFilter = [{ DisplayName: 'TimeNotes 文件', Pattern: '*.tnote' }];
 
 export function TopBar() {
   const { document, activeTabMode, createPackage, loadPackage, createNewDocument, openReadTab, tool, setTool, undo, redo, canUndo, canRedo } = useDocument();
-  const [savePath, setSavePath] = useState('D:\\TimeNotes\\TimeNotes\\sample.tnote');
-  const [openPath, setOpenPath] = useState('D:\\TimeNotes\\TimeNotes\\sample.tnote');
+  const [savePath, setSavePath] = useState('sample.tnote');
+  const [openPath, setOpenPath] = useState('');
+  const [saveDirectoryTrusted, setSaveDirectoryTrusted] = useState(false);
   const [saveVisible, setSaveVisible] = useState(false);
   const [openVisible, setOpenVisible] = useState(false);
 
@@ -57,6 +58,8 @@ export function TopBar() {
     try {
       const note = await DocumentService.OpenNote(openPath);
       loadPackage(note as any, openPath);
+      setSavePath(openPath);
+      setSaveDirectoryTrusted(true);
       Toast.success('已打开 .tnote 文件');
       logFrontend('info', 'note_opened', { path: openPath });
       setOpenVisible(false);
@@ -88,12 +91,13 @@ export function TopBar() {
       const selected = await Dialogs.SaveFile({
         Title: '保存 TimeNotes 文件',
         Filename: fileNameFromPath(savePath) || 'sample.tnote',
-        Directory: directoryFromPath(savePath),
+        ...(saveDirectoryTrusted ? { Directory: directoryFromPath(savePath) } : {}),
         CanCreateDirectories: true,
         Filters: noteFilter,
       });
       if (selected) {
         setSavePath(selected.endsWith('.tnote') ? selected : `${selected}.tnote`);
+        setSaveDirectoryTrusted(true);
       }
     } catch (error) {
       Toast.warning('当前预览环境不可用系统文件对话框，请手动填写路径');
@@ -163,7 +167,10 @@ export function TopBar() {
         value={savePath}
         actionText="保存"
         onChoosePath={chooseSavePath}
-        onChange={setSavePath}
+        onChange={(value) => {
+          setSavePath(value);
+          setSaveDirectoryTrusted(false);
+        }}
         onCancel={() => setSaveVisible(false)}
         onOk={saveNote}
       />
