@@ -8,6 +8,7 @@ import {
   IconFile,
   IconFolderOpen,
   IconHandle,
+  IconHome,
   IconPlus,
   IconRedo,
   IconSave,
@@ -33,7 +34,7 @@ const toolItems: Array<{ key: ToolMode; label: string; icon: React.ReactNode }> 
 const noteFilter = [{ DisplayName: 'TimeNotes 文件', Pattern: '*.tnote' }];
 
 export function TopBar() {
-  const { document, activeTabMode, createPackage, loadPackage, createNewDocument, openReadTab, tool, setTool, undo, redo, canUndo, canRedo } = useDocument();
+  const { document, activeTabMode, activeTabId, tabs, createPackage, openNotebookPath, saveActiveTab, openHomeTab, openReadTab, tool, setTool, undo, redo, canUndo, canRedo } = useDocument();
   const [savePath, setSavePath] = useState('sample.tnote');
   const [openPath, setOpenPath] = useState('');
   const [saveDirectoryTrusted, setSaveDirectoryTrusted] = useState(false);
@@ -42,25 +43,27 @@ export function TopBar() {
 
   const updatedAt = useMemo(() => new Date(document.updatedAt).toLocaleString(), [document.updatedAt]);
 
-  const saveNote = async () => {
-    try {
-      await DocumentService.SaveNote(savePath, createPackage() as any);
-      Toast.success('已保存 .tnote 文件');
-      logFrontend('info', 'note_saved', { path: savePath });
-      setSaveVisible(false);
-    } catch (error) {
-      logFrontend('error', 'note_save_failed', { path: savePath, error: String(error) });
-      Toast.error(`保存失败：${String(error)}`);
+  const handleSaveOrSaveAs = async () => {
+    const activeTab = tabs.find((tab) => tab.id === activeTabId);
+    if (activeTab?.sourcePath && activeTab.mode === 'edit') {
+      // 已有路径，直接保存（和自动保存逻辑一致）。
+      try {
+        await saveActiveTab();
+        Toast.success('已保存');
+      } catch (error) {
+        Toast.error(`保存失败：${String(error)}`);
+      }
+    } else {
+      setSaveVisible(true);
     }
   };
 
   const openNote = async () => {
     try {
-      const note = await DocumentService.OpenNote(openPath);
-      loadPackage(note as any, openPath);
+      await openNotebookPath(openPath);
       setSavePath(openPath);
       setSaveDirectoryTrusted(true);
-      Toast.success('已打开 .tnote 文件');
+      Toast.success('已打开手账本');
       logFrontend('info', 'note_opened', { path: openPath });
       setOpenVisible(false);
     } catch (error) {
@@ -147,8 +150,8 @@ export function TopBar() {
             <Button icon={<IconRedo />} disabled={!canRedo || activeTabMode !== 'edit'} onClick={redo} />
           </Tooltip>
         </ButtonGroup>
-        <Button icon={<IconPlus />} onClick={createNewDocument}>
-          新建
+        <Button icon={<IconHome />} onClick={openHomeTab}>
+          首页
         </Button>
         <Button icon={<IconFolderOpen />} onClick={() => setOpenVisible(true)}>
           打开
@@ -156,7 +159,7 @@ export function TopBar() {
         <Button icon={<IconBookOpenStroked />} onClick={openReadTab}>
           阅读
         </Button>
-        <Button type="primary" theme="solid" icon={<IconSave />} disabled={activeTabMode !== 'edit'} onClick={() => setSaveVisible(true)}>
+        <Button type="primary" theme="solid" icon={<IconSave />} disabled={activeTabMode !== 'edit'} onClick={handleSaveOrSaveAs}>
           保存
         </Button>
       </Space>
@@ -172,7 +175,15 @@ export function TopBar() {
           setSaveDirectoryTrusted(false);
         }}
         onCancel={() => setSaveVisible(false)}
-        onOk={saveNote}
+        onOk={async () => {
+          try {
+            await DocumentService.SaveNote(savePath, createPackage() as any);
+            Toast.success('已保存');
+            setSaveVisible(false);
+          } catch (error) {
+            Toast.error(`保存失败：${String(error)}`);
+          }
+        }}
       />
       <PathModal
         title="打开 .tnote"

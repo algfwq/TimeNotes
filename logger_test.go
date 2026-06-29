@@ -58,3 +58,26 @@ func TestSetupLoggingRotatesLargeLog(t *testing.T) {
 		t.Fatalf("expected logger_after_rotate in new log")
 	}
 }
+
+func TestOpenLogFilesDoesNotUseWorkingDirectoryFallback(t *testing.T) {
+	t.Setenv("TIMENOTES_LOG_DIR", "")
+	cwd := t.TempDir()
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWd) })
+
+	files, paths := openLogFiles()
+	for _, file := range files {
+		defer file.Close()
+	}
+	for _, path := range paths {
+		if filepath.Dir(path) == cwd {
+			t.Fatalf("openLogFiles used cwd %q", cwd)
+		}
+	}
+}

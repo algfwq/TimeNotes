@@ -19,7 +19,7 @@ const toolLabels: Record<ToolMode, string> = {
 };
 
 export function StatusBar() {
-  const { document, selectedElementId, zoom, setZoom, tool, activePage } = useDocument();
+  const { document, selectedElementId, zoom, setZoom, tool, activePage, autoSaveState } = useDocument();
   const { status, peers, latencyMs, isConnected, micEnabled, isSpeaking, speakingPeers, startMic, stopMic } = useCollaboration();
   const transport = !isConnected ? '离线' : peers.length === 0 ? '等待成员' : peers.some((peer) => peer.transport === 'p2p') ? 'P2P' : '中转';
   const latencyLabel = latencyMs === undefined ? '-- ms' : `${latencyMs} ms`;
@@ -36,6 +36,11 @@ export function StatusBar() {
   return (
     <div className="flex h-12 min-w-0 items-center justify-between gap-3 overflow-hidden px-4 text-xs text-black/58">
       <div className="flex min-w-0 items-center gap-3 overflow-hidden">
+        {autoSaveState !== 'idle' ? (
+          <Tag size="small" color={autoSaveState === 'saving' ? 'blue' : autoSaveState === 'saved' ? 'green' : 'red'}>
+            {autoSaveState === 'saving' ? '自动保存中...' : autoSaveState === 'saved' ? '已自动保存' : '保存失败'}
+          </Tag>
+        ) : null}
         <span>{activePage.title}</span>
         <span>{document.elements.filter((element) => element.pageId === activePage.id).length} 个元素</span>
         <span className="truncate">{selectedElementId ? `选中 ${selectedElementId}` : '未选择元素'}</span>

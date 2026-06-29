@@ -25,9 +25,11 @@ export function CanvasStage() {
   const paperRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const panStartRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  const stageRef = useRef<Konva.Stage | null>(null);
   // 远端光标是 presence 状态，不进入文档；这里节流后交给 CollaborationProvider 广播。
   const lastCursorAtRef = useRef(0);
   const cursorInsidePageRef = useRef(false);
+
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [cropElementId, setCropElementId] = useState<string | null>(null);
@@ -265,6 +267,7 @@ export function CanvasStage() {
               onMouseDown={beginDrawing}
               onMouseMove={continueDrawing}
               onMouseUp={endDrawing}
+              stageRef={stageRef}
             />
             <PageRenderer page={activePage} elements={elements} onElementContextMenu={openElementContextMenu} />
             {/* 远端选择框和光标始终在最上层展示，但 pointer-events 关闭，不影响本地编辑。 */}
@@ -388,6 +391,7 @@ function DrawingLayer({
   onMouseDown,
   onMouseMove,
   onMouseUp,
+  stageRef,
 }: {
   page: NotePage;
   draft: { type: 'drawing' | 'tape'; points: number[] } | null;
@@ -396,10 +400,12 @@ function DrawingLayer({
   onMouseDown: (event: Konva.KonvaEventObject<MouseEvent>) => void;
   onMouseMove: (event: Konva.KonvaEventObject<MouseEvent>) => void;
   onMouseUp: () => void;
+  stageRef?: React.RefObject<Konva.Stage | null>;
 }) {
   // Stage 的尺寸使用未缩放页面尺寸，外层 DOM scale 统一处理视觉缩放。
   return (
     <Stage
+      ref={stageRef as any}
       className={`absolute inset-0 ${drawingEnabled ? 'z-[100500]' : 'z-[2]'}`}
       width={page.width}
       height={page.height}

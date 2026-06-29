@@ -2,11 +2,60 @@ package main
 
 import (
 	"archive/zip"
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestSaveNoteWritesValidZipPackage(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "valid.tnote")
+	note := (&DocumentService{}).NewDocument()
+	if err := (&DocumentService{}).SaveNote(path, note); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readNotePackage(path); err != nil {
+		t.Fatalf("saved package did not reopen: %v", err)
+	}
+}
+
+func TestSaveNoteFailureKeepsExistingPackage(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "keep-old.tnote")
+	service := &DocumentService{}
+	original := service.NewDocument()
+	original.Document.Title = "original"
+	if err := service.SaveNote(path, original); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	broken := service.NewDocument()
+	broken.Document.Title = "broken"
+	broken.Thumbnail = "data:image/png;base64,not-valid-base64"
+	if err := service.SaveNote(path, broken); err == nil {
+		t.Fatal("SaveNote succeeded with invalid thumbnail, want error")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("failed save changed existing package")
+	}
+	reopened, err := service.OpenNote(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened.Document.Title != "original" {
+		t.Fatalf("title = %q, want original", reopened.Document.Title)
+	}
+}
 
 func TestSaveAndOpenNotePackage(t *testing.T) {
 	tmp := t.TempDir()
@@ -281,17 +330,17 @@ func TestSaveAndOpenNotePackageKeepsVideoAssetAndMetadata(t *testing.T) {
 	videoHeight := 720.0
 	video := AssetBlob{
 		AssetMeta: AssetMeta{
-			ID:               "video-1",
-			Name:             "demo.mp4",
-			Hash:             "video-hash",
-			MimeType:         "video/mp4",
-			Size:             1024,
-			Path:             "videos/video-hash.mp4",
-			Duration:         &duration,
-			VideoWidth:       &videoWidth,
-			VideoHeight:      &videoHeight,
-			CoverMimeType:    "image/jpeg",
-			CoverDataBase64:  "/9j/4AAQ=",
+			ID:              "video-1",
+			Name:            "demo.mp4",
+			Hash:            "video-hash",
+			MimeType:        "video/mp4",
+			Size:            1024,
+			Path:            "videos/video-hash.mp4",
+			Duration:        &duration,
+			VideoWidth:      &videoWidth,
+			VideoHeight:     &videoHeight,
+			CoverMimeType:   "image/jpeg",
+			CoverDataBase64: "/9j/4AAQ=",
 		},
 		DataBase64: "AAAAIGZ0",
 	}

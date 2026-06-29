@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button, Input, Modal, Tooltip } from '@douyinfe/semi-ui';
-import { IconBookOpenStroked, IconClose, IconEdit, IconFile } from '@douyinfe/semi-icons';
+import { IconBookOpenStroked, IconClose, IconEdit, IconFile, IconHome } from '@douyinfe/semi-icons';
 import { useDocument } from '../providers/DocumentProvider';
 
 export function WorkspaceTabs() {
@@ -50,7 +50,7 @@ export function WorkspaceTabs() {
                 }
               }}
             >
-              {tab.mode === 'reader' ? <IconBookOpenStroked /> : <IconFile />}
+              {tab.mode === 'reader' ? <IconBookOpenStroked /> : tab.mode === 'home' ? <IconHome /> : <IconFile />}
               <span className="truncate">{tab.title}</span>
               {tabs.length > 1 ? (
                 <Tooltip content="关闭标签">

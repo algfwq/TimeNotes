@@ -5,11 +5,13 @@ import * as AssetService from "./assetservice.js";
 import * as DocumentService from "./documentservice.js";
 import * as ExportService from "./exportservice.js";
 import * as LogService from "./logservice.js";
+import * as NotebookService from "./notebookservice.js";
 export {
     AssetService,
     DocumentService,
     ExportService,
-    LogService
+    LogService,
+    NotebookService
 };
 
 export {
@@ -20,6 +22,7 @@ export {
     NoteManifest,
     NotePackage,
     NotePage,
+    NotebookMeta,
     ServiceNote,
     SystemFont,
     TemplateDef

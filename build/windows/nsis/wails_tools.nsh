@@ -203,12 +203,12 @@ RequestExecutionLevel "${REQUEST_EXECUTION_LEVEL}"
 
 !macro wails.associateFiles
     ; Create file associations
-    
+    !insertmacro APP_ASSOCIATE "tnote" "TimeNotes.tnote" "TimeNotes 手账本" "$INSTDIR\${PRODUCT_EXECUTABLE},0" "用 TimeNotes 打开" "$\"$INSTDIR\${PRODUCT_EXECUTABLE}$\" $\"%1$\""
 !macroend
 
 !macro wails.unassociateFiles
     ; Delete app associations
-    
+    !insertmacro APP_UNASSOCIATE "tnote" "TimeNotes.tnote"
 !macroend
 
 !macro CUSTOM_PROTOCOL_ASSOCIATE PROTOCOL DESCRIPTION ICON COMMAND

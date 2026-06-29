@@ -135,11 +135,8 @@ func openLogFiles() ([]*os.File, []string) {
 	if exePath := executablePath(); exePath != "" {
 		candidates = append(candidates, filepath.Dir(exePath))
 	}
-	if cwd := workingDirectory(); cwd != "" {
-		candidates = append(candidates, cwd)
-	}
 	if configDir, err := os.UserConfigDir(); err == nil {
-		candidates = append(candidates, filepath.Join(configDir, "TimeNotes"))
+		candidates = append(candidates, filepath.Join(configDir, "TimeNotes", "logs"))
 	}
 
 	seen := map[string]bool{}

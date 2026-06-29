@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import * as Y from 'yjs';
 import { DocumentService } from '../../bindings/changeme';
+import * as NotebookService from '../../bindings/changeme/notebookservice';
+import { Events } from '@wailsio/runtime';
 import { base64ByteLength, base64ToBytes, bytesToBase64, dataUrlToBase64 } from '../lib/base64';
 import { createId } from '../lib/ids';
 import { createSeedDocument } from '../data/seed';
@@ -64,7 +66,10 @@ interface DocumentContextValue {
   replaceDocument: (document: NoteDocument) => void;
   loadPackage: (note: NotePackage, sourcePath?: string) => void;
   createPackage: () => NotePackage;
+  openNotebookPath: (path: string) => Promise<void>;
+  saveActiveTab: () => Promise<void>;
   createNewDocument: () => Promise<void>;
+  openHomeTab: () => void;
   updateElement: (id: string, patch: Partial<NoteElement>, options?: DocumentUpdateOptions) => void;
   addElement: (type: ElementType, patch?: Partial<NoteElement>) => void;
   deleteElement: (id: string) => void;
@@ -91,6 +96,8 @@ interface DocumentContextValue {
   deleteModel: (id: string) => void;
   addFont: (font: AssetMeta) => void;
   getResourceAsset: (id?: string) => AssetMeta | undefined;
+  autoSaveState: 'idle' | 'saving' | 'saved' | 'error';
+  registerThumbnailCapture: (capture: (() => string | undefined) | null) => void;
 }
 
 const DocumentContext = createContext<DocumentContextValue | null>(null);
@@ -306,6 +313,31 @@ function cloneDocumentForHistory(document: NoteDocument) {
   };
 }
 
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(',')}]`;
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function documentSaveHash(document: NoteDocument): string {
+  const normalized = normalizeDocument(document);
+  return stableStringify({
+    ...normalized,
+    updatedAt: '',
+    assets: normalized.assets.map(stripTransientAssetData),
+    stickers: normalized.stickers.map(stripTransientAssetData),
+    fonts: normalized.fonts.map(stripTransientAssetData),
+    audios: normalized.audios.map(stripTransientAssetData),
+    videos: normalized.videos.map(stripTransientAssetData),
+    models: normalized.models.map(stripTransientAssetData),
+  });
+}
+
 function createTab(document: NoteDocument, mode: WorkspaceTabMode, sourcePath?: string): WorkspaceTab {
   const normalized = normalizeDocument(document);
   return {
@@ -316,6 +348,17 @@ function createTab(document: NoteDocument, mode: WorkspaceTabMode, sourcePath?: 
     activePageId: normalized.pages[0]?.id ?? 'page-1',
     sourcePath,
     history: { past: [], future: [] },
+    lastSavedHash: mode === 'edit' && sourcePath ? documentSaveHash(normalized) : undefined,
+  };
+}
+
+function createHomeTab(): WorkspaceTab {
+  return {
+    id: 'home',
+    title: '首页',
+    mode: 'home',
+    document: createSeedDocument(),
+    activePageId: 'page-1',
   };
 }
 
@@ -947,6 +990,11 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
   const resourceSyncSignaturesRef = useRef(new WeakMap<Y.Doc, Map<string, string>>());
   const deletedResourceKeysRef = useRef(new Set<string>());
   const deletedResourceTimesRef = useRef(new Map<string, string>());
+  // 第一页缩略图捕获回调，由 CanvasStage 注册。
+  const thumbnailCaptureRef = useRef<(() => string | undefined) | null>(null);
+  const registerThumbnailCapture = useCallback((capture: (() => string | undefined) | null) => {
+    thumbnailCaptureRef.current = capture;
+  }, []);
   // 下一次同步到 Yjs 时的作用域。页面内编辑尽量只广播 page scope，页面结构变化才升级为 document scope。
   const pendingCollaborationScopeRef = useRef<CollaborationSnapshotScope | undefined>();
   const activePageIdRef = useRef('');
@@ -970,7 +1018,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
     }
     return signatures;
   }, []);
-  const initialTab = useMemo(() => createTab(createSeedDocument(), 'edit'), []);
+	const initialTab = useMemo(() => createHomeTab(), []);
   // 多文档编辑由工作区标签维护；每个标签保存自己的文档快照和当前页。
   const [tabs, setTabs] = useState<WorkspaceTab[]>([initialTab]);
   const [activeTabId, setActiveTabId] = useState(initialTab.id);
@@ -981,6 +1029,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
   const [toolStyles, setToolStyles] = useState<ToolStyleState>(defaultToolStyles);
   const [pendingPlacement, setPendingPlacement] = useState<PendingPlacement | undefined>();
   const [resourceCacheVersion, setResourceCacheVersion] = useState(0);
+  const [autoSaveState, setAutoSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
   const activeTab = useMemo(() => tabs.find((tab) => tab.id === activeTabId) ?? tabs[0], [activeTabId, tabs]);
   const document = activeTab.document;
@@ -1318,10 +1367,180 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
     );
   }, []);
 
+  const createPackageForTab = useCallback((tab: WorkspaceTab): NotePackage => {
+    const tabYDoc = ensureTabYDoc(tab.id);
+    const update = Y.encodeStateAsUpdate(tabYDoc);
+    const now = new Date().toISOString();
+    const normalizedDocument = normalizeDocument({ ...tab.document, updatedAt: now });
+    return {
+      manifest: {
+        formatVersion: currentFormatVersion,
+        appVersion: currentAppVersion,
+        title: normalizedDocument.title,
+        createdAt: normalizedDocument.createdAt,
+        updatedAt: now,
+        documentPath: 'document.json',
+        yjsStatePath: 'yjs/update.bin',
+        assets: normalizedDocument.assets.map(stripTransientAssetData),
+        stickers: normalizedDocument.stickers.map(stripTransientAssetData),
+        fonts: normalizedDocument.fonts.map(stripTransientAssetData),
+        audios: normalizedDocument.audios.map(stripTransientAssetData),
+        videos: normalizedDocument.videos.map(stripTransientAssetData),
+        models: normalizedDocument.models.map(stripTransientAssetData),
+      },
+      document: {
+        ...normalizedDocument,
+        assets: normalizedDocument.assets.map(stripTransientAssetData),
+        stickers: normalizedDocument.stickers.map(stripTransientAssetData),
+        fonts: normalizedDocument.fonts.map(stripTransientAssetData),
+        audios: normalizedDocument.audios.map(stripTransientAssetData),
+        videos: normalizedDocument.videos.map(stripTransientAssetData),
+        models: normalizedDocument.models.map(stripTransientAssetData),
+      },
+      yjsState: bytesToBase64(update),
+      assets: normalizedDocument.assets,
+      stickers: normalizedDocument.stickers,
+      fonts: normalizedDocument.fonts,
+      audios: normalizedDocument.audios,
+      videos: normalizedDocument.videos,
+      models: normalizedDocument.models,
+      thumbnail: '',
+    };
+  }, [ensureTabYDoc]);
+
+  const markTabSaved = useCallback((tabId: string, hash: string) => {
+    setTabs((currentTabs) => currentTabs.map((tab) => (
+      tab.id === tabId ? { ...tab, lastSavedHash: hash, saveInProgress: false, pendingSave: false, lastSaveError: undefined } : tab
+    )));
+  }, []);
+
+  const markTabSaveFailed = useCallback((tabId: string, error: unknown) => {
+    setTabs((currentTabs) => currentTabs.map((tab) => (
+      tab.id === tabId ? { ...tab, saveInProgress: false, pendingSave: false, lastSaveError: String(error) } : tab
+    )));
+  }, []);
+
+  const saveTabIfDirty = useCallback(async (tab: WorkspaceTab, force = false) => {
+    if (tab.mode !== 'edit' || !tab.sourcePath) {
+      return false;
+    }
+    const hash = documentSaveHash(tab.document);
+    if (!force && tab.lastSavedHash === hash) {
+      return false;
+    }
+    setTabs((currentTabs) => currentTabs.map((current) => (
+      current.id === tab.id ? { ...current, saveInProgress: true, lastSaveError: undefined } : current
+    )));
+    try {
+      const note = createPackageForTab(tab);
+      await DocumentService.SaveNote(tab.sourcePath, note as any);
+      markTabSaved(tab.id, hash);
+      return true;
+    } catch (error) {
+      markTabSaveFailed(tab.id, error);
+      throw error;
+    }
+  }, [createPackageForTab, markTabSaveFailed, markTabSaved]);
+
+  const saveActiveTab = useCallback(async () => {
+    const active = tabs.find((tab) => tab.id === activeTabId);
+    if (!active || active.mode !== 'edit' || !active.sourcePath) {
+      return;
+    }
+    await saveTabIfDirty(active, true);
+  }, [activeTabId, saveTabIfDirty, tabs]);
+
+  const openNotebookPath = useCallback(async (path: string) => {
+    const trimmed = path.trim();
+    if (!trimmed) {
+      return;
+    }
+    const existingTab = tabs.find((tab) => tab.sourcePath === trimmed);
+    if (existingTab) {
+      switchTab(existingTab.id);
+      return;
+    }
+    const meta = await NotebookService.RegisterExternalNotebook(trimmed);
+    const existingAfterRegister = tabs.find((tab) => tab.sourcePath === meta.path);
+    if (existingAfterRegister) {
+      switchTab(existingAfterRegister.id);
+      return;
+    }
+    const note = (await NotebookService.OpenNotebook(meta.id)) as NotePackage;
+    const normalized = normalizeDocument(note.document, note.assets ?? [], note.stickers ?? [], note.fonts ?? [], note.audios ?? [], note.videos ?? [], note.models ?? []);
+    rememberResources(resourceCacheRef.current, normalized);
+    const tab = createTab(normalized, 'edit', meta.path);
+    const tabYDoc = new Y.Doc();
+    if (note.yjsState) {
+      try {
+        Y.applyUpdate(tabYDoc, base64ToBytes(note.yjsState));
+      } catch {
+        // document.json 是恢复源；Yjs update 损坏时不阻断用户打开文件。
+      }
+    }
+    tabYDocsRef.current.set(tab.id, tabYDoc);
+    setTabs((current) => [...current, tab]);
+    setActiveTabId(tab.id);
+    clearSelection();
+    setToolState('select');
+    setPendingPlacement(undefined);
+  }, [clearSelection, switchTab, tabs]);
+
+  // 自动保存：编辑手账本停止操作 5 秒后，仅在内容发生真实变更时静默落盘。
+  useEffect(() => {
+    const editTabs = tabs.filter((tab) => tab.mode === 'edit' && tab.sourcePath && tab.lastSavedHash !== documentSaveHash(tab.document));
+    if (editTabs.length === 0) {
+      return;
+    }
+    const autoSaveTimer = setTimeout(async () => {
+      setAutoSaveState('saving');
+      let hasError = false;
+      for (const tab of editTabs) {
+        try {
+          await saveTabIfDirty(tab);
+        } catch {
+          hasError = true;
+        }
+      }
+      setAutoSaveState(hasError ? 'error' : 'saved');
+      setTimeout(() => setAutoSaveState('idle'), 2000);
+    }, 5000);
+    return () => clearTimeout(autoSaveTimer);
+  }, [saveTabIfDirty, tabs]);
+
+  // 应用退出拦截：保存所有发生真实变更的手账本。
+  useEffect(() => {
+    const unsubscribe = Events.On('app:exit-requested', () => {
+      const dirtyTabs = tabs.filter((tab) => tab.mode === 'edit' && tab.sourcePath && tab.lastSavedHash !== documentSaveHash(tab.document));
+      if (dirtyTabs.length === 0) {
+        NotebookService.ConfirmAppQuit();
+        return;
+      }
+      (async () => {
+        setAutoSaveState('saving');
+        try {
+          for (const tab of dirtyTabs) {
+            await saveTabIfDirty(tab);
+          }
+          setAutoSaveState('saved');
+          NotebookService.ConfirmAppQuit();
+        } catch {
+          setAutoSaveState('error');
+        }
+      })();
+    });
+    return () => unsubscribe();
+  }, [saveTabIfDirty, tabs]);
+
   const closeTab = useCallback(
     (tabId: string) => {
       if (tabs.length <= 1) {
         return;
+      }
+      const closingTab = tabs.find((tab) => tab.id === tabId);
+      // 关闭编辑标签页前先自动保存发生真实变更的内容。
+      if (closingTab?.mode === 'edit' && closingTab.sourcePath) {
+        void saveTabIfDirty(closingTab).catch(() => {});
       }
       const index = tabs.findIndex((tab) => tab.id === tabId);
       const nextTabs = tabs.filter((tab) => tab.id !== tabId);
@@ -1337,7 +1556,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       clearSelection();
       setPendingPlacement(undefined);
     },
-    [activeTabId, clearSelection, tabs],
+    [activeTabId, clearSelection, saveTabIfDirty, tabs],
   );
 
   const replaceDocument = useCallback(
@@ -2130,6 +2349,20 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
     }
   }, [clearSelection, loadPackage]);
 
+  const openHomeTab = useCallback(() => {
+    const existing = tabs.find((tab) => tab.id === 'home');
+    if (existing) {
+      setActiveTabId('home');
+    } else {
+      const homeTab = createHomeTab();
+      setTabs((current) => [homeTab, ...current]);
+      setActiveTabId('home');
+    }
+    clearSelection();
+    setToolState('select');
+    setPendingPlacement(undefined);
+  }, [clearSelection, tabs]);
+
   const value = useMemo<DocumentContextValue>(
     () => ({
       tabs,
@@ -2174,7 +2407,10 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       replaceDocument,
       loadPackage,
       createPackage,
+      openNotebookPath,
+      saveActiveTab,
       createNewDocument,
+      openHomeTab,
       updateElement,
       addElement,
       deleteElement,
@@ -2201,6 +2437,8 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       deleteModel,
       addFont,
       getResourceAsset,
+      autoSaveState,
+      registerThumbnailCapture,
     }),
     [
       activePage,
@@ -2222,6 +2460,9 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       canUndo,
       createNewDocument,
       createPackage,
+      openNotebookPath,
+      saveActiveTab,
+      openHomeTab,
       deleteElement,
       deletePage,
       reorderPage,
@@ -2262,6 +2503,8 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       updatePage,
       updateToolStyle,
       zoom,
+      autoSaveState,
+      registerThumbnailCapture,
     ],
   );
 

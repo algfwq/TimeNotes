@@ -545,6 +545,71 @@ export class NotePage {
     }
 }
 
+export class NotebookMeta {
+    /**
+     * NotebookMeta 是主页手账本卡片的元数据，持久化在 notebooks.json 中。
+     * 封面同时存储在 .tnote 的 thumbnail.png 和此 JSON 里，互为备份。
+     */
+    "id": string;
+    "name": string;
+    "path": string;
+
+    /**
+     * true=托管在 notebooks/ 下，false=外部文件
+     */
+    "isManaged": boolean;
+
+    /**
+     * "default" 或 "custom"
+     */
+    "coverType": string;
+
+    /**
+     * base64 data URL（自定义封面或缓存的第一页缩略图）
+     */
+    "coverData": string;
+    "createdAt": string;
+    "updatedAt": string;
+
+    /** Creates a new NotebookMeta instance. */
+    constructor($$source: Partial<NotebookMeta> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("name" in $$source)) {
+            this["name"] = "";
+        }
+        if (!("path" in $$source)) {
+            this["path"] = "";
+        }
+        if (!("isManaged" in $$source)) {
+            this["isManaged"] = false;
+        }
+        if (!("coverType" in $$source)) {
+            this["coverType"] = "";
+        }
+        if (!("coverData" in $$source)) {
+            this["coverData"] = "";
+        }
+        if (!("createdAt" in $$source)) {
+            this["createdAt"] = "";
+        }
+        if (!("updatedAt" in $$source)) {
+            this["updatedAt"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new NotebookMeta instance from a string or object.
+     */
+    static createFrom($$source: any = {}): NotebookMeta {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new NotebookMeta($$parsedSource as Partial<NotebookMeta>);
+    }
+}
+
 export class ServiceNote {
     /**
      * ServiceNote 是非致命问题的提示，例如某个素材在包内丢失。

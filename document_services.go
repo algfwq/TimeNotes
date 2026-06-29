@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -33,6 +34,14 @@ type AssetService struct{}
 
 // ExportService 保留只读导出能力，后续若恢复按钮也不需要改动文档保存路径。
 type ExportService struct{}
+
+var noteSaveLocks sync.Map
+
+func noteSaveLock(path string) *sync.Mutex {
+	cleaned := filepath.Clean(path)
+	value, _ := noteSaveLocks.LoadOrStore(cleaned, &sync.Mutex{})
+	return value.(*sync.Mutex)
+}
 
 func (s *DocumentService) NewDocument() NotePackage {
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -67,6 +76,10 @@ func (s *DocumentService) SaveNote(path string, note NotePackage) error {
 	if strings.TrimSpace(path) == "" {
 		return errors.New("save path is required")
 	}
+	path = filepath.Clean(path)
+	lock := noteSaveLock(path)
+	lock.Lock()
+	defer lock.Unlock()
 	note.normalize()
 	if err := writeNotePackage(path, note); err != nil {
 		logEvent("error", "document_save_failed", map[string]interface{}{"path": path, "error": err.Error()})
@@ -391,18 +404,50 @@ func fontFamilyFromFileName(name string) string {
 }
 
 func writeNotePackage(path string, note NotePackage) error {
-	// 写包使用 zip.Writer 顺序写入 Manifest、文档 JSON、Yjs 状态和资源文件。
+	// 写包先落到同目录临时文件，校验成功后再替换目标文件，避免保存中断损坏旧包。
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	file, err := os.Create(path)
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	tmpPath := tmp.Name()
+	removeTmp := true
+	defer func() {
+		if removeTmp {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := writeNotePackageToFile(tmp, note); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := validateNotePackageFile(tmpPath); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	removeTmp = false
+	return nil
+}
 
+func writeNotePackageToFile(file *os.File, note NotePackage) error {
 	zw := zip.NewWriter(file)
-	defer zw.Close()
+	closed := false
+	defer func() {
+		if !closed {
+			_ = zw.Close()
+		}
+	}()
 
 	if err := writeJSON(zw, "manifest.json", note.Manifest); err != nil {
 		return err
@@ -450,11 +495,43 @@ func writeNotePackage(path string, note NotePackage) error {
 		}
 	}
 	if note.Thumbnail != "" {
-		if raw, err := decodeDataURL(note.Thumbnail); err == nil {
-			if err := writeFile(zw, "thumbnail.png", raw); err != nil {
-				return err
-			}
+		raw, err := decodeDataURL(note.Thumbnail)
+		if err != nil {
+			return fmt.Errorf("decode thumbnail: %w", err)
 		}
+		if err := writeFile(zw, "thumbnail.png", raw); err != nil {
+			return err
+		}
+	}
+	if err := zw.Close(); err != nil {
+		return err
+	}
+	closed = true
+	return nil
+}
+
+func validateNotePackageFile(path string) error {
+	reader, err := zip.OpenReader(path)
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+	hasManifest := false
+	hasDocument := false
+	for _, file := range reader.File {
+		name, err := safeArchiveName(file.Name)
+		if err != nil {
+			return err
+		}
+		switch name {
+		case "manifest.json":
+			hasManifest = true
+		case "document.json":
+			hasDocument = true
+		}
+	}
+	if !hasManifest || !hasDocument {
+		return errors.New("saved package is missing manifest.json or document.json")
 	}
 	return nil
 }

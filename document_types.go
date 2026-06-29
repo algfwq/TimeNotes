@@ -132,3 +132,21 @@ type ServiceNote struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
+
+type NotebookMeta struct {
+	// NotebookMeta 是主页手账本卡片的元数据，持久化在 notebooks.json 中。
+	// 封面同时存储在 .tnote 的 thumbnail.png 和此 JSON 里，互为备份。
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	IsManaged bool   `json:"isManaged"` // true=托管在 notebooks/ 下，false=外部文件
+	CoverType string `json:"coverType"` // "default" 或 "custom"
+	CoverData string `json:"coverData"` // base64 data URL（自定义封面或缓存的第一页缩略图）
+	CreatedAt string `json:"createdAt"`
+	UpdatedAt string `json:"updatedAt"`
+}
+
+type NotebookStore struct {
+	Notebooks []NotebookMeta `json:"notebooks"`
+	Version   int            `json:"version"`
+}

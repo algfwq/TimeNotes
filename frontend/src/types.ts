@@ -29,7 +29,7 @@ export interface NoteElement {
   points?: number[];
 }
 
-export type WorkspaceTabMode = 'edit' | 'reader';
+export type WorkspaceTabMode = 'edit' | 'reader' | 'home';
 
 export interface DocumentHistory {
   past: NoteDocument[];
@@ -44,6 +44,10 @@ export interface WorkspaceTab {
   activePageId: string;
   sourcePath?: string;
   history?: DocumentHistory;
+  lastSavedHash?: string;
+  saveInProgress?: boolean;
+  pendingSave?: boolean;
+  lastSaveError?: string;
 }
 
 export interface AssetMeta {
