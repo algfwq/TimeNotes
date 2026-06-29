@@ -34,6 +34,20 @@ tasks:
     cmds:
       - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
 
+  dev:mcp:
+    summary: Runs the application in development mode with MCP server enabled
+    env:
+      WAILS_MCP: "1"
+    cmds:
+      - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
+
+  build:mcp:
+    summary: Builds the application with MCP server enabled
+    env:
+      WAILS_MCP: "1"
+    cmds:
+      - task: "{{OS}}:build"
+
   setup:docker:
     summary: Builds Docker image for cross-compilation (~800MB download)
     cmds:
