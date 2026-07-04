@@ -65,6 +65,13 @@ export function ListNotebooks(): $CancellablePromise<$models.NotebookMeta[]> {
     });
 }
 
+/**
+ * OpenFileDirectory 在资源管理器中打开文件所在目录并选中该文件。
+ */
+export function OpenFileDirectory(path: string): $CancellablePromise<void> {
+    return $Call.ByID(4159059853, path);
+}
+
 export function OpenNotebook(id: string): $CancellablePromise<$models.NotePackage> {
     return $Call.ByID(929955393, id).then(($result: any) => {
         return $$createType2($result);

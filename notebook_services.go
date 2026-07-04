@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -693,9 +694,18 @@ func (s *NotebookService) ConfirmAppQuit() {
 	if mainApp != nil {
 		mainApp.Quit()
 	}
-}
+	}
 
-// ReadImageAsDataURL 读取本地图片文件，返回 data URL 供前端直接使用。
+	// OpenFileDirectory 在资源管理器中打开文件所在目录并选中该文件。
+	func (s *NotebookService) OpenFileDirectory(path string) error {
+		abs, err := filepath.Abs(filepath.Clean(path))
+		if err != nil {
+			return err
+		}
+		return openInExplorer(abs)
+	}
+
+	// ReadImageAsDataURL 读取本地图片文件，返回 data URL 供前端直接使用。
 func (s *NotebookService) ReadImageAsDataURL(path string) (string, error) {
 	raw, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
@@ -777,4 +787,8 @@ func writeThumbnailDataURL(base64Data string) string {
 		return ""
 	}
 	return "data:image/png;base64," + base64Data
+}
+
+func openInExplorer(path string) error {
+	return exec.Command("explorer", "/select,", path).Start()
 }

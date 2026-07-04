@@ -335,6 +335,13 @@ export function HomeWorkspace() {
                 onDelete={() => setDeleteTarget(meta)}
                 onBackup={() => handleBackup(meta)}
                 onChangeCover={() => handleChangeCover(meta)}
+                onOpenDir={async () => {
+                  try {
+                    await NotebookService.OpenFileDirectory(meta.path);
+                  } catch {
+                    Toast.error('无法打开文件目录');
+                  }
+                }}
               />
             ))}
           </div>
@@ -416,6 +423,7 @@ function NotebookCard({
   onDelete,
   onBackup,
   onChangeCover,
+  onOpenDir,
 }: {
   meta: NotebookMeta;
   onOpen: () => void;
@@ -423,6 +431,7 @@ function NotebookCard({
   onDelete: () => void;
   onBackup: () => void;
   onChangeCover: () => void;
+  onOpenDir: () => void;
 }) {
   const updatedAt = new Date(meta.updatedAt).toLocaleDateString('zh-CN', {
     year: 'numeric',
@@ -434,6 +443,7 @@ function NotebookCard({
     { node: 'item' as const, name: '重命名', icon: <IconEdit />, onClick: onRename },
     { node: 'item' as const, name: '更改封面', icon: <IconImage />, onClick: onChangeCover },
     { node: 'item' as const, name: '备份', icon: <IconDownload />, onClick: onBackup },
+    { node: 'item' as const, name: '打开文件目录', icon: <IconFolderOpen />, onClick: onOpenDir },
     { node: 'divider' as const },
     { node: 'item' as const, name: '删除', icon: <IconDelete />, type: 'danger' as const, onClick: onDelete },
   ];

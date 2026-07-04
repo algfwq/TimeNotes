@@ -1486,7 +1486,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
     setPendingPlacement(undefined);
   }, [clearSelection, switchTab, tabs]);
 
-  // 自动保存：编辑手账本停止操作 5 秒后，仅在内容发生真实变更时静默落盘。
+  // 自动保存：编辑手账本停止操作 2 秒后，仅在内容发生真实变更时静默落盘。
   useEffect(() => {
     const editTabs = tabs.filter((tab) => tab.mode === 'edit' && tab.sourcePath && tab.lastSavedHash !== documentSaveHash(tab.document));
     if (editTabs.length === 0) {
@@ -1504,7 +1504,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       }
       setAutoSaveState(hasError ? 'error' : 'saved');
       setTimeout(() => setAutoSaveState('idle'), 2000);
-    }, 5000);
+    }, 2000);
     return () => clearTimeout(autoSaveTimer);
   }, [saveTabIfDirty, tabs]);
 

@@ -5,8 +5,10 @@ import (
 	_ "embed"
 	"os"
 	"runtime/debug"
+	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
 // Wails 使用 embed 把 frontend/dist 打进最终二进制；生产包不会再依赖外部静态文件目录。
@@ -66,18 +68,29 @@ func main() {
 			// Wails 系统级错误不一定会传到前端，这里在后端直接记录。
 			logEvent("error", "wails_error", map[string]interface{}{"error": err.Error()})
 		},
-		ShouldQuit: func() bool {
-			if !pendingQuit {
-				pendingQuit = true
-				logEvent("info", "app_quit_requested", nil)
-				// 通知前端准备保存，前端完成后会调用 ConfirmQuit。
-				if mainWindow != nil {
-					mainWindow.EmitEvent("app:exit-requested")
+			ShouldQuit: func() bool {
+				if !pendingQuit {
+					// WindowClosing 钩子在 Windows 上先拦截；此回调主要用于
+					// macOS / Linux，以及前端 ConfirmAppQuit 后的二次确认。
+					pendingQuit = true
+					logEvent("info", "app_quit_requested", nil)
+					if mainWindow != nil {
+						mainWindow.EmitEvent("app:exit-requested")
+					}
+					go func() {
+						time.Sleep(5 * time.Second)
+						if pendingQuit && !quitConfirmed {
+							logEvent("warn", "app_quit_timeout_force", nil)
+							quitConfirmed = true
+							if mainApp != nil {
+								mainApp.Quit()
+							}
+						}
+					}()
+					return false
 				}
-				return false
-			}
-			return quitConfirmed
-		},
+				return quitConfirmed
+			},
 		Services: []application.Service{
 			application.NewService(&DocumentService{}),
 			application.NewService(&AssetService{}),
@@ -93,21 +106,47 @@ func main() {
 		},
 	})
 
-	// 主窗口只加载根路径，开发模式由 Wails 代理到 Vite，打包后由上面的 embed 文件系统提供资源。
-	mainApp = app
-	mainWindow = app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title: "TimeNotes",
-		Mac: application.MacWindow{
-			InvisibleTitleBarHeight: 50,
-			Backdrop:                application.MacBackdropTranslucent,
-			TitleBar:                application.MacTitleBarHiddenInset,
-		},
-		BackgroundColour: application.NewRGB(238, 234, 224),
-		URL:              "/",
-		EnableFileDrop:   true,
-			})
+		// 主窗口只加载根路径，开发模式由 Wails 代理到 Vite，打包后由上面的 embed 文件系统提供资源。
+		mainApp = app
+		mainWindow = app.Window.NewWithOptions(application.WebviewWindowOptions{
+			Title: "TimeNotes",
+			Mac: application.MacWindow{
+				InvisibleTitleBarHeight: 50,
+				Backdrop:                application.MacBackdropTranslucent,
+				TitleBar:                application.MacTitleBarHiddenInset,
+			},
+			BackgroundColour: application.NewRGB(238, 234, 224),
+			URL:              "/",
+			EnableFileDrop:   true,
+		})
 
-			// app.Run 会阻塞到窗口退出；这里统一记录无法启动或运行时崩溃的错误。
+		// 在 Windows 上 ShouldQuit 只在 destroy() 中调用（窗口已销毁后），
+		// 无法用于阻止关闭。改用 WindowClosing 钩子，在窗口关闭前拦截。
+		if wv, ok := mainWindow.(*application.WebviewWindow); ok {
+			wv.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {
+				if !pendingQuit {
+					pendingQuit = true
+					logEvent("info", "app_quit_requested", nil)
+					mainWindow.EmitEvent("app:exit-requested")
+					// 取消本次关闭，等前端保存完成后通过 ConfirmAppQuit 重新触发。
+					event.Cancel()
+					// 兜底：5 秒后如果前端未响应，取消 pending 并强制放行。
+					go func() {
+						time.Sleep(5 * time.Second)
+						if pendingQuit && !quitConfirmed {
+							logEvent("warn", "app_quit_timeout_force", nil)
+							pendingQuit = false
+							quitConfirmed = true
+							if mainApp != nil {
+								mainApp.Quit()
+							}
+						}
+					}()
+				}
+			})
+		}
+
+		// app.Run 会阻塞到窗口退出；这里统一记录无法启动或运行时崩溃的错误。
 		err := app.Run()
 
 	if err != nil {
