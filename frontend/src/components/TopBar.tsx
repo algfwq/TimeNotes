@@ -118,7 +118,7 @@ export function TopBar() {
         </div>
       </div>
 
-      <Space className="min-w-0 max-w-full flex-1 overflow-x-auto">
+      <div className="flex min-w-0 flex-1 justify-center overflow-x-auto px-2">
         <ButtonGroup>
           {toolItems.map((item) => (
             <Tooltip key={item.key} content={item.label}>
@@ -139,9 +139,9 @@ export function TopBar() {
             </Tooltip>
           ))}
         </ButtonGroup>
-      </Space>
+      </div>
 
-      <Space className="ml-auto shrink-0">
+      <Space className="shrink-0">
         <ButtonGroup>
           <Tooltip content="撤销">
             <Button icon={<IconUndo />} disabled={!canUndo || activeTabMode !== 'edit'} onClick={undo} />
