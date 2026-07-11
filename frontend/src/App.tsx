@@ -13,20 +13,32 @@ function getSystemTheme(): 'light' | 'dark' {
 }
 
 function App() {
-  const [theme, setTheme] = useState<'light' | 'dark'>(getSystemTheme);
+  const [theme] = useState<'light' | 'dark'>(() => getSystemTheme());
   useBrowserPageZoomGuard();
 
-  // 监听 macOS 系统外观变化 (深色/浅色模式)
+  // macOS 深色模式：通过 body class 控制 Semi Design 主题
   useEffect(() => {
+    const applyTheme = (t: 'light' | 'dark') => {
+      if (t === 'dark') {
+        document.body.classList.add('semi-always-dark');
+      } else {
+        document.body.classList.remove('semi-always-dark');
+      }
+    };
+
+    applyTheme(theme);
+
+    // 监听 macOS 系统外观变化
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
     const handleChange = (event: MediaQueryListEvent) => {
-      setTheme(event.matches ? 'dark' : 'light');
+      applyTheme(event.matches ? 'dark' : 'light');
     };
     mediaQuery.addEventListener('change', handleChange);
 
-    // 支持 macOS 菜单栏手动切换深色模式
+    // macOS 菜单栏手动切换 (Cmd+Shift+D)
     const handleToggleTheme = () => {
-      setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+      const isDark = !document.body.classList.contains('semi-always-dark');
+      applyTheme(isDark ? 'dark' : 'light');
     };
     window.addEventListener('timenotes:toggle-theme', handleToggleTheme);
 
@@ -34,10 +46,10 @@ function App() {
       mediaQuery.removeEventListener('change', handleChange);
       window.removeEventListener('timenotes:toggle-theme', handleToggleTheme);
     };
-  }, []);
+  }, [theme]);
 
   return (
-    <ConfigProvider locale={zhCN} mode={theme}>
+    <ConfigProvider locale={zhCN}>
       <DocumentProvider>
         <CollaborationProvider>
           <AppShell />

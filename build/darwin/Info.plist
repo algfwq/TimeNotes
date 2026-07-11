@@ -42,6 +42,9 @@
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
+		<!-- 联机协作需要 HTTP/WS 连接到任意地址的 TimeNotesServer -->
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
 	</dict>
 
 	<key>NSHumanReadableCopyright</key>

@@ -543,7 +543,7 @@ function DefaultCoverPreview({ meta }: { meta: NotebookMeta }) {
           useCORS: true,
           allowTaint: true,
           backgroundColor: '#fffaf0',
-        });
+        } as any);
         if (!cancelled) {
           setPreview(canvas.toDataURL('image/png'));
         }
