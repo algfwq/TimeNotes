@@ -18,3 +18,4 @@ coverage/
 dist/
 build/linux/appimage/build/
 build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
+build/android/.gradle/

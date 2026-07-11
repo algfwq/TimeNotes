@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import html2canvas from 'html2canvas';
 import { Button, Dropdown, Input, Modal, Toast } from '@douyinfe/semi-ui';
 import {
+  IconCloud,
   IconDelete,
   IconDownload,
   IconEdit,
@@ -19,6 +20,15 @@ import { logFrontend } from '../lib/logger';
 import { useDocument } from '../providers/DocumentProvider';
 import { assetDataUrl } from '../lib/files';
 import type { NoteElement, NotePackage } from '../types';
+import { BlogConnectModal } from './BlogConnectModal';
+import {
+  loadBlogConnection,
+  loadBlogSyncMap,
+  updateNotebookOnBlog,
+  uploadNotebookToBlog,
+  type BlogConnection,
+  type BlogSyncEntry,
+} from '../lib/blogClient';
 
 const noteFilter = [{ DisplayName: 'TimeNotes 文件', Pattern: '*.tnote' }];
 
@@ -32,6 +42,9 @@ export function HomeWorkspace() {
   const [renameName, setRenameName] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<NotebookMeta | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [blogConnectVisible, setBlogConnectVisible] = useState(false);
+  const [blogConn, setBlogConn] = useState<BlogConnection | null>(null);
+  const [blogSync, setBlogSync] = useState<Record<string, BlogSyncEntry>>({});
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   const loadNotebooks = useCallback(async () => {
@@ -48,6 +61,31 @@ export function HomeWorkspace() {
   useEffect(() => {
     loadNotebooks();
   }, [loadNotebooks]);
+
+  useEffect(() => {
+    void loadBlogConnection().then(setBlogConn);
+    void loadBlogSyncMap().then(setBlogSync);
+  }, []);
+
+  const refreshBlogSync = useCallback(async () => {
+    setBlogSync(await loadBlogSyncMap());
+  }, []);
+
+  const handleUploadBlog = useCallback(async (meta: NotebookMeta) => {
+    try {
+      const existing = blogSync[meta.id];
+      if (existing?.remoteId) {
+        await updateNotebookOnBlog(meta.id, existing.remoteId);
+        Toast.success('已更新到 Blog');
+      } else {
+        await uploadNotebookToBlog(meta.id);
+        Toast.success('已上传到 Blog');
+      }
+      await refreshBlogSync();
+    } catch (error) {
+      Toast.error(`Blog 同步失败：${String(error)}`);
+    }
+  }, [blogSync, refreshBlogSync]);
 
   // 检查启动时命令行传入的 .tnote 文件路径。
   useEffect(() => {
@@ -266,12 +304,25 @@ export function HomeWorkspace() {
 
       <div className="mx-auto max-w-6xl px-6 py-10">
         {/* 标题区域 */}
-        <div className="mb-8 flex items-center gap-3">
-          <IconHome size="extra-large" className="text-[#2f6fed]" />
-          <div>
-            <h1 className="text-2xl font-bold text-ink">手账本</h1>
-            <p className="mt-1 text-sm text-black/45">管理、创建和打开你的 TimeNotes 手账本</p>
+        <div className="mb-8 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <IconHome size="extra-large" className="text-[#2f6fed]" />
+            <div>
+              <h1 className="text-2xl font-bold text-ink">手账本</h1>
+              <p className="mt-1 text-sm text-black/45">
+                管理、创建和打开你的 TimeNotes 手账本
+                {blogConn?.url ? ` · 已连接 ${blogConn.url}` : ''}
+              </p>
+            </div>
           </div>
+          <Button
+            icon={<IconCloud />}
+            theme={blogConn?.token ? 'solid' : 'light'}
+            type="primary"
+            onClick={() => setBlogConnectVisible(true)}
+          >
+            {blogConn?.token ? 'Blog 已连接' : '连接到 Blog'}
+          </Button>
         </div>
 
         {loading ? (
@@ -327,6 +378,7 @@ export function HomeWorkspace() {
               <NotebookCard
                 key={meta.id}
                 meta={meta}
+                cloudLinked={Boolean(blogSync[meta.id]?.remoteId)}
                 onOpen={() => handleOpen(meta)}
                 onRename={() => {
                   setRenameTarget(meta);
@@ -335,6 +387,7 @@ export function HomeWorkspace() {
                 onDelete={() => setDeleteTarget(meta)}
                 onBackup={() => handleBackup(meta)}
                 onChangeCover={() => handleChangeCover(meta)}
+                onUploadBlog={() => handleUploadBlog(meta)}
                 onOpenDir={async () => {
                   try {
                     await NotebookService.OpenFileDirectory(meta.path);
@@ -410,27 +463,40 @@ export function HomeWorkspace() {
         <p>
           确定要删除手账本「{deleteTarget?.name}」吗？
           {deleteTarget?.isManaged ? '本地文件也将被删除。' : '仅从列表中移除，不会删除文件。'}
+          {deleteTarget && blogSync[deleteTarget.id]?.remoteId
+            ? ' 已上云的 Blog 副本不会被删除。'
+            : ''}
         </p>
       </Modal>
+
+      <BlogConnectModal
+        visible={blogConnectVisible}
+        onClose={() => setBlogConnectVisible(false)}
+        onConnected={(conn) => setBlogConn(conn)}
+      />
     </div>
   );
 }
 
 function NotebookCard({
   meta,
+  cloudLinked,
   onOpen,
   onRename,
   onDelete,
   onBackup,
   onChangeCover,
+  onUploadBlog,
   onOpenDir,
 }: {
   meta: NotebookMeta;
+  cloudLinked: boolean;
   onOpen: () => void;
   onRename: () => void;
   onDelete: () => void;
   onBackup: () => void;
   onChangeCover: () => void;
+  onUploadBlog: () => void;
   onOpenDir: () => void;
 }) {
   const updatedAt = new Date(meta.updatedAt).toLocaleDateString('zh-CN', {
@@ -443,6 +509,12 @@ function NotebookCard({
     { node: 'item' as const, name: '重命名', icon: <IconEdit />, onClick: onRename },
     { node: 'item' as const, name: '更改封面', icon: <IconImage />, onClick: onChangeCover },
     { node: 'item' as const, name: '备份', icon: <IconDownload />, onClick: onBackup },
+    {
+      node: 'item' as const,
+      name: cloudLinked ? '更新到 Blog' : '上传到 Blog',
+      icon: <IconCloud />,
+      onClick: onUploadBlog,
+    },
     { node: 'item' as const, name: '打开文件目录', icon: <IconFolderOpen />, onClick: onOpenDir },
     { node: 'divider' as const },
     { node: 'item' as const, name: '删除', icon: <IconDelete />, type: 'danger' as const, onClick: onDelete },
@@ -473,11 +545,22 @@ function NotebookCard({
             <div className="truncate text-sm font-medium text-ink">{meta.name}</div>
             <div className="mt-0.5 text-xs text-black/40">{updatedAt}</div>
           </div>
-          {!meta.isManaged ? (
-            <span className="shrink-0 rounded-full bg-[#f2cf72]/20 px-2 py-0.5 text-[11px] text-[#9b8422]">
-              外部
-            </span>
-          ) : null}
+          <div className="flex shrink-0 items-center gap-1">
+            {cloudLinked ? (
+              <span
+                className="inline-flex items-center gap-1 rounded-full bg-[#2f6fed]/12 px-2 py-0.5 text-[11px] text-[#2f6fed]"
+                title="已上云"
+              >
+                <IconCloud size="small" />
+                上云
+              </span>
+            ) : null}
+            {!meta.isManaged ? (
+              <span className="rounded-full bg-[#f2cf72]/20 px-2 py-0.5 text-[11px] text-[#9b8422]">
+                外部
+              </span>
+            ) : null}
+          </div>
         </div>
       </button>
 
