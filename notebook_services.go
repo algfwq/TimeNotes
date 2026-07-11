@@ -662,6 +662,36 @@ func writeThumbnailToNote(path string, coverData string) error {
 	return writeNotePackage(path, note)
 }
 
+// ensureNotebookPackageThumbnail 保证 .tnote 内含 thumbnail.*。
+// 若包内缺失但元数据已有自定义封面，则把 CoverData 回写进包，避免 Blog 上传因 thumbnail_required 失败。
+func ensureNotebookPackageThumbnail(meta NotebookMeta) error {
+	path := strings.TrimSpace(meta.Path)
+	if path == "" {
+		return errors.New("notebook path is empty")
+	}
+	lock := noteSaveLock(path)
+	lock.Lock()
+	defer lock.Unlock()
+
+	note, err := readNotePackage(path)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(note.Thumbnail) != "" {
+		return nil
+	}
+	coverData := strings.TrimSpace(meta.CoverData)
+	if coverData == "" || meta.CoverType != "custom" {
+		return errors.New("thumbnail_required")
+	}
+	if _, err := decodeDataURL(coverData); err != nil {
+		return fmt.Errorf("invalid cover data: %w", err)
+	}
+	note.Thumbnail = coverData
+	note.normalize()
+	return writeNotePackage(path, note)
+}
+
 // safeFileName 将名称清理为合法的文件名。
 func safeFileName(name string) string {
 	// 替换 Windows 文件名非法字符。

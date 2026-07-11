@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
@@ -40,8 +42,11 @@ type blogConnectionConfig struct {
 	Token            string `json:"token"`
 	ExpiresAt        int64  `json:"expiresAt"`
 	RememberPassword bool   `json:"rememberPassword"`
-	Password         string `json:"password,omitempty"`
-	UpdatedAt        string `json:"updatedAt"`
+	// Password is never stored in plaintext. When rememberPassword is true the
+	// encrypted payload is kept in PasswordEnc instead.
+	Password    string `json:"password,omitempty"`
+	PasswordEnc string `json:"passwordEnc,omitempty"`
+	UpdatedAt   string `json:"updatedAt"`
 }
 
 type blogSyncEntry struct {
@@ -74,12 +79,50 @@ func loadBlogConnection() (blogConnectionConfig, error) {
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return cfg, err
 	}
+	// Decrypt for in-process consumers; never leave a plaintext password on disk.
+	if cfg.PasswordEnc != "" {
+		plain, decErr := decryptSecret(cfg.PasswordEnc)
+		if decErr == nil {
+			cfg.Password = plain
+		} else {
+			cfg.Password = ""
+		}
+	} else if cfg.Password != "" {
+		// Migrate legacy plaintext password on next save.
+		if enc, encErr := encryptSecret(cfg.Password); encErr == nil {
+			cfg.PasswordEnc = enc
+			cfg.Password = ""
+			_ = saveBlogConnection(cfg)
+			cfg.Password, _ = decryptSecret(cfg.PasswordEnc)
+		}
+	}
 	return cfg, nil
 }
 
 func saveBlogConnection(cfg blogConnectionConfig) error {
 	if err := os.MkdirAll(notebooksConfigDir(), 0o755); err != nil {
 		return err
+	}
+	if !cfg.RememberPassword {
+		cfg.Password = ""
+		cfg.PasswordEnc = ""
+	} else if strings.TrimSpace(cfg.Password) != "" {
+		enc, err := encryptSecret(cfg.Password)
+		if err != nil {
+			return err
+		}
+		cfg.PasswordEnc = enc
+		cfg.Password = ""
+	} else {
+		// Keep existing encrypted password if caller omitted plaintext.
+		existing, err := os.ReadFile(blogConnectionPath())
+		if err == nil {
+			var prev blogConnectionConfig
+			if json.Unmarshal(existing, &prev) == nil && prev.PasswordEnc != "" {
+				cfg.PasswordEnc = prev.PasswordEnc
+			}
+		}
+		cfg.Password = ""
 	}
 	cfg.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	raw, err := json.MarshalIndent(cfg, "", "  ")
@@ -152,11 +195,19 @@ func isAllowedBridgeOrigin(origin string) bool {
 	if strings.HasPrefix(o, "wails://") || strings.HasPrefix(o, "file://") {
 		return true
 	}
-	if strings.HasPrefix(o, "http://127.0.0.1:") || strings.HasPrefix(o, "http://localhost:") ||
-		strings.HasPrefix(o, "https://127.0.0.1:") || strings.HasPrefix(o, "https://localhost:") {
+	u, err := url.Parse(o)
+	if err != nil {
+		return false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "localhost" || host == "wails.localhost" || strings.HasSuffix(host, ".wails.localhost") {
 		return true
 	}
-	return false
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func startBlogBridge() (*blogBridgeServer, error) {
@@ -193,27 +244,34 @@ func startBlogBridge() (*blogBridgeServer, error) {
 			return
 		}
 		switch r.Method {
-		case http.MethodGet:
-			cfg, err := loadBlogConnection()
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			writeJSONResponse(w, cfg)
-		case http.MethodPost:
-			var cfg blogConnectionConfig
-			if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
-				http.Error(w, "bad json", http.StatusBadRequest)
-				return
-			}
-			if !cfg.RememberPassword {
-				cfg.Password = ""
-			}
-			if err := saveBlogConnection(cfg); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			writeJSONResponse(w, map[string]any{"ok": true})
+case http.MethodGet:
+				cfg, err := loadBlogConnection()
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				// Return decrypted password only to the local desktop UI over loopback.
+				// PasswordEnc is omitted from the response to avoid leaking ciphertext unnecessarily.
+				writeJSONResponse(w, map[string]any{
+					"url":              cfg.URL,
+					"username":         cfg.Username,
+					"token":            cfg.Token,
+					"expiresAt":        cfg.ExpiresAt,
+					"rememberPassword": cfg.RememberPassword,
+					"password":         cfg.Password,
+					"updatedAt":        cfg.UpdatedAt,
+				})
+case http.MethodPost:
+				var cfg blogConnectionConfig
+				if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+					http.Error(w, "bad json", http.StatusBadRequest)
+					return
+				}
+				if err := saveBlogConnection(cfg); err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				writeJSONResponse(w, map[string]any{"ok": true})
 		case http.MethodDelete:
 			_ = os.Remove(blogConnectionPath())
 			writeJSONResponse(w, map[string]any{"ok": true})
@@ -294,24 +352,33 @@ func startBlogBridge() (*blogBridgeServer, error) {
 				break
 			}
 		}
-		if meta == nil {
-			http.Error(w, "notebook not found", http.StatusNotFound)
-			return
-		}
-		raw, err := os.ReadFile(meta.Path)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		writeJSONResponse(w, map[string]any{
-			"id":       meta.ID,
-			"name":     meta.Name,
-			"path":     meta.Path,
-			"filename": filepath.Base(meta.Path),
-			"size":     len(raw),
-			"dataBase64": encodeBase64(raw),
-		})
-	}))
+if meta == nil {
+				http.Error(w, "notebook not found", http.StatusNotFound)
+				return
+			}
+			// Blog 要求归档含 thumbnail.*。若普通保存曾清空包内封面，用元数据 CoverData 先回写。
+			if err := ensureNotebookPackageThumbnail(*meta); err != nil {
+				if strings.Contains(err.Error(), "thumbnail_required") {
+					http.Error(w, "open the notebook in TimeNotes to generate a cover, then upload again", http.StatusBadRequest)
+					return
+				}
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			raw, err := os.ReadFile(meta.Path)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeJSONResponse(w, map[string]any{
+				"id":       meta.ID,
+				"name":     meta.Name,
+				"path":     meta.Path,
+				"filename": filepath.Base(meta.Path),
+				"size":     len(raw),
+				"dataBase64": encodeBase64(raw),
+			})
+		}))
 
 	mux.HandleFunc("/api/blog-bridge/capabilities", withCORS(func(w http.ResponseWriter, r *http.Request) {
 		if !isLoopbackRequest(r) {
@@ -463,10 +530,18 @@ func startBlogBridge() (*blogBridgeServer, error) {
 			UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano),
 		}
 		_ = saveBlogSync(store)
+		// Emit in both shapes: some Wails listeners receive the payload object directly,
+		// others receive an event wrapper. HomeWorkspace accepts Args/args.
+		payload := map[string]any{
+			"Args": []string{meta.Path},
+			"args": []string{meta.Path},
+			"path": meta.Path,
+			"id":   meta.ID,
+		}
 		if mainWindow != nil {
-			mainWindow.EmitEvent("app:file-open-requested", map[string]any{
-				"Args": []string{meta.Path},
-			})
+			mainWindow.EmitEvent("app:file-open-requested", payload)
+			mainWindow.Restore()
+			mainWindow.Focus()
 		}
 		writeJSONResponse(w, map[string]any{"ok": true, "path": meta.Path, "id": meta.ID, "remoteId": cap.NoteID})
 	}))
@@ -566,4 +641,81 @@ func writeJSONResponse(w http.ResponseWriter, v any) {
 
 func encodeBase64(raw []byte) string {
 	return base64.StdEncoding.EncodeToString(raw)
+}
+
+func secretKeyPath() string {
+	return filepath.Join(notebooksConfigDir(), "blog-secret.key")
+}
+
+func loadOrCreateSecretKey() ([]byte, error) {
+	path := secretKeyPath()
+	if raw, err := os.ReadFile(path); err == nil && len(raw) == 32 {
+		return raw, nil
+	}
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(path, key, 0o600); err != nil {
+		return nil, err
+	}
+	return key, nil
+}
+
+func encryptSecret(plain string) (string, error) {
+	if plain == "" {
+		return "", nil
+	}
+	key, err := loadOrCreateSecretKey()
+	if err != nil {
+		return "", err
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return "", err
+	}
+	out := gcm.Seal(nonce, nonce, []byte(plain), nil)
+	return base64.StdEncoding.EncodeToString(out), nil
+}
+
+func decryptSecret(enc string) (string, error) {
+	if strings.TrimSpace(enc) == "" {
+		return "", nil
+	}
+	key, err := loadOrCreateSecretKey()
+	if err != nil {
+		return "", err
+	}
+	raw, err := base64.StdEncoding.DecodeString(enc)
+	if err != nil {
+		return "", err
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+	if len(raw) < gcm.NonceSize() {
+		return "", fmt.Errorf("ciphertext too short")
+	}
+	nonce, ciphertext := raw[:gcm.NonceSize()], raw[gcm.NonceSize():]
+	plain, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return "", err
+	}
+	return string(plain), nil
 }

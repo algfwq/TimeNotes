@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,6 +56,54 @@ func TestSaveNoteFailureKeepsExistingPackage(t *testing.T) {
 	if reopened.Document.Title != "original" {
 		t.Fatalf("title = %q, want original", reopened.Document.Title)
 	}
+}
+
+func TestSaveNotePreservesExistingThumbnailWhenEmpty(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "keep-thumb.tnote")
+	service := &DocumentService{}
+
+	// 1x1 PNG
+	pngRaw := []byte{
+		0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+		0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+		0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00,
+		0x0C, 0x49, 0x44, 0x41, 0x54, 0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00,
+		0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x05, 0xFE, 0xD4, 0xEF, 0x00, 0x00,
+		0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+	}
+	withThumb := service.NewDocument()
+	withThumb.Document.Title = "with-thumb"
+	withThumb.Thumbnail = "data:image/png;base64," + encodeBase64ForTest(pngRaw)
+	if err := service.SaveNote(path, withThumb); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate frontend createPackage: empty thumbnail on subsequent saves.
+	withoutThumb := service.NewDocument()
+	withoutThumb.Document.Title = "updated-title"
+	withoutThumb.Thumbnail = ""
+	if err := service.SaveNote(path, withoutThumb); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := service.OpenNote(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened.Document.Title != "updated-title" {
+		t.Fatalf("title = %q, want updated-title", reopened.Document.Title)
+	}
+	if strings.TrimSpace(reopened.Thumbnail) == "" {
+		t.Fatal("thumbnail was cleared by SaveNote with empty thumbnail")
+	}
+	if !strings.Contains(reopened.Thumbnail, "image/png") {
+		t.Fatalf("thumbnail mime unexpected: %q", reopened.Thumbnail)
+	}
+}
+
+func encodeBase64ForTest(raw []byte) string {
+	return base64.StdEncoding.EncodeToString(raw)
 }
 
 func TestSaveAndOpenNotePackage(t *testing.T) {

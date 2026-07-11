@@ -81,6 +81,13 @@ func (s *DocumentService) SaveNote(path string, note NotePackage) error {
 	lock.Lock()
 	defer lock.Unlock()
 	note.normalize()
+	// createPackage 目前会传空 thumbnail；若包内已有封面，保存时必须保留，
+	// 否则自定义封面/Blog 上传所需的 thumbnail.* 会在每次普通保存后丢失。
+	if strings.TrimSpace(note.Thumbnail) == "" {
+		if existing, err := readNotePackage(path); err == nil && strings.TrimSpace(existing.Thumbnail) != "" {
+			note.Thumbnail = existing.Thumbnail
+		}
+	}
 	if err := writeNotePackage(path, note); err != nil {
 		logEvent("error", "document_save_failed", map[string]interface{}{"path": path, "error": err.Error()})
 		return err
@@ -499,7 +506,8 @@ func writeNotePackageToFile(file *os.File, note NotePackage) error {
 		if err != nil {
 			return fmt.Errorf("decode thumbnail: %w", err)
 		}
-		if err := writeFile(zw, "thumbnail.png", raw); err != nil {
+		entryName := thumbnailArchiveName(note.Thumbnail, raw)
+		if err := writeFile(zw, entryName, raw); err != nil {
 			return err
 		}
 	}
@@ -609,8 +617,14 @@ func readNotePackage(path string) (NotePackage, error) {
 	warnings = append(warnings, videoWarnings...)
 	warnings = append(warnings, modelWarnings...)
 	thumbnail := ""
-	if raw, err := readFile(files, "thumbnail.png"); err == nil {
-		thumbnail = "data:image/png;base64," + base64.StdEncoding.EncodeToString(raw)
+	for _, name := range []string{"thumbnail.png", "thumbnail.jpg", "thumbnail.jpeg", "thumbnail.webp", "thumbnail.gif"} {
+		raw, err := readFile(files, name)
+		if err != nil {
+			continue
+		}
+		mime := thumbnailMIMEFromName(name)
+		thumbnail = "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(raw)
+		break
 	}
 
 	note := NotePackage{
@@ -884,6 +898,56 @@ func decodeDataURL(value string) ([]byte, error) {
 		return nil, errors.New("invalid data URL")
 	}
 	return base64.StdEncoding.DecodeString(parts[1])
+}
+
+func thumbnailArchiveName(dataURL string, raw []byte) string {
+	mime := ""
+	if strings.HasPrefix(dataURL, "data:") {
+		header := strings.SplitN(strings.TrimPrefix(dataURL, "data:"), ";", 2)[0]
+		mime = strings.ToLower(strings.TrimSpace(header))
+	}
+	if mime == "" {
+		mime = detectImageMIME(raw)
+	}
+	switch mime {
+	case "image/jpeg":
+		return "thumbnail.jpg"
+	case "image/webp":
+		return "thumbnail.webp"
+	case "image/gif":
+		return "thumbnail.gif"
+	default:
+		return "thumbnail.png"
+	}
+}
+
+func thumbnailMIMEFromName(name string) string {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".webp":
+		return "image/webp"
+	case ".gif":
+		return "image/gif"
+	default:
+		return "image/png"
+	}
+}
+
+func detectImageMIME(raw []byte) string {
+	if len(raw) >= 8 && bytes.HasPrefix(raw, []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}) {
+		return "image/png"
+	}
+	if len(raw) >= 3 && bytes.HasPrefix(raw, []byte{0xFF, 0xD8, 0xFF}) {
+		return "image/jpeg"
+	}
+	if len(raw) >= 6 && (bytes.HasPrefix(raw, []byte("GIF87a")) || bytes.HasPrefix(raw, []byte("GIF89a"))) {
+		return "image/gif"
+	}
+	if len(raw) >= 12 && string(raw[0:4]) == "RIFF" && string(raw[8:12]) == "WEBP" {
+		return "image/webp"
+	}
+	return "image/png"
 }
 
 func cropValue(value *float64) float64 {

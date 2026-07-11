@@ -125,6 +125,89 @@ func TestImportNotebookRestoresThumbnailAsCustomCover(t *testing.T) {
 	}
 }
 
+func TestEnsureNotebookPackageThumbnailWritesCoverData(t *testing.T) {
+	configDir := t.TempDir()
+	oldConfigDir := notebooksConfigDirOverride
+	oldExeDir := notebooksExeDirOverride
+	oldMigrated := notebooksMigrationChecked
+	notebooksConfigDirOverride = configDir
+	notebooksExeDirOverride = t.TempDir()
+	notebooksMigrationChecked = false
+	t.Cleanup(func() {
+		notebooksConfigDirOverride = oldConfigDir
+		notebooksExeDirOverride = oldExeDir
+		notebooksMigrationChecked = oldMigrated
+	})
+
+	pngRaw := []byte{
+		0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+		0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+		0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00,
+		0x0C, 0x49, 0x44, 0x41, 0x54, 0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00,
+		0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x05, 0xFE, 0xD4, 0xEF, 0x00, 0x00,
+		0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+	}
+	coverData := "data:image/png;base64," + base64.StdEncoding.EncodeToString(pngRaw)
+
+	path := filepath.Join(t.TempDir(), "note.tnote")
+	note := (&DocumentService{}).NewDocument()
+	note.Document.Title = "needs-cover"
+	if err := (&DocumentService{}).SaveNote(path, note); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := (&DocumentService{}).OpenNote(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opened.Thumbnail != "" {
+		t.Fatal("fixture package unexpectedly has thumbnail")
+	}
+
+	meta := NotebookMeta{
+		ID:        "1",
+		Name:      "needs-cover",
+		Path:      path,
+		IsManaged: true,
+		CoverType: "custom",
+		CoverData: coverData,
+	}
+	if err := ensureNotebookPackageThumbnail(meta); err != nil {
+		t.Fatalf("ensureNotebookPackageThumbnail: %v", err)
+	}
+	reopened, err := (&DocumentService{}).OpenNote(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened.Thumbnail == "" {
+		t.Fatal("expected thumbnail to be written from CoverData")
+	}
+
+	// Second call should be a no-op once package already has thumbnail.
+	if err := ensureNotebookPackageThumbnail(meta); err != nil {
+		t.Fatalf("second ensure failed: %v", err)
+	}
+}
+
+func TestEnsureNotebookPackageThumbnailRequiresCover(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "note.tnote")
+	note := (&DocumentService{}).NewDocument()
+	if err := (&DocumentService{}).SaveNote(path, note); err != nil {
+		t.Fatal(err)
+	}
+	meta := NotebookMeta{
+		ID:        "1",
+		Name:      "no-cover",
+		Path:      path,
+		IsManaged: true,
+		CoverType: "default",
+		CoverData: "",
+	}
+	err := ensureNotebookPackageThumbnail(meta)
+	if err == nil || err.Error() != "thumbnail_required" {
+		t.Fatalf("error = %v, want thumbnail_required", err)
+	}
+}
+
 func TestImportNotebookWithoutThumbnailUsesDefaultEmptyCover(t *testing.T) {
 	configDir := t.TempDir()
 	oldConfigDir := notebooksConfigDirOverride

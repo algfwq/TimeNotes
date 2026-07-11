@@ -107,17 +107,32 @@ export function HomeWorkspace() {
     }
   }, [loadNotebooks, openNotebookPath]);
 
-  // 监听第二个实例转发的文件打开事件（通过 SingleInstance 机制）。
+  // 监听第二个实例/本机 Blog 编辑桥转发的文件打开事件。
   useEffect(() => {
     const unsub = Events.On('app:file-open-requested', (data: any) => {
-      const args: string[] = Array.isArray(data?.Args) ? data.Args : (data?.args ?? []);
-      const filePath = args.find((arg: string) => /\.tnote$/i.test(arg));
+      // Wails event payloads may be the object itself or nested under data/detail.
+      const payload = data?.data ?? data?.detail ?? data ?? {};
+      const args: string[] = Array.isArray(payload?.Args)
+        ? payload.Args
+        : Array.isArray(payload?.args)
+          ? payload.args
+          : Array.isArray(data?.Args)
+            ? data.Args
+            : Array.isArray(data?.args)
+              ? data.args
+              : [];
+      const directPath = typeof payload?.path === 'string' ? payload.path : (typeof data?.path === 'string' ? data.path : '');
+      const filePath = args.find((arg: string) => /\.tnote$/i.test(String(arg))) || (/\.tnote$/i.test(directPath) ? directPath : '');
       if (filePath) {
-        void openExternalNote(filePath);
+        void openExternalNote(String(filePath)).then(() => {
+          // Refresh notebook list so the imported Blog note and cloud badge appear immediately.
+          void loadNotebooks();
+          void loadBlogSyncMap().then(setBlogSync).catch(() => undefined);
+        });
       }
     });
     return () => unsub();
-  }, [openExternalNote]);
+  }, [loadNotebooks, openExternalNote]);
 
   const handleCreate = useCallback(async () => {
     const name = createName.trim();

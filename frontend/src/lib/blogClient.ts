@@ -168,7 +168,13 @@ function readLocalConnection(): BlogConnection | null {
 }
 
 function writeLocalConnection(cfg: BlogConnection) {
-  localStorage.setItem(LS_CONN, JSON.stringify(cfg));
+  // Never persist plaintext passwords in browser storage. Prefer the local bridge
+  // encrypted store; localStorage only keeps non-secret connection metadata/token.
+  const safe: BlogConnection = {
+    ...cfg,
+    password: '',
+  };
+  localStorage.setItem(LS_CONN, JSON.stringify(safe));
 }
 
 function readLocalSync(): Record<string, BlogSyncEntry> {
