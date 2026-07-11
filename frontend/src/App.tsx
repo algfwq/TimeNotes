@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { ConfigProvider, Toast } from '@douyinfe/semi-ui';
 import zhCN from '@douyinfe/semi-ui/lib/es/locale/source/zh_CN';
 import { AppShell } from './components/AppShell';
@@ -7,10 +7,37 @@ import { DocumentProvider } from './providers/DocumentProvider';
 
 Toast.config({ duration: 2 });
 
+function getSystemTheme(): 'light' | 'dark' {
+  if (typeof window === 'undefined') return 'light';
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
 function App() {
+  const [theme, setTheme] = useState<'light' | 'dark'>(getSystemTheme);
   useBrowserPageZoomGuard();
+
+  // 监听 macOS 系统外观变化 (深色/浅色模式)
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleChange = (event: MediaQueryListEvent) => {
+      setTheme(event.matches ? 'dark' : 'light');
+    };
+    mediaQuery.addEventListener('change', handleChange);
+
+    // 支持 macOS 菜单栏手动切换深色模式
+    const handleToggleTheme = () => {
+      setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+    };
+    window.addEventListener('timenotes:toggle-theme', handleToggleTheme);
+
+    return () => {
+      mediaQuery.removeEventListener('change', handleChange);
+      window.removeEventListener('timenotes:toggle-theme', handleToggleTheme);
+    };
+  }, []);
+
   return (
-    <ConfigProvider locale={zhCN}>
+    <ConfigProvider locale={zhCN} mode={theme}>
       <DocumentProvider>
         <CollaborationProvider>
           <AppShell />
@@ -26,7 +53,6 @@ function useBrowserPageZoomGuard() {
   useEffect(() => {
     const preventPageWheelZoom = (event: WheelEvent) => {
       if (event.ctrlKey || event.metaKey) {
-        // 只取消浏览器默认页面缩放；事件仍继续传递，画布自己的 Ctrl+滚轮缩放不受影响。
         event.preventDefault();
       }
     };
