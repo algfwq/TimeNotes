@@ -32,8 +32,9 @@ html,
   overscroll-behavior: none;
 }
 
-/* macOS 窗口控件 (红绿灯按钮) 占据左侧约 70px 空间，标题栏隐藏模式下内容要避开 */
-.mac-traffic-light-padding {
+/* macOS 窗口控件 (红绿灯按钮) 占据左侧约 70px 空间。
+ * 仅在显式标记 platform-darwin 时启用，避免 Windows/Linux 顶部工具栏被整体右推留白。 */
+.platform-darwin .mac-traffic-light-padding {
   padding-left: 72px;
 }
 

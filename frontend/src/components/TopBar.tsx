@@ -109,8 +109,8 @@ export function TopBar() {
   };
 
   return (
-    <div className="flex min-h-14 flex-wrap items-center justify-between gap-2 px-4 py-2">
-      <div className="flex items-center gap-3">
+    <div className="flex min-h-14 flex-wrap items-center gap-3 px-4 py-2">
+      <div className="flex shrink-0 items-center gap-3">
         <img className="h-10 w-10 rounded-[8px] object-cover shadow-sm" src={logoUrl} alt="TimeNotes" draggable={false} />
         <div>
           <Typography.Text strong>{document.title}</Typography.Text>
@@ -118,7 +118,7 @@ export function TopBar() {
         </div>
       </div>
 
-      <Space className="max-w-full overflow-x-auto">
+      <Space className="min-w-0 max-w-full flex-1 overflow-x-auto">
         <ButtonGroup>
           {toolItems.map((item) => (
             <Tooltip key={item.key} content={item.label}>
@@ -141,7 +141,7 @@ export function TopBar() {
         </ButtonGroup>
       </Space>
 
-      <Space>
+      <Space className="ml-auto shrink-0">
         <ButtonGroup>
           <Tooltip content="撤销">
             <Button icon={<IconUndo />} disabled={!canUndo || activeTabMode !== 'edit'} onClick={undo} />

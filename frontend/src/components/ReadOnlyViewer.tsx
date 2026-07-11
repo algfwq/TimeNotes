@@ -273,8 +273,21 @@ export function ReadOnlyViewer() {
           <Button size="small" theme="borderless" icon={<IconChevronRight />} disabled={atEnd || Boolean(flip)} onClick={() => goToSpread(spreadIndex + 1)} />
         </div>
         <div className="flex w-64 items-center gap-3">
-          <span className="shrink-0 text-xs text-black/55">{Math.round(scale * 100)}%</span>
-          <Slider value={scale * 100} min={25} max={240} step={5} onChange={(v) => setScale(Number(v) / 100)} />
+          <span className="shrink-0 text-xs text-black/55">{Math.round((Number.isFinite(scale) ? scale : 1) * 100)}%</span>
+          <Slider
+            value={(Number.isFinite(scale) ? scale : 1) * 100}
+            min={25}
+            max={240}
+            step={5}
+            tipFormatter={(value) => `${Math.round(Number(value) || (Number.isFinite(scale) ? scale : 1) * 100)}%`}
+            onChange={(v) => {
+              const next = Array.isArray(v) ? Number(v[0]) : Number(v);
+              if (!Number.isFinite(next)) {
+                return;
+              }
+              setScale(Math.min(2.4, Math.max(0.25, next / 100)));
+            }}
+          />
           <Button
             size="small"
             theme="borderless"

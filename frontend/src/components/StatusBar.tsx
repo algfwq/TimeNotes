@@ -24,6 +24,8 @@ export function StatusBar() {
   const transport = !isConnected ? '离线' : peers.length === 0 ? '等待成员' : peers.some((peer) => peer.transport === 'p2p') ? 'P2P' : '中转';
   const latencyLabel = latencyMs === undefined ? '-- ms' : `${latencyMs} ms`;
   const latencyColor = latencyMs === undefined ? 'grey' : latencyMs < 80 ? 'green' : latencyMs < 180 ? 'orange' : 'red';
+  // Semi Slider 在某些点击路径下可能回调 NaN；展示与写入都收敛到有限缩放值。
+  const safeZoom = Number.isFinite(zoom) ? Math.min(2, Math.max(0.35, zoom)) : 0.82;
 
   const handleToggleMic = () => {
     if (micEnabled) {
@@ -82,8 +84,21 @@ export function StatusBar() {
         )}
       </div>
       <div className="flex w-64 shrink-0 items-center gap-3">
-        <span className="shrink-0">缩放 {Math.round(zoom * 100)}%</span>
-        <Slider value={zoom * 100} min={35} max={200} step={5} onChange={(value) => setZoom(Number(value) / 100)} />
+        <span className="shrink-0">缩放 {Math.round(safeZoom * 100)}%</span>
+        <Slider
+          value={safeZoom * 100}
+          min={35}
+          max={200}
+          step={5}
+          tipFormatter={(value) => `${Math.round(Number(value) || safeZoom * 100)}%`}
+          onChange={(value) => {
+            const next = Array.isArray(value) ? Number(value[0]) : Number(value);
+            if (!Number.isFinite(next)) {
+              return;
+            }
+            setZoom(Math.min(2, Math.max(0.35, next / 100)));
+          }}
+        />
       </div>
     </div>
   );

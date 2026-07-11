@@ -160,6 +160,9 @@ const resourceArchiveFlushMs = 180;
 const resourceArchiveIdleMs = 1200;
 const resourceTransferIdleMs = 1500;
 const fileChannelBackpressureRetryMs = 80;
+// 有 peer 时先给 WebRTC file 通道一个短窗口，避免 auth_ok 后立刻公告资源必然落到 relay。
+const p2pFileReadyWaitMs = 3000;
+const p2pFileReadyPollMs = 50;
 const fileTransferChunkBytes = 16 * 1024;
 const fileTransferChunkBase64Chars = Math.floor(fileTransferChunkBytes / 3) * 4;
 const fileTransferChunkIntervalMs = 12;
@@ -196,6 +199,8 @@ export class CollaborationClient {
   private pendingDocTimer?: number;
   private pendingResourceTimer?: number;
   private pendingResourceArchiveTimer?: number;
+  private resourceTransportReadyTimer?: number;
+  private resourceTransportWaitStartedAt = 0;
   // 本地 Yjs 高频编辑先合并到短队列里，再统一广播，避免拖动元素时刷爆网络。
   private pendingDocUpdates: Uint8Array[] = [];
   private pendingResourceUpdates: Uint8Array[] = [];
@@ -270,6 +275,10 @@ export class CollaborationClient {
 
   setForceRelay(forceRelay: boolean) {
     this.options.forceRelay = forceRelay;
+    if (forceRelay) {
+      // 强制中转后不再等待 P2P file，立刻放开资源公告/发送。
+      this.flushResourceTransportReady();
+    }
     this.publishPresence();
   }
 
@@ -466,7 +475,8 @@ export class CollaborationClient {
     payload.peers?.forEach((peer) => this.upsertPeer(peer));
     this.options.onStatus('已连接');
     this.options.onJoined(this.options.user);
-    announceResourceTransportReady();
+    // 有在线成员时优先等 file DataChannel 就绪再公告素材，避免刚连上就必然走中转。
+    this.scheduleResourceTransportReady();
     this.publishPresence();
     this.startPresenceHeartbeat();
     this.startLatencyProbe();
@@ -636,6 +646,10 @@ export class CollaborationClient {
     const transferId = makeId('file');
     const totalBytes = transfer.asset.size && transfer.asset.size > 0 ? transfer.asset.size : base64ByteLength(dataBase64);
     const totalChunks = Math.max(1, Math.ceil(Math.max(1, dataBase64.length) / fileTransferChunkBase64Chars));
+    // 非强制中转时给 file 通道一个短就绪窗口，减少“刚连上就整批走 relay”。
+    if (!forcedRoute && !this.options.forceRelay && this.peerUsers.size > 0 && !this.canUseP2PFileTransfer()) {
+      await this.waitForP2PFileReady();
+    }
     let route: 'p2p' | 'relay' = forcedRoute ?? (this.canUseP2PFileTransfer() ? 'p2p' : 'relay');
     if (route === 'p2p') {
       await this.waitForFileBackpressure();
@@ -1083,7 +1097,8 @@ export class CollaborationClient {
     this.ensurePeer(peer);
     this.emitPeers();
     if (isNewPeer) {
-      announceResourceTransportReady();
+      // 新 peer 加入后同样先等 file 通道，避免立即重传素材落到中转。
+      this.scheduleResourceTransportReady();
       this.voiceClient?.handlePeerConnected(peer.id);
       if (notify) {
         this.options.onPeerJoined(peer);
@@ -1159,7 +1174,8 @@ export class CollaborationClient {
       this.peerUsers.set(peer.id, { ...(this.peerUsers.get(peer.id) ?? peer.user), transport: 'p2p' });
       this.emitPeers();
       if (label === 'file') {
-        announceResourceTransportReady();
+        // file 通道真正 open 后立刻放开资源公告；若仍有其他 peer 未就绪，schedule 会继续等待。
+        this.scheduleResourceTransportReady();
       }
     };
     channel.onmessage = (event) => {
@@ -1297,6 +1313,63 @@ export class CollaborationClient {
     return peerIDs.length > 0 && peerIDs.every((peerID) => this.peers.get(peerID)?.channels.file?.readyState === 'open');
   }
 
+  // 资源公告/发送前的短等待：优先吃到 P2P file，超时后仍允许走中转兜底。
+  private async waitForP2PFileReady(timeoutMs = p2pFileReadyWaitMs) {
+    if (!this.connected || this.closing || this.options.forceRelay || this.peerUsers.size === 0) {
+      return false;
+    }
+    if (this.canUseP2PFileTransfer()) {
+      return true;
+    }
+    const startedAt = performance.now();
+    while (this.connected && !this.closing && performance.now() - startedAt < timeoutMs) {
+      if (this.canUseP2PFileTransfer()) {
+        return true;
+      }
+      await sleep(p2pFileReadyPollMs);
+    }
+    return this.canUseP2PFileTransfer();
+  }
+
+  // 合并资源公告：有 peer 且 file 未齐时等待，避免 auth_ok/peer_joined 连发多次中转传输。
+  private scheduleResourceTransportReady() {
+    if (!this.connected || this.closing) {
+      return;
+    }
+    if (this.options.forceRelay || this.peerUsers.size === 0 || this.canUseP2PFileTransfer()) {
+      this.flushResourceTransportReady();
+      return;
+    }
+    if (this.resourceTransportReadyTimer) {
+      return;
+    }
+    this.resourceTransportWaitStartedAt = performance.now();
+    this.resourceTransportReadyTimer = window.setInterval(() => {
+      if (!this.connected || this.closing) {
+        this.clearResourceTransportReadyTimer();
+        return;
+      }
+      if (this.options.forceRelay || this.canUseP2PFileTransfer() || performance.now() - this.resourceTransportWaitStartedAt >= p2pFileReadyWaitMs) {
+        this.flushResourceTransportReady();
+      }
+    }, p2pFileReadyPollMs);
+  }
+
+  private flushResourceTransportReady() {
+    this.clearResourceTransportReadyTimer();
+    if (!this.connected || this.closing) {
+      return;
+    }
+    announceResourceTransportReady();
+  }
+
+  private clearResourceTransportReadyTimer() {
+    if (this.resourceTransportReadyTimer) {
+      window.clearInterval(this.resourceTransportReadyTimer);
+      this.resourceTransportReadyTimer = undefined;
+    }
+  }
+
   private canSendToAllPeers(channelName: DataChannelName) {
     if (this.options.forceRelay) {
       return false;
@@ -1427,6 +1500,7 @@ export class CollaborationClient {
       window.clearTimeout(this.pendingResourceArchiveTimer);
       this.pendingResourceArchiveTimer = undefined;
     }
+    this.clearResourceTransportReadyTimer();
   }
 
   private makeEnvelope<T>(type: string, payload: T, to = ''): Envelope<T> {

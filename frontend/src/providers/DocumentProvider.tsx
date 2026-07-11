@@ -1024,7 +1024,14 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
   const [activeTabId, setActiveTabId] = useState(initialTab.id);
   const [selectedElementId, setSelectedElementId] = useState<string | undefined>();
   const [editingElementId, setEditingElementId] = useState<string | undefined>();
-  const [zoom, setZoom] = useState(0.82);
+  const [zoom, setZoomState] = useState(0.82);
+  const setZoom = useCallback((next: number) => {
+    // Semi Slider / 触控路径偶发会传入 NaN；跨平台 WebView 上会直接渲染成 “缩放 NaN%”。
+    if (!Number.isFinite(next)) {
+      return;
+    }
+    setZoomState(Math.min(2, Math.max(0.35, next)));
+  }, []);
   const [toolState, setToolState] = useState<ToolMode>('select');
   const [toolStyles, setToolStyles] = useState<ToolStyleState>(defaultToolStyles);
   const [pendingPlacement, setPendingPlacement] = useState<PendingPlacement | undefined>();
@@ -2528,6 +2535,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       selectedElementId,
       setActivePage,
       setTool,
+      setZoom,
       switchTab,
       tabs,
       toolStyles,
