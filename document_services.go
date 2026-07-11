@@ -10,6 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	"image/png"
 	"io"
 	"io/fs"
 	"mime"
@@ -19,6 +23,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	_ "golang.org/x/image/webp"
 )
 
 const (
@@ -501,16 +507,18 @@ func writeNotePackageToFile(file *os.File, note NotePackage) error {
 			return err
 		}
 	}
-	if note.Thumbnail != "" {
-		raw, err := decodeDataURL(note.Thumbnail)
-		if err != nil {
-			return fmt.Errorf("decode thumbnail: %w", err)
+		if note.Thumbnail != "" {
+			// Blog 与客户端封面约定根目录 thumbnail.png 为真实 PNG。
+			// JPEG/WebP/GIF 在落盘前统一转成 PNG，避免 MIME 与扩展名不一致。
+			raw, dataURL, err := thumbnailPNGBytes(note.Thumbnail)
+			if err != nil {
+				return fmt.Errorf("decode thumbnail: %w", err)
+			}
+			note.Thumbnail = dataURL
+			if err := writeFile(zw, "thumbnail.png", raw); err != nil {
+				return err
+			}
 		}
-		entryName := thumbnailArchiveName(note.Thumbnail, raw)
-		if err := writeFile(zw, entryName, raw); err != nil {
-			return err
-		}
-	}
 	if err := zw.Close(); err != nil {
 		return err
 	}
@@ -900,25 +908,25 @@ func decodeDataURL(value string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(parts[1])
 }
 
-func thumbnailArchiveName(dataURL string, raw []byte) string {
-	mime := ""
-	if strings.HasPrefix(dataURL, "data:") {
-		header := strings.SplitN(strings.TrimPrefix(dataURL, "data:"), ";", 2)[0]
-		mime = strings.ToLower(strings.TrimSpace(header))
+// thumbnailPNGBytes 将任意支持的封面 data URL 规范为真实 PNG 字节，并返回对应 data URL。
+func thumbnailPNGBytes(dataURL string) ([]byte, string, error) {
+	raw, err := decodeDataURL(dataURL)
+	if err != nil {
+		return nil, "", err
 	}
-	if mime == "" {
-		mime = detectImageMIME(raw)
+	if detectImageMIME(raw) == "image/png" {
+		return raw, "data:image/png;base64," + base64.StdEncoding.EncodeToString(raw), nil
 	}
-	switch mime {
-	case "image/jpeg":
-		return "thumbnail.jpg"
-	case "image/webp":
-		return "thumbnail.webp"
-	case "image/gif":
-		return "thumbnail.gif"
-	default:
-		return "thumbnail.png"
+	img, _, err := image.Decode(bytes.NewReader(raw))
+	if err != nil {
+		return nil, "", err
 	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return nil, "", err
+	}
+	out := buf.Bytes()
+	return out, "data:image/png;base64," + base64.StdEncoding.EncodeToString(out), nil
 }
 
 func thumbnailMIMEFromName(name string) string {
@@ -933,6 +941,7 @@ func thumbnailMIMEFromName(name string) string {
 		return "image/png"
 	}
 }
+
 
 func detectImageMIME(raw []byte) string {
 	if len(raw) >= 8 && bytes.HasPrefix(raw, []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}) {

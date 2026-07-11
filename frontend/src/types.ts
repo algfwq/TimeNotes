@@ -43,6 +43,8 @@ export interface WorkspaceTab {
   document: NoteDocument;
   activePageId: string;
   sourcePath?: string;
+  // 包内封面 data URL；保存时 createPackage 会带回，避免每次写空 thumbnail 覆盖。
+  thumbnail?: string;
   history?: DocumentHistory;
   lastSavedHash?: string;
   saveInProgress?: boolean;

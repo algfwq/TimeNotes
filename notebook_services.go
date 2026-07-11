@@ -620,7 +620,7 @@ func (s *NotebookService) GetStartupFilePath() string {
 }
 
 func (s *NotebookService) UpdateNotebookThumbnail(id string, coverData string) {
-	// 保存手账本时前端调用，将当前封面截图更新到 metadata。
+	// 默认封面预览生成后调用：仅在尚未自定义封面时写回元数据与 .tnote thumbnail.png。
 	id = strings.TrimSpace(id)
 	if id == "" || coverData == "" {
 		return
@@ -630,14 +630,23 @@ func (s *NotebookService) UpdateNotebookThumbnail(id string, coverData string) {
 		return
 	}
 	for i := range store.Notebooks {
-		if store.Notebooks[i].ID == id {
-			if store.Notebooks[i].CoverType == "default" {
-				store.Notebooks[i].CoverData = coverData
-				store.Notebooks[i].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-				_ = writeNotebookStore(store)
-			}
+		if store.Notebooks[i].ID != id {
+			continue
+		}
+		// 用户已显式设置的有效封面永不被默认预览覆盖。
+		if store.Notebooks[i].CoverType == "custom" && strings.TrimSpace(store.Notebooks[i].CoverData) != "" {
 			return
 		}
+		pngURL := coverData
+		if _, normalized, err := thumbnailPNGBytes(coverData); err == nil {
+			pngURL = normalized
+		}
+		store.Notebooks[i].CoverType = "custom"
+		store.Notebooks[i].CoverData = pngURL
+		store.Notebooks[i].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		_ = writeNotebookStore(store)
+		_ = writeThumbnailToNote(store.Notebooks[i].Path, pngURL)
+		return
 	}
 }
 
@@ -649,6 +658,7 @@ func coverFromPackageThumbnail(thumbnail string) (string, string) {
 }
 
 // writeThumbnailToNote 将自定义封面 data URL 写入 .tnote 包；空字符串会移除包内缩略图。
+// 非 PNG 封面在 writeNotePackage 内统一转换为真实 thumbnail.png。
 func writeThumbnailToNote(path string, coverData string) error {
 	if path == "" {
 		return nil
@@ -657,7 +667,14 @@ func writeThumbnailToNote(path string, coverData string) error {
 	if err != nil {
 		return err
 	}
-	note.Thumbnail = coverData
+	if strings.TrimSpace(coverData) == "" {
+		note.Thumbnail = ""
+	} else if pngRaw, pngURL, err := thumbnailPNGBytes(coverData); err == nil && len(pngRaw) > 0 {
+		// 先规范化为 PNG data URL，保证元数据 CoverData 与包内 thumbnail.png 一致。
+		note.Thumbnail = pngURL
+	} else {
+		note.Thumbnail = coverData
+	}
 	note.normalize()
 	return writeNotePackage(path, note)
 }
@@ -684,10 +701,11 @@ func ensureNotebookPackageThumbnail(meta NotebookMeta) error {
 	if coverData == "" || meta.CoverType != "custom" {
 		return errors.New("thumbnail_required")
 	}
-	if _, err := decodeDataURL(coverData); err != nil {
+	pngRaw, pngURL, err := thumbnailPNGBytes(coverData)
+	if err != nil || len(pngRaw) == 0 {
 		return fmt.Errorf("invalid cover data: %w", err)
 	}
-	note.Thumbnail = coverData
+	note.Thumbnail = pngURL
 	note.normalize()
 	return writeNotePackage(path, note)
 }

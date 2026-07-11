@@ -338,7 +338,7 @@ function documentSaveHash(document: NoteDocument): string {
   });
 }
 
-function createTab(document: NoteDocument, mode: WorkspaceTabMode, sourcePath?: string): WorkspaceTab {
+function createTab(document: NoteDocument, mode: WorkspaceTabMode, sourcePath?: string, thumbnail?: string): WorkspaceTab {
   const normalized = normalizeDocument(document);
   return {
     id: createId(mode === 'reader' ? 'reader' : 'tab'),
@@ -347,6 +347,7 @@ function createTab(document: NoteDocument, mode: WorkspaceTabMode, sourcePath?: 
     document: normalized,
     activePageId: normalized.pages[0]?.id ?? 'page-1',
     sourcePath,
+    thumbnail: thumbnail?.trim() || undefined,
     history: { past: [], future: [] },
     lastSavedHash: mode === 'edit' && sourcePath ? documentSaveHash(normalized) : undefined,
   };
@@ -1374,11 +1375,25 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
     );
   }, []);
 
+  const resolveThumbnailForTab = useCallback((tab: WorkspaceTab) => {
+    // 已有有效封面优先；否则尝试捕获当前画布首页预览。
+    const existing = tab.thumbnail?.trim();
+    if (existing) {
+      return existing;
+    }
+    try {
+      return thumbnailCaptureRef.current?.()?.trim() || '';
+    } catch {
+      return '';
+    }
+  }, []);
+
   const createPackageForTab = useCallback((tab: WorkspaceTab): NotePackage => {
     const tabYDoc = ensureTabYDoc(tab.id);
     const update = Y.encodeStateAsUpdate(tabYDoc);
     const now = new Date().toISOString();
     const normalizedDocument = normalizeDocument({ ...tab.document, updatedAt: now });
+    const thumbnail = resolveThumbnailForTab(tab);
     return {
       manifest: {
         formatVersion: currentFormatVersion,
@@ -1411,9 +1426,9 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       audios: normalizedDocument.audios,
       videos: normalizedDocument.videos,
       models: normalizedDocument.models,
-      thumbnail: '',
+      thumbnail,
     };
-  }, [ensureTabYDoc]);
+  }, [ensureTabYDoc, resolveThumbnailForTab]);
 
   const markTabSaved = useCallback((tabId: string, hash: string) => {
     setTabs((currentTabs) => currentTabs.map((tab) => (
@@ -1476,7 +1491,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
     const note = (await NotebookService.OpenNotebook(meta.id)) as NotePackage;
     const normalized = normalizeDocument(note.document, note.assets ?? [], note.stickers ?? [], note.fonts ?? [], note.audios ?? [], note.videos ?? [], note.models ?? []);
     rememberResources(resourceCacheRef.current, normalized);
-    const tab = createTab(normalized, 'edit', meta.path);
+    const tab = createTab(normalized, 'edit', meta.path, note.thumbnail);
     const tabYDoc = new Y.Doc();
     if (note.yjsState) {
       try {
@@ -1591,7 +1606,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       // 打开 .tnote 时优先以 document.json + 包内资源作为恢复源，Yjs state 只是协作增量的附加状态。
       const normalized = normalizeDocument(note.document, note.assets ?? [], note.stickers ?? [], note.fonts ?? [], note.audios ?? [], note.videos ?? [], note.models ?? []);
       rememberResources(resourceCacheRef.current, normalized);
-      const tab = createTab(normalized, 'edit', sourcePath);
+      const tab = createTab(normalized, 'edit', sourcePath, note.thumbnail);
       const tabYDoc = new Y.Doc();
       if (note.yjsState) {
         try {
@@ -2305,6 +2320,10 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
   );
 
   const createPackage = useCallback((): NotePackage => {
+    const active = tabs.find((tab) => tab.id === activeTabId);
+    if (active) {
+      return createPackageForTab(active);
+    }
     const update = Y.encodeStateAsUpdate(activeYDoc);
     const now = new Date().toISOString();
     const normalizedDocument = normalizeDocument({ ...document, updatedAt: now });
@@ -2342,7 +2361,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       models: normalizedDocument.models,
       thumbnail: '',
     };
-  }, [activeYDoc, document]);
+  }, [activeTabId, activeYDoc, createPackageForTab, document, tabs]);
 
   const createNewDocument = useCallback(async () => {
     try {

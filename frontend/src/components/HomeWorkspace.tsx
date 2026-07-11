@@ -642,8 +642,17 @@ function DefaultCoverPreview({ meta }: { meta: NotebookMeta }) {
           allowTaint: true,
           backgroundColor: '#fffaf0',
         } as any);
-        if (!cancelled) {
-          setPreview(canvas.toDataURL('image/png'));
+        if (cancelled) {
+          return;
+        }
+        const dataUrl = canvas.toDataURL('image/png');
+        setPreview(dataUrl);
+        // 无有效自定义封面时，将默认首页预览持久化到元数据与 .tnote thumbnail.png。
+        // UpdateNotebookThumbnail 会跳过已有 custom 封面，避免覆盖用户设置。
+        try {
+          await NotebookService.UpdateNotebookThumbnail(meta.id, dataUrl);
+        } catch {
+          // 持久化失败不影响本地预览展示。
         }
       } catch {
         // 预览生成失败时保留占位封面。
@@ -653,7 +662,7 @@ function DefaultCoverPreview({ meta }: { meta: NotebookMeta }) {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [note]);
+  }, [meta.id, note]);
 
   if (preview) {
     return <img className="h-full w-full object-cover" src={preview} alt={meta.name} />;

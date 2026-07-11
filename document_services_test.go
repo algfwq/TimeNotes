@@ -4,6 +4,9 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/base64"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"os"
 	"path/filepath"
 	"strings"
@@ -104,6 +107,61 @@ func TestSaveNotePreservesExistingThumbnailWhenEmpty(t *testing.T) {
 
 func encodeBase64ForTest(raw []byte) string {
 	return base64.StdEncoding.EncodeToString(raw)
+}
+
+func TestSaveNoteConvertsJPEGThumbnailToPNG(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "jpeg-thumb.tnote")
+	service := &DocumentService{}
+
+	var jpegBuf bytes.Buffer
+	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	img.Set(0, 0, color.RGBA{R: 255, A: 255})
+	img.Set(1, 0, color.RGBA{G: 255, A: 255})
+	img.Set(0, 1, color.RGBA{B: 255, A: 255})
+	img.Set(1, 1, color.RGBA{R: 255, G: 255, A: 255})
+	if err := jpeg.Encode(&jpegBuf, img, &jpeg.Options{Quality: 90}); err != nil {
+		t.Fatal(err)
+	}
+	jpegRaw := jpegBuf.Bytes()
+
+	note := service.NewDocument()
+	note.Document.Title = "jpeg-cover"
+	note.Thumbnail = "data:image/jpeg;base64," + encodeBase64ForTest(jpegRaw)
+	if err := service.SaveNote(path, note); err != nil {
+		t.Fatalf("SaveNote: %v", err)
+	}
+	reopened, err := service.OpenNote(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(reopened.Thumbnail, "image/png") {
+		t.Fatalf("thumbnail mime unexpected: %q", reopened.Thumbnail)
+	}
+	raw, err := decodeDataURL(reopened.Thumbnail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detectImageMIME(raw) != "image/png" {
+		t.Fatalf("expected PNG bytes, got %q", detectImageMIME(raw))
+	}
+
+	// Direct helper: already-PNG input stays PNG.
+	pngRaw := []byte{
+		0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+		0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+		0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00,
+		0x0C, 0x49, 0x44, 0x41, 0x54, 0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00,
+		0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x05, 0xFE, 0xD4, 0xEF, 0x00, 0x00,
+		0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+	}
+	out, dataURL, err := thumbnailPNGBytes("data:image/png;base64," + encodeBase64ForTest(pngRaw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detectImageMIME(out) != "image/png" || !strings.Contains(dataURL, "image/png") {
+		t.Fatalf("png passthrough failed: mime=%q url=%q", detectImageMIME(out), dataURL)
+	}
 }
 
 func TestSaveAndOpenNotePackage(t *testing.T) {
