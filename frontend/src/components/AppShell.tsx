@@ -107,7 +107,7 @@ export function AppShell() {
       style={{ display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr) 48px' }}
     >
       <FontFaceDefinitions />
-      <Header className="z-20 min-w-0 shrink-0 overflow-hidden border-b border-black/10 bg-white/88 backdrop-blur">
+      <Header className="z-20 min-w-0 shrink-0 overflow-hidden border-b border-black/10 bg-white/88 backdrop-blur mac-traffic-light-padding">
         <TopBar />
         <WorkspaceTabs />
       </Header>

@@ -32,6 +32,11 @@ html,
   overscroll-behavior: none;
 }
 
+/* macOS 窗口控件 (红绿灯按钮) 占据左侧约 70px 空间，标题栏隐藏模式下内容要避开 */
+.mac-traffic-light-padding {
+  padding-left: 72px;
+}
+
 /*
  * 3D 模型内嵌画布处于 transform: scale(zoom) 的纸张坐标系内。
  * react-three-fiber 用 getBoundingClientRect 测量得到的是已缩放尺寸，
@@ -900,5 +905,13 @@ textarea {
   }
   100% {
     opacity: 0;
+  }
+}
+
+/* macOS 深色模式适配 — 覆盖 Tailwind 硬编码的浅色背景和边框颜色 */
+@media (prefers-color-scheme: dark) {
+  body {
+    background: #1a1a1e;
+    color: #e5e5e5;
   }
 }

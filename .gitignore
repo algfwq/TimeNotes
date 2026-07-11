@@ -18,4 +18,5 @@ coverage/
 dist/
 build/linux/appimage/build/
 build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
+*.DS_Store
 build/android/.gradle/

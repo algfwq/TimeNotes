@@ -2363,6 +2363,40 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
     setPendingPlacement(undefined);
   }, [clearSelection, tabs]);
 
+  // macOS 原生菜单栏事件处理
+  useEffect(() => {
+    const handlers: Array<() => void> = [];
+    const on = (event: string, fn: (...args: unknown[]) => void) => {
+      const unsub = Events.On(event, fn);
+      handlers.push(unsub);
+    };
+
+    on('menu:new-notebook', () => createNewDocument());
+    on('menu:open-notebook', () => openNotebookPath(''));
+    on('menu:save', () => void saveActiveTab());
+    on('menu:save-as', () => {
+      const tab = tabs.find((t) => t.id === activeTabId);
+      if (tab?.mode === 'edit') {
+        void saveTabIfDirty(tab);
+      }
+    });
+    on('menu:export-html', () => {
+      const tab = tabs.find((t) => t.id === activeTabId);
+      if (tab?.mode === 'edit' && tab.document) {
+        void saveTabIfDirty(tab);
+      }
+    });
+    on('menu:zoom-fit', () => setZoom(1));
+    on('menu:toggle-dark-mode', () => {
+      window.dispatchEvent(new CustomEvent('timenotes:toggle-theme'));
+    });
+    on('menu:help', () => {
+      window.open('https://github.com/algfwq/TimeNotes', '_blank');
+    });
+
+    return () => handlers.forEach((unsub) => unsub());
+  }, [createNewDocument, openNotebookPath, saveActiveTab, saveTabIfDirty, activeTabId, tabs, setZoom]);
+
   const value = useMemo<DocumentContextValue>(
     () => ({
       tabs,
