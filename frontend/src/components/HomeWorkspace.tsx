@@ -514,25 +514,39 @@ function NotebookCard({
   onUploadBlog: () => void;
   onOpenDir: () => void;
 }) {
+  const [menuVisible, setMenuVisible] = useState(false);
   const updatedAt = new Date(meta.updatedAt).toLocaleDateString('zh-CN', {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
   });
 
+  // Close the dropdown first, then run the action on the next tick so Modal/file
+  // dialogs never stack with the open menu (looked awkward for delete confirm).
+  const runAfterMenuClose = (action: () => void) => {
+    setMenuVisible(false);
+    window.setTimeout(action, 0);
+  };
+
   const dropdownMenu = [
-    { node: 'item' as const, name: '重命名', icon: <IconEdit />, onClick: onRename },
-    { node: 'item' as const, name: '更改封面', icon: <IconImage />, onClick: onChangeCover },
-    { node: 'item' as const, name: '备份', icon: <IconDownload />, onClick: onBackup },
+    { node: 'item' as const, name: '重命名', icon: <IconEdit />, onClick: () => runAfterMenuClose(onRename) },
+    { node: 'item' as const, name: '更改封面', icon: <IconImage />, onClick: () => runAfterMenuClose(onChangeCover) },
+    { node: 'item' as const, name: '备份', icon: <IconDownload />, onClick: () => runAfterMenuClose(onBackup) },
     {
       node: 'item' as const,
       name: cloudLinked ? '更新到 Blog' : '上传到 Blog',
       icon: <IconCloud />,
-      onClick: onUploadBlog,
+      onClick: () => runAfterMenuClose(onUploadBlog),
     },
-    { node: 'item' as const, name: '打开文件目录', icon: <IconFolderOpen />, onClick: onOpenDir },
+    { node: 'item' as const, name: '打开文件目录', icon: <IconFolderOpen />, onClick: () => runAfterMenuClose(onOpenDir) },
     { node: 'divider' as const },
-    { node: 'item' as const, name: '删除', icon: <IconDelete />, type: 'danger' as const, onClick: onDelete },
+    {
+      node: 'item' as const,
+      name: '删除',
+      icon: <IconDelete />,
+      type: 'danger' as const,
+      onClick: () => runAfterMenuClose(onDelete),
+    },
   ];
 
   return (
@@ -585,6 +599,8 @@ function NotebookCard({
           menu={dropdownMenu}
           trigger="click"
           position="bottomRight"
+          visible={menuVisible}
+          onVisibleChange={setMenuVisible}
         >
           <Button
             size="small"

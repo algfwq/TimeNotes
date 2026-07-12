@@ -540,8 +540,9 @@ if meta == nil {
 		}
 		if mainWindow != nil {
 			mainWindow.EmitEvent("app:file-open-requested", payload)
-			mainWindow.Restore()
-			mainWindow.Focus()
+			// Do NOT call Restore(): it exits fullscreen/maximized and snaps back to the
+			// default restored size. Only lift minimized windows, then focus.
+			focusMainWindowPreserveState()
 		}
 		writeJSONResponse(w, map[string]any{"ok": true, "path": meta.Path, "id": meta.ID, "remoteId": cap.NoteID})
 	}))

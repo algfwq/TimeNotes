@@ -23,6 +23,22 @@ var (
 	mainApp       *application.App
 )
 
+// focusMainWindowPreserveState brings the app to the foreground without leaving
+// fullscreen or maximized. Restore() would collapse those states back to the
+// default restored bounds (the bug seen when Blog admin "编辑" opens a note).
+func focusMainWindowPreserveState() {
+	if mainWindow == nil {
+		return
+	}
+	if mainWindow.IsMinimised() {
+		mainWindow.UnMinimise()
+	}
+	if !mainWindow.IsVisible() {
+		mainWindow.Show()
+	}
+	mainWindow.Focus()
+}
+
 // setupMenu 构建完整的 macOS 原生菜单栏。
 // 注意：Wails3 在 macOS 上会通过 AppMenu 角色自动添加标准应用菜单（About / Hide / Quit 等）。
 // 文件、编辑、显示、窗口、帮助菜单为自定义实现，发射事件到前端供 DocumentProvider 处理。
@@ -159,8 +175,7 @@ func main() {
 			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
 				if mainWindow != nil {
 					mainWindow.EmitEvent("app:file-open-requested", data)
-					mainWindow.Restore()
-					mainWindow.Focus()
+					focusMainWindowPreserveState()
 				}
 			},
 		},
@@ -222,7 +237,12 @@ func main() {
 	// 主窗口只加载根路径，开发模式由 Wails 代理到 Vite，打包后由上面的 embed 文件系统提供资源。
 	mainApp = app
 	mainWindow = app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title: "TimeNotes",
+		Title:  "TimeNotes",
+		// Comfortable default workspace without dominating the desktop.
+		Width:     1280,
+		Height:    800,
+		MinWidth:  1024,
+		MinHeight: 680,
 		Mac: application.MacWindow{
 			InvisibleTitleBarHeight: 50,
 			Backdrop:                application.MacBackdropTranslucent,
