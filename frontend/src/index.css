@@ -245,13 +245,15 @@ textarea {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18) !important;
 }
 
-/* 文本/3D 移动端拖拽点：高于 Moveable 手柄，避免被右上/左上缩放点盖住 */
+/* 文本/3D 移动端拖拽点：高于 Moveable；向右偏移，避开左上角缩放点（约 32px 手柄） */
 .timenotes-element-move-handle-mobile {
   z-index: 120 !important;
   width: 44px !important;
   height: 44px !important;
-  left: -22px !important;
-  top: -22px !important;
+  /* 左上缩放点在 (0,0) 附近；手柄放在顶边偏右，与之分离 */
+  left: 36px !important;
+  top: -24px !important;
+  right: auto !important;
   touch-action: none;
   pointer-events: auto !important;
   border-width: 3px !important;
