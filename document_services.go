@@ -43,10 +43,108 @@ type ExportService struct{}
 
 var noteSaveLocks sync.Map
 
+// pendingNoteSaves holds chunked SaveNote JSON for mobile (Binder size limits).
+var pendingNoteSaves sync.Map // sessionID -> *pendingNoteSave
+
+type pendingNoteSave struct {
+	mu    sync.Mutex
+	path  string
+	parts map[int]string
+	total int
+}
+
 func noteSaveLock(path string) *sync.Mutex {
 	cleaned := filepath.Clean(path)
 	value, _ := noteSaveLocks.LoadOrStore(cleaned, &sync.Mutex{})
 	return value.(*sync.Mutex)
+}
+
+// SaveNoteBegin starts a chunked save session and returns a session id.
+// Used on Android where a single IPC message cannot carry a full note package.
+func (s *DocumentService) SaveNoteBegin(path string) (string, error) {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "" {
+		return "", errors.New("save path is required")
+	}
+	id := fmt.Sprintf("%d", time.Now().UnixNano())
+	pendingNoteSaves.Store(id, &pendingNoteSave{
+		path:  path,
+		parts: map[int]string{},
+	})
+	return id, nil
+}
+
+// SaveNoteAppend appends a base64-encoded UTF-8 fragment of the note JSON for a session.
+func (s *DocumentService) SaveNoteAppend(sessionID string, index int, total int, chunkBase64 string) error {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return errors.New("session id required")
+	}
+	if total <= 0 || index < 0 || index >= total {
+		return fmt.Errorf("invalid chunk index %d/%d", index, total)
+	}
+	if strings.TrimSpace(chunkBase64) == "" {
+		return errors.New("empty save chunk")
+	}
+	rawVal, ok := pendingNoteSaves.Load(sessionID)
+	if !ok {
+		return fmt.Errorf("unknown save session %s", sessionID)
+	}
+	sess := rawVal.(*pendingNoteSave)
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if sess.total == 0 {
+		sess.total = total
+	} else if sess.total != total {
+		return errors.New("chunk total mismatch")
+	}
+	sess.parts[index] = chunkBase64
+	return nil
+}
+
+// SaveNoteCommit joins chunks, unmarshals NotePackage, and writes the .tnote file.
+func (s *DocumentService) SaveNoteCommit(sessionID string) error {
+	sessionID = strings.TrimSpace(sessionID)
+	rawVal, ok := pendingNoteSaves.Load(sessionID)
+	if !ok {
+		return fmt.Errorf("unknown save session %s", sessionID)
+	}
+	// Remove session even on failure to avoid leaks.
+	defer pendingNoteSaves.Delete(sessionID)
+
+	sess := rawVal.(*pendingNoteSave)
+	sess.mu.Lock()
+	path := sess.path
+	total := sess.total
+	parts := make([]string, total)
+	for i := 0; i < total; i++ {
+		part, exists := sess.parts[i]
+		if !exists {
+			sess.mu.Unlock()
+			return fmt.Errorf("missing save chunk %d/%d", i, total)
+		}
+		parts[i] = part
+	}
+	sess.mu.Unlock()
+
+	if total == 0 {
+		return errors.New("empty save session")
+	}
+	var payload bytes.Buffer
+	for i, part := range parts {
+		raw, err := base64.StdEncoding.DecodeString(part)
+		if err != nil {
+			return fmt.Errorf("decode save chunk %d: %w", i, err)
+		}
+		if _, err := payload.Write(raw); err != nil {
+			return err
+		}
+	}
+	var note NotePackage
+	if err := json.Unmarshal(payload.Bytes(), &note); err != nil {
+		return fmt.Errorf("parse note package: %w", err)
+	}
+	return s.SaveNote(path, note)
 }
 
 func (s *DocumentService) NewDocument() NotePackage {
@@ -671,7 +769,11 @@ func writeFile(zw *zip.Writer, name string, raw []byte) error {
 
 func writeAssetBlob(zw *zip.Writer, group string, asset AssetBlob) error {
 	// 所有图片、贴纸、字体和背景图都按内容写入 ZIP，文档内不得保留本机绝对路径。
-	raw, err := base64.StdEncoding.DecodeString(asset.DataBase64)
+	payload := strings.TrimSpace(asset.DataBase64)
+	if i := strings.Index(payload, "base64,"); i >= 0 {
+		payload = payload[i+len("base64,"):]
+	}
+	raw, err := base64.StdEncoding.DecodeString(payload)
 	if err != nil {
 		return fmt.Errorf("decode asset %s: %w", asset.Name, err)
 	}

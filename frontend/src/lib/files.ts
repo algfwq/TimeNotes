@@ -1,6 +1,6 @@
 import type { AssetMeta } from '../types';
 import { dataUrlToBase64 } from './base64';
-import { createId, hashText } from './ids';
+import { createId, hashBlob, hashText } from './ids';
 
 type AssetGroup = 'assets' | 'stickers' | 'fonts' | 'audios' | 'videos' | 'models';
 
@@ -127,9 +127,35 @@ export async function getImagePlacementSize(src: string, maxWidth: number, maxHe
 }
 
 // 前端导入图片和字体都走同一套资源结构，保存 .tnote 时后端会把 dataBase64 写入 ZIP 包。
+// 大视频/模型：FileReader + 内容哈希并行；哈希走 ArrayBuffer，避免对巨型 dataURL 字符串做 SHA-256。
 export async function createAssetFromFile(file: File, group: AssetGroup): Promise<AssetMeta> {
-  const dataUrl = await readFileAsDataURL(file);
-  return createAssetFromDataUrl(dataUrl, file.name, group, file.type || mimeTypeFromName(file.name), file.size);
+  const mimeType = file.type || mimeTypeFromName(file.name);
+  const [dataUrl, hash] = await Promise.all([readFileAsDataURL(file), hashBlob(file)]);
+  const id =
+    hash.slice(0, 16)
+    || createId(
+      group === 'fonts'
+        ? 'font'
+        : group === 'stickers'
+          ? 'sticker'
+          : group === 'audios'
+            ? 'audio'
+            : group === 'videos'
+              ? 'video'
+              : group === 'models'
+                ? 'model'
+                : 'asset',
+    );
+  return {
+    id,
+    name: file.name,
+    hash,
+    mimeType,
+    size: file.size,
+    path: `${group}/${hash}-${file.name}`,
+    dataBase64: dataUrlToBase64(dataUrl),
+    dataUrl,
+  };
 }
 
 export async function createAssetFromUrl(url: string, name: string, group: AssetGroup): Promise<AssetMeta> {

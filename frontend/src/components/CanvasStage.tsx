@@ -386,7 +386,7 @@ function isMoveableControlTarget(target: EventTarget | null) {
   }
   return Boolean(
     target.closest(
-      '.moveable-control-box, .moveable-control, .moveable-line, .moveable-direction, .moveable-rotation, .moveable-rotation-control, .timenotes-moveable',
+      '.moveable-control-box, .moveable-control, .moveable-line, .moveable-direction, .moveable-rotation, .moveable-rotation-control, .timenotes-moveable, [data-element-move-handle]',
     ),
   );
 }

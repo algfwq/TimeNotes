@@ -4,6 +4,7 @@ import { IconPlay, IconVideo } from '@douyinfe/semi-icons';
 import { Toast } from '@douyinfe/semi-ui';
 import type { AssetMeta, NoteElement, ResourceTransferProgress } from '../../types';
 import { assetCoverDataUrl, assetDataUrl, assetPosterDataUrl } from '../../lib/files';
+import { isMobile } from '../../lib/platform';
 
 export function VideoElement({
   element,
@@ -25,6 +26,7 @@ export function VideoElement({
   const muted = Boolean(element.style?.muted ?? false);
   const loadedProgress = progress?.progress ?? 0;
   const transferPercent = Math.round(loadedProgress * 100);
+  const mobile = isMobile();
 
   const stopInteractiveEvent = (event: React.SyntheticEvent) => {
     event.stopPropagation();
@@ -103,10 +105,42 @@ export function VideoElement({
     );
   }
 
+  // 桌面：不加任何 pointer 拦截，保持 Semi VideoPlayer 原有 clickToPlay / 控件行为。
+  // 移动端：仅在冒泡阶段截断真正控件节点，绝不用 capture+stop（会阻断子节点收事件导致无法播放）。
+  const stopControlBubbleMobile = (event: React.SyntheticEvent) => {
+    if (!mobile) {
+      return;
+    }
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+    if (
+      target.closest(
+        [
+          'button',
+          'input',
+          'select',
+          'a',
+          '[role="button"]',
+          '[role="slider"]',
+          '[data-video-interactive]',
+          '.semi-videoPlayer-controls',
+          '.semi-videoPlayer-controls-menu',
+          '.semi-slider',
+        ].join(', '),
+      )
+    ) {
+      event.stopPropagation();
+    }
+  };
+
   return (
     <div
       className={`timenotes-video-player timenotes-video-${theme}`}
       data-video-player
+      onPointerDown={mobile ? stopControlBubbleMobile : undefined}
+      onMouseDown={mobile ? stopControlBubbleMobile : undefined}
     >
       <VideoPlayer
         ref={videoRef}
@@ -128,7 +162,6 @@ export function VideoElement({
         width="100%"
         height="100%"
         controlsList={['play', 'time', 'volume', 'playbackRate', 'fullscreen', 'pictureInPicture']}
-        style={{ pointerEvents: 'auto' }}
       />
     </div>
   );

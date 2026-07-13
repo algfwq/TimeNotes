@@ -4,6 +4,7 @@ import { useDocument } from '../../providers/DocumentProvider';
 import { resourceProgressKey, useResourceProgressMap } from '../../providers/ResourceProgressStore';
 import type { AssetMeta, NoteDocument, NoteElement, ResourceTransferProgress } from '../../types';
 import { assetDataUrl, isGifAsset, mergeAssetWithCache } from '../../lib/files';
+import { isMobile } from '../../lib/platform';
 import { AudioElement } from './AudioElement';
 import { CodeBlockElement } from './CodeBlockElement';
 import { ModelElement } from './ModelElement';
@@ -50,6 +51,19 @@ export function ElementRenderer({
       data-editing={editing ? 'true' : 'false'}
       className="timenote-element absolute box-border select-none"
       style={baseStyle}
+      onPointerDownCapture={(event) => {
+        // 移动端：子控件 stopPropagation 之前先保证能选中（尤其音频 button 模式几乎铺满）。
+        // 桌面 pointerType=mouse 不走此分支，行为不变。
+        if (event.pointerType === 'mouse' || !isMobile()) {
+          return;
+        }
+        if (tool === 'pan' || !event.isPrimary) {
+          return;
+        }
+        if (!selected) {
+          selectElement(element.id);
+        }
+      }}
       onMouseDown={(event) => {
         // 桌面端：保持原有鼠标路径，不改行为。
         if (tool === 'pan') {
@@ -92,7 +106,12 @@ export function ElementRenderer({
           return;
         }
         selectElement(element.id);
-        if (!selected && canDirectDragElement(element, tool)) {
+        // 触控直拖：未选中时启动；已选中的音视频也可在画面区拖（Moveable 在移动端对音视频关闭本体拖拽）。
+        // 控件命中已在上方 return；桌面仍只走 mousedown 路径。
+        const allowTouchDirectDrag =
+          canDirectDragElement(element, tool)
+          && (!selected || element.type === 'video' || element.type === 'audio');
+        if (allowTouchDirectDrag) {
           beginDirectElementDragPointer(event, {
             element,
             page: activePage,
@@ -137,15 +156,54 @@ function canDirectDragElement(element: NoteElement, tool: string) {
 }
 
 function isAudioInteractiveTarget(target: EventTarget) {
-  return target instanceof HTMLElement && Boolean(target.closest('[data-audio-interactive]'));
+  if (!(target instanceof Element)) {
+    return false;
+  }
+  if (target.closest('[data-audio-interactive]')) {
+    return true;
+  }
+  // 音频控件容器内的可交互控件
+  return Boolean(
+    target.closest(
+      '.timenotes-audio-player button, .timenotes-audio-player input, .timenotes-audio-player select, .timenotes-audio-player [role="slider"]',
+    ),
+  );
 }
 
 function isVideoInteractiveTarget(target: EventTarget) {
-  return target instanceof HTMLElement && Boolean(target.closest('[data-video-interactive]'));
+  if (!(target instanceof Element)) {
+    return false;
+  }
+  if (target.closest('[data-video-interactive]')) {
+    return true;
+  }
+  // 桌面保持窄匹配，避免把整个 Semi 播放器判成「控件」导致无法拖拽/选中。
+  // 移动端额外识别控件条内按钮/滑块，避免触控拖拽吞掉播放操作。
+  if (!isMobile()) {
+    return false;
+  }
+  if (!target.closest('[data-video-player]')) {
+    return false;
+  }
+  return Boolean(
+    target.closest(
+      [
+        'button',
+        'input',
+        'select',
+        'a',
+        '[role="button"]',
+        '[role="slider"]',
+        '.semi-videoPlayer-controls',
+        '.semi-videoPlayer-controls-menu',
+        '.semi-slider',
+      ].join(', '),
+    ),
+  );
 }
 
 function isModelInteractiveTarget(target: EventTarget) {
-  return target instanceof HTMLElement && Boolean(target.closest('[data-model-interactive]'));
+  return target instanceof Element && Boolean(target.closest('[data-model-interactive]'));
 }
 
 type DirectDragContext = {
@@ -327,6 +385,7 @@ function TextMoveHandle({
   onMove: (id: string, patch: Partial<NoteElement>, options?: { history?: boolean }) => void;
   onBegin: () => void;
 }) {
+  const mobile = isMobile();
   const beginDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
@@ -395,8 +454,13 @@ function TextMoveHandle({
   return (
     <button
       type="button"
-      title="拖拽移动文字"
-      className="absolute -left-3 -top-3 z-20 grid h-7 w-7 cursor-grab place-items-center rounded-full border border-[#2f6fed] bg-white text-[#2f6fed] shadow-sm active:cursor-grabbing"
+      data-element-move-handle
+      title="拖拽移动"
+      className={`absolute grid cursor-grab place-items-center rounded-full border border-[#2f6fed] bg-white text-[#2f6fed] shadow-sm active:cursor-grabbing ${
+        mobile
+          ? 'timenotes-element-move-handle-mobile'
+          : '-left-3 -top-3 z-20 h-7 w-7'
+      }`}
       onPointerDown={beginDrag}
     >
       <IconHandle />

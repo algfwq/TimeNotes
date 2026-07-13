@@ -5,6 +5,7 @@ import { SideSheet } from '@douyinfe/semi-ui';
 import * as THREE from 'three';
 import type { AssetMeta, NoteElement, ResourceTransferProgress } from '../../types';
 import { assetDataUrl, mergeAssetWithCache } from '../../lib/files';
+import { isMobile } from '../../lib/platform';
 
 interface ModelElementProps {
   element: NoteElement;
@@ -53,41 +54,59 @@ export function ModelElement({ element, asset, progress, readOnly, cachedAsset }
     );
   }
 
+  const mobile = isMobile();
+
   return (
     <>
       <div
         className="timenotes-model-view relative h-full w-full overflow-hidden rounded-[8px]"
         onPointerEnter={() => setHovered(true)}
         onPointerLeave={() => setHovered(false)}
-        onPointerDown={stopPointer}
         onWheel={stopPointer}
       >
-        <Canvas
-          flat
-          camera={{ position: [3, 2, 5], fov: 45 }}
-          gl={{ antialias: true, alpha: true, preserveDrawingBuffer: false, powerPreference: 'high-performance' }}
-          style={{ position: 'absolute', inset: 0, background: 'linear-gradient(135deg, #e8e2d6, #d9d3c7)' }}
-          dpr={[1, 2]}
+        {/* 仅画布区域标记 interactive，便于 Orbit 与选中外壳区分；外壳仍可被 ElementRenderer 选中 */}
+        <div
+          className="absolute inset-0"
+          data-model-interactive
+          onPointerDown={stopPointer}
         >
-            <ambientLight intensity={0.6} />
-            <directionalLight position={[5, 8, 5]} intensity={0.8} />
-            <directionalLight position={[-3, 2, -3]} intensity={0.3} />
-            <Suspense fallback={null}>
-              <ModelScene src={src} />
-            </Suspense>
-            <OrbitControls
-              enableDamping={true}
-              dampingFactor={0.08}
-              minDistance={0.5}
-              maxDistance={20}
-              makeDefault
-            />
-          </Canvas>
-        {hovered && (
+          <Canvas
+            flat
+            camera={{ position: [3, 2, 5], fov: 45 }}
+            gl={{ antialias: true, alpha: true, preserveDrawingBuffer: false, powerPreference: 'high-performance' }}
+            style={{ position: 'absolute', inset: 0, background: 'linear-gradient(135deg, #e8e2d6, #d9d3c7)' }}
+            dpr={[1, 2]}
+          >
+              <ambientLight intensity={0.6} />
+              <directionalLight position={[5, 8, 5]} intensity={0.8} />
+              <directionalLight position={[-3, 2, -3]} intensity={0.3} />
+              <Suspense fallback={null}>
+                <ModelScene src={src} />
+              </Suspense>
+              <OrbitControls
+                enableDamping={true}
+                dampingFactor={0.08}
+                minDistance={0.5}
+                maxDistance={20}
+                makeDefault
+              />
+            </Canvas>
+        </div>
+        {/* 桌面：悬停显示；移动端无 hover，始终显示。避开右上角缩放手柄 */}
+        {(hovered || mobile) && (
           <button
             type="button"
-            className="absolute right-2 top-2 z-10 grid h-7 w-7 place-items-center rounded-full bg-black/40 text-white backdrop-blur-sm transition hover:bg-black/60"
-            onPointerDown={stopPointer}
+            data-model-interactive
+            className={`absolute z-[90] grid h-9 w-9 place-items-center rounded-full bg-black/40 text-white backdrop-blur-sm transition hover:bg-black/60 ${
+              mobile ? 'right-7 top-2' : 'right-2 top-2'
+            }`}
+            onPointerDown={(event) => {
+              event.stopPropagation();
+              event.preventDefault();
+            }}
+            onPointerUp={(event) => {
+              event.stopPropagation();
+            }}
             onClick={(event) => {
               event.stopPropagation();
               event.preventDefault();

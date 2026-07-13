@@ -203,41 +203,59 @@ textarea {
   z-index: 40 !important;
 }
 
-/* 仅移动端：加大可点区域，仍保持空心蓝点样式，不影响桌面 */
+/* 仅移动端：加大可点区域，仍保持空心蓝点样式，不影响桌面。
+ * control-box 本体必须 pointer-events:none，否则会盖住视频/3D 内部按钮；
+ * 只在手柄/边线/旋转点上开启命中。 */
 .timenotes-moveable-mobile .moveable-control-box {
   z-index: 80 !important;
-  pointer-events: auto !important;
-  touch-action: none !important;
+  pointer-events: none !important;
 }
 
 .timenotes-moveable-mobile .moveable-control,
 .timenotes-moveable-mobile .moveable-line,
 .timenotes-moveable-mobile .moveable-direction,
 .timenotes-moveable-mobile .moveable-rotation,
-.timenotes-moveable-mobile .moveable-rotation-control {
+.timenotes-moveable-mobile .moveable-rotation-control,
+.timenotes-moveable-mobile .moveable-rotation-line {
   pointer-events: auto !important;
   touch-action: none !important;
 }
 
+/* 触控友好：约 32px 可视点 + 更大负边距扩大命中 */
 .timenotes-moveable-mobile .moveable-control {
-  width: 18px !important;
-  height: 18px !important;
-  margin-top: -9px !important;
-  margin-left: -9px !important;
-  border: 2px solid #2f6fed !important;
+  width: 32px !important;
+  height: 32px !important;
+  margin-top: -16px !important;
+  margin-left: -16px !important;
+  border: 3px solid #2f6fed !important;
   background: #ffffff !important;
   border-radius: 50% !important;
   box-sizing: border-box !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18) !important;
 }
 
 .timenotes-moveable-mobile .moveable-rotation-control {
-  width: 18px !important;
-  height: 18px !important;
-  margin-left: -9px !important;
-  border: 2px solid #2f6fed !important;
+  width: 32px !important;
+  height: 32px !important;
+  margin-left: -16px !important;
+  border: 3px solid #2f6fed !important;
   background: #ffffff !important;
   border-radius: 50% !important;
   box-sizing: border-box !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18) !important;
+}
+
+/* 文本/3D 移动端拖拽点：高于 Moveable 手柄，避免被右上/左上缩放点盖住 */
+.timenotes-element-move-handle-mobile {
+  z-index: 120 !important;
+  width: 44px !important;
+  height: 44px !important;
+  left: -22px !important;
+  top: -22px !important;
+  touch-action: none;
+  pointer-events: auto !important;
+  border-width: 3px !important;
+  box-shadow: 0 2px 8px rgba(47, 111, 237, 0.35) !important;
 }
 
 .timenotes-alignment-guide {
@@ -295,6 +313,16 @@ textarea {
 
 .timenote-element[data-type="audio"] [data-audio-interactive] {
   cursor: pointer;
+  touch-action: manipulation;
+}
+
+.timenote-element[data-type="video"] [data-video-interactive],
+.timenote-element[data-type="video"] button,
+.timenote-element[data-type="video"] input,
+.timenote-element[data-type="video"] [role="slider"] {
+  cursor: pointer;
+  touch-action: manipulation;
+  pointer-events: auto;
 }
 
 .timenote-element[data-type="video"] {
@@ -672,7 +700,8 @@ textarea {
   border-radius: 8px;
 }
 
-.timenotes-video-player .semi-video-player {
+.timenotes-video-player .semi-video-player,
+.timenotes-video-player .semi-videoPlayer {
   width: 100%;
   height: 100%;
 }

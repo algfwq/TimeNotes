@@ -23,6 +23,41 @@ interface SnapMatch {
 const snapThreshold = 10;
 const liveElementSyncIntervalMs = 120;
 
+/** 仅移动端：命中视频/音频/3D 内部操作控件时，Moveable 不应启动拖拽/缩放。 */
+function isElementChromeControl(target: EventTarget | null | undefined): boolean {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+  return Boolean(
+    target.closest(
+      [
+        'button',
+        'input',
+        'select',
+        'textarea',
+        'a',
+        '[role="button"]',
+        '[role="slider"]',
+        '[contenteditable="true"]',
+        '[data-video-interactive]',
+        '[data-audio-interactive]',
+        '[data-model-interactive] button',
+        '[data-video-player] button',
+        '[data-video-player] input',
+        '[data-video-player] [role="button"]',
+        '[data-video-player] [role="slider"]',
+        '.semi-videoPlayer-controls',
+        '.semi-videoPlayer-controls-menu',
+        '.semi-slider',
+        '.timenotes-audio-player button',
+        '.timenotes-audio-player input',
+        '.timenotes-audio-player [role="slider"]',
+        '[data-element-move-handle]',
+      ].join(', '),
+    ),
+  );
+}
+
 // SelectionController 把 DOM 元素绑定到 Moveable，负责拖拽、缩放、旋转和对齐参考线。
 // 它只处理非绘制类元素；画笔和胶带由 Konva 层单独渲染与选择。
 export function SelectionController({
@@ -48,7 +83,11 @@ export function SelectionController({
   const editing = Boolean(selectedElementId && selectedElementId === editingElementId);
   const keepRatio = selectedElement?.type === 'image' || selectedElement?.type === 'sticker' || selectedElement?.type === 'video';
   const isModel = selectedElement?.type === 'model';
-  const allowDrag = !editing && !isModel;
+  const isVideo = selectedElement?.type === 'video';
+  const isAudio = selectedElement?.type === 'audio';
+  // 音视频/3D 本体拖拽由 ElementRenderer 直拖（避开控件）；Moveable 只负责缩放/旋转手柄，避免盖住播放按钮。
+  const mobile = isMobile();
+  const allowDrag = !editing && !isModel && !(mobile && (isVideo || isAudio));
   const allowTransform = !editing;
   const minSize = selectedElement?.type === 'audio' ? { width: 46, height: 46 } : selectedElement?.type === 'video' ? { width: 160, height: 90 } : { width: 1, height: 1 };
   const elementRatio = Number(selectedElement?.style?.aspectRatio ?? 0) || (selectedElement ? selectedElement.width / Math.max(1, selectedElement.height) : 1);
@@ -186,8 +225,6 @@ export function SelectionController({
     return null;
   }
 
-  const mobile = isMobile();
-
   return (
     <>
       <AlignmentGuideOverlay page={page} zoom={zoom} guides={visibleGuides} />
@@ -202,10 +239,13 @@ export function SelectionController({
         className={mobile ? 'timenotes-moveable-mobile' : undefined}
         {...(mobile
           ? {
-              // 仅触控端加大手柄命中，桌面不传这些 prop
-              linePadding: 12,
-              controlPadding: 14,
+              // 仅触控端：更大手柄命中区；checkInput 放行 input/textarea
+              linePadding: 20,
+              controlPadding: 22,
               pinchable: false as const,
+              checkInput: true,
+              // 阻止 Moveable 吞掉子控件 click
+              preventClickEventOnDrag: true,
             }
           : {})}
         draggable={allowDrag}
@@ -223,6 +263,11 @@ export function SelectionController({
         snapDirections={{ left: true, right: true, top: true, bottom: true, center: true, middle: true }}
         elementSnapDirections={{ left: true, right: true, top: true, bottom: true, center: true, middle: true }}
         onDragStart={(e: any) => {
+          // 仅移动端拦截控件命中；桌面保持 Moveable 原有拖拽判定。
+          if (mobile && isElementChromeControl(e.inputEvent?.target)) {
+            e.stop();
+            return;
+          }
           if (mobile) {
             e.inputEvent?.stopPropagation?.();
           }
@@ -237,6 +282,10 @@ export function SelectionController({
           queueLivePatch({ x: snapped.box.x, y: snapped.box.y });
         }}
         onResizeStart={(e: any) => {
+          if (mobile && isElementChromeControl(e.inputEvent?.target)) {
+            e.stop();
+            return;
+          }
           if (mobile) {
             e.inputEvent?.stopPropagation?.();
           }
@@ -258,6 +307,10 @@ export function SelectionController({
           });
         }}
         onRotateStart={(e: any) => {
+          if (mobile && isElementChromeControl(e.inputEvent?.target)) {
+            e.stop();
+            return;
+          }
           if (mobile) {
             e.inputEvent?.stopPropagation?.();
           }

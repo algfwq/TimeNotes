@@ -1455,7 +1455,10 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
     )));
     try {
       const note = createPackageForTab(tab);
-      await DocumentService.SaveNote(tab.sourcePath, note as any);
+      // 移动端大素材（尤其视频）经 JSBridge 整包 SaveNote 会失败；分片 Stage 后再保存。
+      // 桌面 isMobile()===false，saveNotePackage 内部仍走原始 SaveNote。
+      const { saveNotePackage } = await import('../lib/mobileSave');
+      await saveNotePackage(tab.sourcePath, note);
       markTabSaved(tab.id, hash);
       return true;
     } catch (error) {
@@ -1508,13 +1511,21 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
     setPendingPlacement(undefined);
   }, [clearSelection, switchTab, tabs]);
 
-  // 自动保存：编辑手账本停止操作 2 秒后，仅在内容发生真实变更时静默落盘。
+  // 自动保存：停止编辑后短防抖静默落盘（仅真实变更；保存中的 tab 不再重置计时）。
   useEffect(() => {
-    const editTabs = tabs.filter((tab) => tab.mode === 'edit' && tab.sourcePath && tab.lastSavedHash !== documentSaveHash(tab.document));
+    const editTabs = tabs.filter(
+      (tab) =>
+        tab.mode === 'edit'
+        && tab.sourcePath
+        && !tab.saveInProgress
+        && tab.lastSavedHash !== documentSaveHash(tab.document),
+    );
     if (editTabs.length === 0) {
       return;
     }
-    const autoSaveTimer = setTimeout(async () => {
+    // 原 2s 体感偏慢；800ms 在移动端仍能合并连点/拖动，且更快落盘。
+    const autoSaveDebounceMs = 800;
+    const autoSaveTimer = window.setTimeout(async () => {
       setAutoSaveState('saving');
       let hasError = false;
       for (const tab of editTabs) {
@@ -1525,9 +1536,9 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
         }
       }
       setAutoSaveState(hasError ? 'error' : 'saved');
-      setTimeout(() => setAutoSaveState('idle'), 2000);
-    }, 2000);
-    return () => clearTimeout(autoSaveTimer);
+      window.setTimeout(() => setAutoSaveState('idle'), 1500);
+    }, autoSaveDebounceMs);
+    return () => window.clearTimeout(autoSaveTimer);
   }, [saveTabIfDirty, tabs]);
 
   // 应用退出拦截：保存所有发生真实变更的手账本。

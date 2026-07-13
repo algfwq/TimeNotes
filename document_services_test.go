@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -23,6 +24,52 @@ func TestSaveNoteWritesValidZipPackage(t *testing.T) {
 	if _, err := readNotePackage(path); err != nil {
 		t.Fatalf("saved package did not reopen: %v", err)
 	}
+}
+
+func TestSaveNoteChunkedBeginAppendCommit(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "chunked.tnote")
+	service := &DocumentService{}
+	note := service.NewDocument()
+	note.Document.Title = "chunked-save"
+	raw, err := jsonMarshalNote(note)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionID, err := service.SaveNoteBegin(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Split into three non-empty chunks to exercise multi-part assembly.
+	chunkSize := (len(raw) + 2) / 3
+	if chunkSize < 1 {
+		chunkSize = 1
+	}
+	total := (len(raw) + chunkSize - 1) / chunkSize
+	for i := 0; i < total; i++ {
+		start := i * chunkSize
+		end := start + chunkSize
+		if end > len(raw) {
+			end = len(raw)
+		}
+		if err := service.SaveNoteAppend(sessionID, i, total, base64.StdEncoding.EncodeToString(raw[start:end])); err != nil {
+			t.Fatalf("append %d/%d: %v", i, total, err)
+		}
+	}
+	if err := service.SaveNoteCommit(sessionID); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := readNotePackage(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if opened.Document.Title != "chunked-save" {
+		t.Fatalf("title=%q want chunked-save", opened.Document.Title)
+	}
+}
+
+func jsonMarshalNote(note NotePackage) ([]byte, error) {
+	return json.Marshal(note)
 }
 
 func TestSaveNoteFailureKeepsExistingPackage(t *testing.T) {

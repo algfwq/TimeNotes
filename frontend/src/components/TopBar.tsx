@@ -15,7 +15,6 @@ import {
   IconText,
   IconUndo,
 } from '@douyinfe/semi-icons';
-import { DocumentService } from '../../bindings/changeme';
 import logoUrl from '../assets/timenotes-logo.png';
 import { logFrontend } from '../lib/logger';
 import { isMobile } from '../lib/platform';
@@ -188,7 +187,8 @@ export function TopBar() {
         onCancel={() => setSaveVisible(false)}
         onOk={async () => {
           try {
-            await DocumentService.SaveNote(savePath, createPackage() as any);
+            const { saveNotePackage } = await import('../lib/mobileSave');
+            await saveNotePackage(savePath, createPackage());
             Toast.success('已保存');
             setSaveVisible(false);
           } catch (error) {

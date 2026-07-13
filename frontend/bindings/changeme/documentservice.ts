@@ -34,5 +34,27 @@ export function SaveNote(path: string, note: $models.NotePackage): $CancellableP
     return $Call.ByID(3591808041, path, note);
 }
 
+/**
+ * SaveNoteAppend appends a base64-encoded UTF-8 fragment of the note JSON for a session.
+ */
+export function SaveNoteAppend(sessionID: string, index: number, total: number, chunkBase64: string): $CancellablePromise<void> {
+    return $Call.ByID(3249069981, sessionID, index, total, chunkBase64);
+}
+
+/**
+ * SaveNoteBegin starts a chunked save session and returns a session id.
+ * Used on Android where a single IPC message cannot carry a full note package.
+ */
+export function SaveNoteBegin(path: string): $CancellablePromise<string> {
+    return $Call.ByID(1378386274, path);
+}
+
+/**
+ * SaveNoteCommit joins chunks, unmarshals NotePackage, and writes the .tnote file.
+ */
+export function SaveNoteCommit(sessionID: string): $CancellablePromise<void> {
+    return $Call.ByID(3950613936, sessionID);
+}
+
 // Private type creation functions
 const $$createType0 = $models.NotePackage.createFrom;

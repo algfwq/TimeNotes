@@ -15,3 +15,14 @@ export async function hashText(value: string): Promise<string> {
     .map((byte) => byte.toString(16).padStart(2, '0'))
     .join('');
 }
+
+/** 直接哈希二进制（大视频/模型比 hash dataURL 字符串快一个数量级）。 */
+export async function hashBlob(blob: Blob): Promise<string> {
+  if (typeof crypto === 'undefined' || !crypto.subtle) {
+    return createId('hash');
+  }
+  const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
