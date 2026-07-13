@@ -157,20 +157,21 @@ func main() {
 		closeLogging()
 }()
 
-	// 本地 Blog 桥：供 Blog 后台「编辑手账」与前端连接配置读写使用（仅 loopback:54088）。
-	blogBridge, blogBridgeErr := startBlogBridge()
-	if blogBridgeErr != nil {
-		logEvent("warn", "blog_bridge_start_failed", map[string]interface{}{"error": blogBridgeErr.Error()})
-	} else if blogBridge != nil {
-		defer blogBridge.Close()
+	isMobile := application.System.IsMobile()
+
+	// 本地 Blog 桥：仅桌面 loopback 联调；移动端无桌面 Blog 后台，跳过以免占端口/失败。
+	if !isMobile {
+		blogBridge, blogBridgeErr := startBlogBridge()
+		if blogBridgeErr != nil {
+			logEvent("warn", "blog_bridge_start_failed", map[string]interface{}{"error": blogBridgeErr.Error()})
+		} else if blogBridge != nil {
+			defer blogBridge.Close()
+		}
 	}
 
-	// Services 中注册的结构体方法会生成 TypeScript 绑定，前端通过这些绑定访问本地文件和素材能力。
-	app := application.New(application.Options{
-		Name:        "TimeNotes",
-		Description: "A canvas based hand-journal note editor",
-		FileAssociations: []string{".tnote"},
-		SingleInstance: &application.SingleInstanceOptions{
+	var singleInstance *application.SingleInstanceOptions
+	if !isMobile {
+		singleInstance = &application.SingleInstanceOptions{
 			UniqueID: "com.timenotes.app",
 			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
 				if mainWindow != nil {
@@ -178,7 +179,15 @@ func main() {
 					focusMainWindowPreserveState()
 				}
 			},
-		},
+		}
+	}
+
+	// Services 中注册的结构体方法会生成 TypeScript 绑定，前端通过这些绑定访问本地文件和素材能力。
+	app := application.New(application.Options{
+		Name:             "TimeNotes",
+		Description:      "A canvas based hand-journal note editor",
+		FileAssociations: []string{".tnote"},
+		SingleInstance:   singleInstance,
 		PanicHandler: func(details *application.PanicDetails) {
 			fields := map[string]interface{}{}
 			if details != nil {
@@ -230,9 +239,11 @@ func main() {
 		},
 	})
 
-	// 设置原生 macOS 菜单栏
-	menu := setupMenu()
-	app.Menu.SetApplicationMenu(menu)
+	// 原生菜单仅桌面有意义；移动端为 intentional no-op，跳过以免多余初始化。
+	if !isMobile {
+		menu := setupMenu()
+		app.Menu.SetApplicationMenu(menu)
+	}
 
 	// 主窗口只加载根路径，开发模式由 Wails 代理到 Vite，打包后由上面的 embed 文件系统提供资源。
 	mainApp = app

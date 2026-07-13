@@ -51,6 +51,7 @@ export function ElementRenderer({
       className="timenote-element absolute box-border select-none"
       style={baseStyle}
       onMouseDown={(event) => {
+        // 桌面端：保持原有鼠标路径，不改行为。
         if (tool === 'pan') {
           return;
         }
@@ -63,7 +64,36 @@ export function ElementRenderer({
         }
         selectElement(element.id);
         if (!selected && canDirectDragElement(element, tool)) {
-          beginDirectElementDrag(event, {
+          beginDirectElementDragMouse(event, {
+            element,
+            page: activePage,
+            zoom,
+            historyBase: document,
+            updateElement,
+          });
+        }
+        if (editing && element.type !== 'text' && element.type !== 'code') {
+          stopEditing();
+        }
+      }}
+      onPointerDown={(event) => {
+        // 触控/笔：仅非鼠标指针走此路径，避免与桌面 mousedown 双触发。
+        if (event.pointerType === 'mouse') {
+          return;
+        }
+        if (tool === 'pan') {
+          return;
+        }
+        if (!event.isPrimary) {
+          return;
+        }
+        event.stopPropagation();
+        if (isAudioInteractiveTarget(event.target) || isVideoInteractiveTarget(event.target) || isModelInteractiveTarget(event.target)) {
+          return;
+        }
+        selectElement(element.id);
+        if (!selected && canDirectDragElement(element, tool)) {
+          beginDirectElementDragPointer(event, {
             element,
             page: activePage,
             zoom,
@@ -118,30 +148,24 @@ function isModelInteractiveTarget(target: EventTarget) {
   return target instanceof HTMLElement && Boolean(target.closest('[data-model-interactive]'));
 }
 
-function beginDirectElementDrag(
-  event: React.MouseEvent<HTMLDivElement>,
-  {
-    element,
-    page,
-    zoom,
-    historyBase,
-    updateElement,
-  }: {
-    element: NoteElement;
-    page: { width: number; height: number };
-    zoom: number;
-    historyBase: NoteDocument;
-    updateElement: (id: string, patch: Partial<NoteElement>, options?: { history?: boolean; historyBase?: NoteDocument }) => void;
-  },
-) {
+type DirectDragContext = {
+  element: NoteElement;
+  page: { width: number; height: number };
+  zoom: number;
+  historyBase: NoteDocument;
+  updateElement: (id: string, patch: Partial<NoteElement>, options?: { history?: boolean; historyBase?: NoteDocument }) => void;
+};
+
+/** 桌面端：原 mouse 拖拽路径，保持与改动前一致。 */
+function beginDirectElementDragMouse(event: React.MouseEvent<HTMLDivElement>, ctx: DirectDragContext) {
   event.preventDefault();
   const target = event.currentTarget;
-  const start = { x: event.clientX, y: event.clientY, elementX: element.x, elementY: element.y };
+  const start = { x: event.clientX, y: event.clientY, elementX: ctx.element.x, elementY: ctx.element.y };
   let moved = false;
   let liveTimer: number | undefined;
   let lastLiveAt = 0;
   let pendingPosition: { x: number; y: number } | null = null;
-  let nextPosition = { x: element.x, y: element.y };
+  let nextPosition = { x: ctx.element.x, y: ctx.element.y };
 
   const flushLive = () => {
     if (!pendingPosition) {
@@ -150,7 +174,7 @@ function beginDirectElementDrag(
     const patch = pendingPosition;
     pendingPosition = null;
     lastLiveAt = performance.now();
-    updateElement(element.id, patch, { history: false });
+    ctx.updateElement(ctx.element.id, patch, { history: false });
   };
 
   const move = (moveEvent: MouseEvent) => {
@@ -161,8 +185,8 @@ function beginDirectElementDrag(
     }
     moved = true;
     nextPosition = {
-      x: clamp(Math.round(start.elementX + deltaX / zoom), 0, Math.max(0, page.width - element.width)),
-      y: clamp(Math.round(start.elementY + deltaY / zoom), 0, Math.max(0, page.height - element.height)),
+      x: clamp(Math.round(start.elementX + deltaX / ctx.zoom), 0, Math.max(0, ctx.page.width - ctx.element.width)),
+      y: clamp(Math.round(start.elementY + deltaY / ctx.zoom), 0, Math.max(0, ctx.page.height - ctx.element.height)),
     };
     target.style.left = `${nextPosition.x}px`;
     target.style.top = `${nextPosition.y}px`;
@@ -192,13 +216,102 @@ function beginDirectElementDrag(
     pendingPosition = null;
     window.removeEventListener('mousemove', move);
     window.removeEventListener('mouseup', end);
-    if (moved && (nextPosition.x !== element.x || nextPosition.y !== element.y)) {
-      updateElement(element.id, nextPosition, { historyBase });
+    if (moved && (nextPosition.x !== ctx.element.x || nextPosition.y !== ctx.element.y)) {
+      ctx.updateElement(ctx.element.id, nextPosition, { historyBase: ctx.historyBase });
     }
   };
 
   window.addEventListener('mousemove', move);
   window.addEventListener('mouseup', end);
+}
+
+/** 移动端：pointer 拖拽（仅 touch/pen）。 */
+function beginDirectElementDragPointer(event: React.PointerEvent<HTMLDivElement>, ctx: DirectDragContext) {
+  event.preventDefault();
+  const target = event.currentTarget;
+  const pointerId = event.pointerId;
+  try {
+    target.setPointerCapture(pointerId);
+  } catch {
+    // ignore capture failures
+  }
+  const start = { x: event.clientX, y: event.clientY, elementX: ctx.element.x, elementY: ctx.element.y };
+  let moved = false;
+  let liveTimer: number | undefined;
+  let lastLiveAt = 0;
+  let pendingPosition: { x: number; y: number } | null = null;
+  let nextPosition = { x: ctx.element.x, y: ctx.element.y };
+  const slop = 8;
+
+  const flushLive = () => {
+    if (!pendingPosition) {
+      return;
+    }
+    const patch = pendingPosition;
+    pendingPosition = null;
+    lastLiveAt = performance.now();
+    ctx.updateElement(ctx.element.id, patch, { history: false });
+  };
+
+  const move = (moveEvent: PointerEvent) => {
+    if (moveEvent.pointerId !== pointerId) {
+      return;
+    }
+    const deltaX = moveEvent.clientX - start.x;
+    const deltaY = moveEvent.clientY - start.y;
+    if (!moved && Math.hypot(deltaX, deltaY) < slop) {
+      return;
+    }
+    moved = true;
+    nextPosition = {
+      x: clamp(Math.round(start.elementX + deltaX / ctx.zoom), 0, Math.max(0, ctx.page.width - ctx.element.width)),
+      y: clamp(Math.round(start.elementY + deltaY / ctx.zoom), 0, Math.max(0, ctx.page.height - ctx.element.height)),
+    };
+    target.style.left = `${nextPosition.x}px`;
+    target.style.top = `${nextPosition.y}px`;
+    pendingPosition = nextPosition;
+    const elapsed = performance.now() - lastLiveAt;
+    if (elapsed >= directDragLiveSyncIntervalMs) {
+      if (liveTimer) {
+        window.clearTimeout(liveTimer);
+        liveTimer = undefined;
+      }
+      flushLive();
+      return;
+    }
+    if (!liveTimer) {
+      liveTimer = window.setTimeout(() => {
+        liveTimer = undefined;
+        flushLive();
+      }, directDragLiveSyncIntervalMs - elapsed);
+    }
+  };
+
+  const end = (endEvent: PointerEvent) => {
+    if (endEvent.pointerId !== pointerId) {
+      return;
+    }
+    if (liveTimer) {
+      window.clearTimeout(liveTimer);
+      liveTimer = undefined;
+    }
+    pendingPosition = null;
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', end);
+    window.removeEventListener('pointercancel', end);
+    try {
+      target.releasePointerCapture(pointerId);
+    } catch {
+      // ignore
+    }
+    if (moved && (nextPosition.x !== ctx.element.x || nextPosition.y !== ctx.element.y)) {
+      ctx.updateElement(ctx.element.id, nextPosition, { historyBase: ctx.historyBase });
+    }
+  };
+
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', end);
+  window.addEventListener('pointercancel', end);
 }
 
 function TextMoveHandle({

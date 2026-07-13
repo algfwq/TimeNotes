@@ -26,11 +26,15 @@ export function CanvasStage() {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const panStartRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
   // 远端光标是 presence 状态，不进入文档；这里节流后交给 CollaborationProvider 广播。
   const lastCursorAtRef = useRef(0);
   const cursorInsidePageRef = useRef(false);
 
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const panRef = useRef(pan);
+  panRef.current = pan;
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [cropElementId, setCropElementId] = useState<string | null>(null);
   const elements = useMemo(
@@ -42,9 +46,13 @@ export function CanvasStage() {
   const draftRef = useRef<{ type: 'drawing' | 'tape'; points: number[] } | null>(null);
   const isDrawingRef = useRef(false);
 
-  const beginDrawing = (event: Konva.KonvaEventObject<MouseEvent>) => {
-    // 只有画笔和胶带工具会让 Konva 接管鼠标事件，其他元素仍由 DOM/Moveable 处理。
+  const beginDrawing = (event: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
+    // 只有画笔和胶带工具会让 Konva 接管指针事件，其他元素仍由 DOM/Moveable 处理。
     if (tool !== 'drawing' && tool !== 'tape') {
+      return;
+    }
+    // 多指留给双指缩放，不进入绘制。
+    if (isMultiTouchEvent(event.evt)) {
       return;
     }
     const position = getPagePoint(event, zoom);
@@ -60,10 +68,14 @@ export function CanvasStage() {
     setDraft(nextDraft);
   };
 
-  const continueDrawing = (event: Konva.KonvaEventObject<MouseEvent>) => {
+  const continueDrawing = (event: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
     if (!isDrawingRef.current) {
       return;
     }
+    if (isMultiTouchEvent(event.evt)) {
+      return;
+    }
+    event.evt.preventDefault();
     const position = getPagePoint(event, zoom);
     if (!position) {
       return;
@@ -107,31 +119,30 @@ export function CanvasStage() {
     setDraft(null);
   };
 
-  const startPan = (event: React.MouseEvent) => {
+  const startPan = (clientX: number, clientY: number, button = 0) => {
     // 平移是纯视口状态，不写入文档；鼠标中键始终可临时拖拽画布。
-    if (tool !== 'pan' && event.button !== 1) {
-      return;
+    if (tool !== 'pan' && button !== 1) {
+      return false;
     }
-    event.preventDefault();
     stopEditing();
     selectElement(undefined);
-    panStartRef.current = { x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y };
+    panStartRef.current = { x: clientX, y: clientY, panX: panRef.current.x, panY: panRef.current.y };
+    return true;
   };
 
-  const movePan = (event: React.MouseEvent) => {
-    publishCursor(event);
+  const movePan = (clientX: number, clientY: number) => {
     if (!panStartRef.current) {
       return;
     }
-    const nextX = panStartRef.current.panX + event.clientX - panStartRef.current.x;
-    const nextY = panStartRef.current.panY + event.clientY - panStartRef.current.y;
+    const nextX = panStartRef.current.panX + clientX - panStartRef.current.x;
+    const nextY = panStartRef.current.panY + clientY - panStartRef.current.y;
     setPan({ x: nextX, y: nextY });
   };
 
-  const publishCursor = (event: React.MouseEvent) => {
+  const publishCursor = (clientX: number, clientY: number) => {
     // 坐标发布前从屏幕坐标还原为页面坐标，远端不同缩放比例也能显示在同一纸张位置。
     const now = performance.now();
-    const point = getDomPagePoint(event, paperRef.current, zoom);
+    const point = getDomPagePointFromClient(clientX, clientY, paperRef.current, zoom);
     if (!point || point.x < 0 || point.y < 0 || point.x > activePage.width || point.y > activePage.height) {
       if (cursorInsidePageRef.current) {
         cursorInsidePageRef.current = false;
@@ -177,14 +188,18 @@ export function CanvasStage() {
     setContextMenu({ x: event.clientX, y: event.clientY, elementId: element.id });
   }, []);
 
-  const handlePaperMouseDown = (event: React.MouseEvent) => {
+  const handlePaperPointerDown = (event: React.PointerEvent) => {
     // 点击已有元素时交给元素本身或 SelectionController，空白纸张才处理放置/取消选择。
     const target = event.target as HTMLElement;
+    // Moveable 缩放/旋转手柄在元素外层；若冒泡到这里会清掉选中，导致手柄一点就消失。
+    if (isMoveableControlTarget(target)) {
+      return;
+    }
     if (target.closest('[data-element-id]')) {
       return;
     }
     if (tool === 'text' || tool === 'code' || tool === 'sticker' || tool === 'image' || tool === 'audio' || tool === 'video' || tool === 'model') {
-      const point = getDomPagePoint(event, paperRef.current, zoom);
+      const point = getDomPagePointFromClient(event.clientX, event.clientY, paperRef.current, zoom);
       if (point) {
         event.preventDefault();
         event.stopPropagation();
@@ -214,25 +229,108 @@ export function CanvasStage() {
     hideRemoteCursor();
   }, [activePage.id, hideRemoteCursor]);
 
+  // 触控：双指捏合缩放；阻止浏览器默认手势吞掉事件。
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) {
+      return;
+    }
+    let pinchStartDist = 0;
+    let pinchStartZoom = zoomRef.current;
+    let pinchActive = false;
+
+    const onTouchStart = (event: TouchEvent) => {
+      if (event.touches.length === 2) {
+        pinchActive = true;
+        isDrawingRef.current = false;
+        draftRef.current = null;
+        setDraft(null);
+        panStartRef.current = null;
+        pinchStartDist = touchDistance(event.touches[0], event.touches[1]);
+        pinchStartZoom = zoomRef.current;
+      }
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      if (event.touches.length === 2 && pinchActive && pinchStartDist > 0) {
+        event.preventDefault();
+        const dist = touchDistance(event.touches[0], event.touches[1]);
+        const scale = dist / pinchStartDist;
+        const next = Math.min(2, Math.max(0.35, pinchStartZoom * scale));
+        setZoom(Number(next.toFixed(2)));
+      }
+    };
+    const onTouchEnd = (event: TouchEvent) => {
+      if (event.touches.length < 2) {
+        pinchActive = false;
+        pinchStartDist = 0;
+      }
+      if (event.touches.length === 0) {
+        panStartRef.current = null;
+      }
+    };
+
+    viewport.addEventListener('touchstart', onTouchStart, { passive: true });
+    viewport.addEventListener('touchmove', onTouchMove, { passive: false });
+    viewport.addEventListener('touchend', onTouchEnd, { passive: true });
+    viewport.addEventListener('touchcancel', onTouchEnd, { passive: true });
+    return () => {
+      viewport.removeEventListener('touchstart', onTouchStart);
+      viewport.removeEventListener('touchmove', onTouchMove);
+      viewport.removeEventListener('touchend', onTouchEnd);
+      viewport.removeEventListener('touchcancel', onTouchEnd);
+    };
+  }, [setZoom]);
+
+  const drawingMode = tool === 'drawing' || tool === 'tape';
+  const panMode = tool === 'pan';
+
   return (
     <div
       ref={viewportRef}
       className={`relative h-full overflow-hidden bg-[#e8e2d6] ${
-        tool === 'pan' ? 'cursor-grab' : tool === 'text' || tool === 'code' || tool === 'sticker' || tool === 'image' || tool === 'audio' || tool === 'video' || tool === 'model' ? 'cursor-crosshair' : ''
+        panMode ? 'cursor-grab' : tool === 'text' || tool === 'code' || tool === 'sticker' || tool === 'image' || tool === 'audio' || tool === 'video' || tool === 'model' ? 'cursor-crosshair' : ''
       }`}
+      style={{ touchAction: drawingMode || panMode ? 'none' : 'manipulation' }}
       onMouseDown={(event) => {
+        if (isMoveableControlTarget(event.target)) {
+          return;
+        }
         if (event.target === event.currentTarget) {
           selectElement(undefined);
           stopEditing();
         }
-        startPan(event);
+        if (startPan(event.clientX, event.clientY, event.button)) {
+          event.preventDefault();
+        }
       }}
-      onMouseMove={movePan}
+      onMouseMove={(event) => {
+        publishCursor(event.clientX, event.clientY);
+        movePan(event.clientX, event.clientY);
+      }}
       onMouseUp={endPan}
       onMouseLeave={() => {
         endPan();
         hideRemoteCursor();
       }}
+      onPointerDown={(event) => {
+        if (isMoveableControlTarget(event.target)) {
+          return;
+        }
+        // 触控单指平移（移动画布工具）
+        if (event.pointerType === 'touch' && panMode && event.isPrimary) {
+          if (startPan(event.clientX, event.clientY, 0)) {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            event.preventDefault();
+          }
+        }
+      }}
+      onPointerMove={(event) => {
+        if (event.pointerType === 'touch' && panStartRef.current) {
+          movePan(event.clientX, event.clientY);
+        }
+      }}
+      onPointerUp={endPan}
+      onPointerCancel={endPan}
       onWheel={handleWheel}
     >
       <div
@@ -242,7 +340,7 @@ export function CanvasStage() {
         <div
           className="relative"
           style={{ width: activePage.width * zoom, height: activePage.height * zoom }}
-          onMouseDown={handlePaperMouseDown}
+          onPointerDown={handlePaperPointerDown}
         >
           <div
             ref={paperRef}
@@ -282,28 +380,67 @@ export function CanvasStage() {
   );
 }
 
-function getPagePoint(event: Konva.KonvaEventObject<MouseEvent>, zoom: number) {
+function isMoveableControlTarget(target: EventTarget | null) {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+  return Boolean(
+    target.closest(
+      '.moveable-control-box, .moveable-control, .moveable-line, .moveable-direction, .moveable-rotation, .moveable-rotation-control, .timenotes-moveable',
+    ),
+  );
+}
+
+function isMultiTouchEvent(evt: MouseEvent | TouchEvent) {
+  if (!('touches' in evt)) {
+    return false;
+  }
+  return evt.touches.length > 1 || evt.changedTouches.length > 1;
+}
+
+function clientPointFromEvent(evt: MouseEvent | TouchEvent): { x: number; y: number } | null {
+  if ('touches' in evt) {
+    const touch = evt.touches[0] || evt.changedTouches[0];
+    if (!touch) {
+      return null;
+    }
+    return { x: touch.clientX, y: touch.clientY };
+  }
+  return { x: evt.clientX, y: evt.clientY };
+}
+
+function getPagePoint(event: Konva.KonvaEventObject<MouseEvent | TouchEvent>, zoom: number) {
   const stage = event.target.getStage();
   const rect = stage?.container().getBoundingClientRect();
   if (!rect) {
     return null;
   }
+  const client = clientPointFromEvent(event.evt);
+  if (!client) {
+    return null;
+  }
   // Konva 不知道外层 DOM scale，这里把屏幕坐标换回持久化用的页面坐标。
   return {
-    x: Math.max(0, Math.round((event.evt.clientX - rect.left) / zoom)),
-    y: Math.max(0, Math.round((event.evt.clientY - rect.top) / zoom)),
+    x: Math.max(0, Math.round((client.x - rect.left) / zoom)),
+    y: Math.max(0, Math.round((client.y - rect.top) / zoom)),
   };
 }
 
-function getDomPagePoint(event: React.MouseEvent, paper: HTMLDivElement | null, zoom: number) {
+function getDomPagePointFromClient(clientX: number, clientY: number, paper: HTMLDivElement | null, zoom: number) {
   const rect = paper?.getBoundingClientRect();
   if (!rect) {
     return null;
   }
   return {
-    x: Math.round((event.clientX - rect.left) / zoom),
-    y: Math.round((event.clientY - rect.top) / zoom),
+    x: Math.round((clientX - rect.left) / zoom),
+    y: Math.round((clientY - rect.top) / zoom),
   };
+}
+
+function touchDistance(a: Touch, b: Touch) {
+  const dx = a.clientX - b.clientX;
+  const dy = a.clientY - b.clientY;
+  return Math.hypot(dx, dy);
 }
 
 // RemoteCollaborationOverlay 只渲染 presence，不修改本地文档；它依赖 peer.pageId/cursor.pageId 过滤当前页。
@@ -397,23 +534,28 @@ function DrawingLayer({
   draft: { type: 'drawing' | 'tape'; points: number[] } | null;
   drawingEnabled: boolean;
   draftStyle: Record<string, string | number | boolean>;
-  onMouseDown: (event: Konva.KonvaEventObject<MouseEvent>) => void;
-  onMouseMove: (event: Konva.KonvaEventObject<MouseEvent>) => void;
+  onMouseDown: (event: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => void;
+  onMouseMove: (event: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => void;
   onMouseUp: () => void;
   stageRef?: React.RefObject<Konva.Stage | null>;
 }) {
   // Stage 的尺寸使用未缩放页面尺寸，外层 DOM scale 统一处理视觉缩放。
+  // touch-action:none 避免 Android 把拖动当成滚动/手势，导致画笔收不到 move。
   return (
     <Stage
       ref={stageRef as any}
       className={`absolute inset-0 ${drawingEnabled ? 'z-[100500]' : 'z-[2]'}`}
       width={page.width}
       height={page.height}
-      style={{ pointerEvents: drawingEnabled ? 'auto' : 'none' }}
+      style={{ pointerEvents: drawingEnabled ? 'auto' : 'none', touchAction: 'none' }}
       onMouseDown={onMouseDown}
       onMouseMove={onMouseMove}
       onMouseUp={onMouseUp}
       onMouseLeave={onMouseUp}
+      onTouchStart={onMouseDown}
+      onTouchMove={onMouseMove}
+      onTouchEnd={onMouseUp}
+      onTouchCancel={onMouseUp}
     >
       <Layer>
         {draft ? <StrokeLine element={draftElement(page, draft, draftStyle)} selected={false} /> : null}

@@ -18,6 +18,7 @@ import {
 import { DocumentService } from '../../bindings/changeme';
 import logoUrl from '../assets/timenotes-logo.png';
 import { logFrontend } from '../lib/logger';
+import { isMobile } from '../lib/platform';
 import { useDocument } from '../providers/DocumentProvider';
 import type { ToolMode } from '../types';
 
@@ -53,9 +54,15 @@ export function TopBar() {
       } catch (error) {
         Toast.error(`保存失败：${String(error)}`);
       }
-    } else {
-      setSaveVisible(true);
+      return;
     }
+    // Android/iOS 不支持 SaveFile 对话框；引导走沙箱手账库。
+    if (isMobile()) {
+      Toast.warning('移动端请从首页「新建手账」创建后再保存');
+      openHomeTab();
+      return;
+    }
+    setSaveVisible(true);
   };
 
   const openNote = async () => {
@@ -90,6 +97,10 @@ export function TopBar() {
   };
 
   const chooseSavePath = async () => {
+    if (isMobile()) {
+      Toast.warning('移动端不支持另存为到任意路径，请使用首页手账库');
+      return;
+    }
     try {
       const selected = await Dialogs.SaveFile({
         Title: '保存 TimeNotes 文件',

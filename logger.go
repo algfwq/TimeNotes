@@ -132,6 +132,8 @@ func openLogFiles() ([]*os.File, []string) {
 		// 测试或临时排障可以显式指定日志目录，避免污染真实运行目录。
 		candidates = append(candidates, override)
 	}
+	// 优先应用数据目录（Android 为 getFilesDir，桌面为 UserConfigDir）。
+	candidates = append(candidates, filepath.Join(platformDataRoot(), "logs"))
 	if exePath := executablePath(); exePath != "" {
 		candidates = append(candidates, filepath.Dir(exePath))
 	}

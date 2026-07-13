@@ -1,11 +1,6 @@
-//go:build android
+//go:build ignore
 
-package main
-
-import "github.com/wailsapp/wails/v3/pkg/application"
-
-func init() {
-	// Register main function to be called when the Android app initializes
-	// This is necessary because in c-shared build mode, main() is not automatically called
-	application.RegisterAndroidMain(main)
-}
+// Android entry lives at the module root: ../../main_android.go
+// (package main). This file is intentionally excluded from builds so
+// go build from the project root compiles a single RegisterAndroidMain.
+package ignore

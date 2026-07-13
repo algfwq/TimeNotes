@@ -320,11 +320,65 @@ function LayerPanel({
 }) {
   const [dragElementId, setDragElementId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const dragElementIdRef = useRef<string | null>(null);
+  const dropTargetIdRef = useRef<string | null>(null);
+  const pointerDragActiveRef = useRef(false);
+  const suppressClickRef = useRef(false);
 
   const finishDrag = () => {
-    // HTML5 拖拽结束后统一清空视觉状态，防止拖出列表外时残留高亮。
+    // HTML5 / 触控拖拽结束后统一清空视觉状态，防止拖出列表外时残留高亮。
+    dragElementIdRef.current = null;
+    dropTargetIdRef.current = null;
+    pointerDragActiveRef.current = false;
     setDragElementId(null);
     setDropTargetId(null);
+  };
+
+  const beginPointerLayerDrag = (elementId: string, event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) {
+      return;
+    }
+    if ((event.target as HTMLElement).closest('[data-layer-action]')) {
+      return;
+    }
+    // 桌面鼠标继续走 HTML5 drag；触控用 pointer 模拟排序。
+    if (event.pointerType === 'mouse') {
+      return;
+    }
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    pointerDragActiveRef.current = true;
+    suppressClickRef.current = false;
+    dragElementIdRef.current = elementId;
+    dropTargetIdRef.current = null;
+    setDragElementId(elementId);
+    setDropTargetId(null);
+  };
+
+  const movePointerLayerDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!pointerDragActiveRef.current || !dragElementIdRef.current) {
+      return;
+    }
+    suppressClickRef.current = true;
+    const el = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
+    const row = el?.closest('[data-layer-element-id]') as HTMLElement | null;
+    const targetId = row?.getAttribute('data-layer-element-id') || null;
+    if (targetId && targetId !== dragElementIdRef.current) {
+      dropTargetIdRef.current = targetId;
+      setDropTargetId(targetId);
+    }
+  };
+
+  const endPointerLayerDrag = () => {
+    if (!pointerDragActiveRef.current) {
+      return;
+    }
+    const sourceId = dragElementIdRef.current;
+    const targetId = dropTargetIdRef.current;
+    if (sourceId && targetId && sourceId !== targetId) {
+      onReorder(sourceId, targetId);
+    }
+    finishDrag();
   };
 
   return (
@@ -355,11 +409,15 @@ function LayerPanel({
                 role="button"
                 tabIndex={0}
                 draggable
-                className={`flex w-full cursor-grab items-center gap-3 rounded-[8px] border px-2 py-2 text-left transition active:cursor-grabbing ${
+                className={`flex w-full cursor-grab items-center gap-3 rounded-[8px] border px-2 py-2 text-left transition active:cursor-grabbing touch-none ${
                   selected ? 'border-[#2f6fed] bg-white shadow-sm' : 'border-transparent bg-white/55 hover:bg-white'
                 } ${dragElementId === element.id ? 'opacity-45' : ''} ${
                   dropTargetId === element.id && dragElementId !== element.id ? 'ring-2 ring-[#2f6fed]/25' : ''
                 }`}
+                onPointerDown={(event) => beginPointerLayerDrag(element.id, event)}
+                onPointerMove={movePointerLayerDrag}
+                onPointerUp={endPointerLayerDrag}
+                onPointerCancel={finishDrag}
                 onDragStart={(event) => {
                   // 图层卡片内的按钮不能触发拖拽，否则点击复制/删除会被浏览器当成拖动。
                   if ((event.target as HTMLElement).closest('[data-layer-action]')) {
@@ -367,6 +425,7 @@ function LayerPanel({
                     return;
                   }
                   setDragElementId(element.id);
+                  dragElementIdRef.current = element.id;
                   event.dataTransfer.effectAllowed = 'move';
                   event.dataTransfer.setData('text/timenotes-layer-id', element.id);
                 }}
@@ -392,7 +451,13 @@ function LayerPanel({
                   finishDrag();
                 }}
                 onDragEnd={finishDrag}
-                onClick={() => onSelect(element.id)}
+                onClick={() => {
+                  if (suppressClickRef.current) {
+                    suppressClickRef.current = false;
+                    return;
+                  }
+                  onSelect(element.id);
+                }}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' || event.key === ' ') {
                     onSelect(element.id);

@@ -17,6 +17,7 @@ import { Events } from '@wailsio/runtime';
 import * as NotebookService from '../../bindings/changeme/notebookservice';
 import type { NotebookMeta } from '../../bindings/changeme/models';
 import { logFrontend } from '../lib/logger';
+import { isMobile } from '../lib/platform';
 import { useDocument } from '../providers/DocumentProvider';
 import { assetDataUrl } from '../lib/files';
 import type { NoteElement, NotePackage } from '../types';
@@ -235,6 +236,10 @@ export function HomeWorkspace() {
   }, [deleteTarget, loadNotebooks]);
 
   const handleBackup = useCallback(async (meta: NotebookMeta) => {
+    if (isMobile()) {
+      Toast.warning('移动端暂不支持导出到任意路径（后续将支持系统分享）');
+      return;
+    }
     try {
       const selected = await Dialogs.SaveFile({
         Title: '备份手账本',
@@ -404,6 +409,10 @@ export function HomeWorkspace() {
                 onChangeCover={() => handleChangeCover(meta)}
                 onUploadBlog={() => handleUploadBlog(meta)}
                 onOpenDir={async () => {
+                  if (isMobile()) {
+                    Toast.info('移动端手账保存在应用文档目录，暂不支持打开系统文件管理器');
+                    return;
+                  }
                   try {
                     await NotebookService.OpenFileDirectory(meta.path);
                   } catch {

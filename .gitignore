@@ -7,6 +7,10 @@ output/
 *.log
 *.tnote
 *.local
+*.apk
+*.aab
+*.so
+*.h
 
 node_modules/
 frontend/node_modules/
@@ -19,4 +23,12 @@ dist/
 build/linux/appimage/build/
 build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
 *.DS_Store
+
+# Android build outputs / local tooling (keep sources + gradle wrappers)
 build/android/.gradle/
+build/android/.device_serial
+build/android/build/
+build/android/app/build/
+build/android/app/src/main/jniLibs/
+build/android/local.properties
+build/android/**/captures/

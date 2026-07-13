@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Moveable from 'react-moveable';
+import { isMobile } from '../lib/platform';
 import { useDocument } from '../providers/DocumentProvider';
 import type { NoteElement, NotePage } from '../types';
 
@@ -185,6 +186,8 @@ export function SelectionController({
     return null;
   }
 
+  const mobile = isMobile();
+
   return (
     <>
       <AlignmentGuideOverlay page={page} zoom={zoom} guides={visibleGuides} />
@@ -195,6 +198,16 @@ export function SelectionController({
         container={paperRef.current?.parentElement ?? undefined}
         zoom={zoom}
         origin={false}
+        // 移动端专用 class：放大命中区域；桌面不挂 class，保持原样式
+        className={mobile ? 'timenotes-moveable-mobile' : undefined}
+        {...(mobile
+          ? {
+              // 仅触控端加大手柄命中，桌面不传这些 prop
+              linePadding: 12,
+              controlPadding: 14,
+              pinchable: false as const,
+            }
+          : {})}
         draggable={allowDrag}
         resizable={allowTransform}
         rotatable={allowTransform}
@@ -209,7 +222,12 @@ export function SelectionController({
         elementGuidelines={elementGuidelines}
         snapDirections={{ left: true, right: true, top: true, bottom: true, center: true, middle: true }}
         elementSnapDirections={{ left: true, right: true, top: true, bottom: true, center: true, middle: true }}
-        onDragStart={beginElementInteraction}
+        onDragStart={(e: any) => {
+          if (mobile) {
+            e.inputEvent?.stopPropagation?.();
+          }
+          beginElementInteraction();
+        }}
         onDrag={({ target: dragTarget, left, top }: any) => {
           const clamped = clampBox({ x: left, y: top, width: selectedElement.width, height: selectedElement.height }, page, undefined, minSize);
           const snapped = snapBox(clamped, snapReferences, page);
@@ -218,7 +236,12 @@ export function SelectionController({
           setVisibleGuides(snapped.guides);
           queueLivePatch({ x: snapped.box.x, y: snapped.box.y });
         }}
-        onResizeStart={beginElementInteraction}
+        onResizeStart={(e: any) => {
+          if (mobile) {
+            e.inputEvent?.stopPropagation?.();
+          }
+          beginElementInteraction();
+        }}
         onResize={({ target: resizeTarget, width, height, drag }: any) => {
           const clamped = clampBox({ x: drag.left, y: drag.top, width, height }, page, keepRatio ? elementRatio : undefined, minSize);
           const snapped = snapBox(clamped, snapReferences, page);
@@ -234,7 +257,12 @@ export function SelectionController({
             y: snapped.box.y,
           });
         }}
-        onRotateStart={beginElementInteraction}
+        onRotateStart={(e: any) => {
+          if (mobile) {
+            e.inputEvent?.stopPropagation?.();
+          }
+          beginElementInteraction();
+        }}
         onRotate={({ target: rotateTarget, rotate }: any) => {
           rotateTarget.style.transform = `rotate(${rotate}deg)`;
           queueLivePatch({ rotation: Math.round(rotate) });

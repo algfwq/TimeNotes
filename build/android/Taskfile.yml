@@ -7,7 +7,8 @@ vars:
   APP_ID: '{{.APP_ID | default "com.wails.app"}}'
   MIN_SDK: '21'
   TARGET_SDK: '34'
-  NDK_VERSION: 'r26d'
+  # Preferred NDK folder name under $ANDROID_HOME/ndk/; auto-detects if missing.
+  NDK_VERSION: '27.0.12077973'
 
 tasks:
   install:deps:
@@ -47,33 +48,71 @@ tasks:
     summary: Compile Go code to shared library (.so)
     cmds:
       - |
-        NDK_ROOT="${ANDROID_NDK_HOME:-$ANDROID_HOME/ndk/{{.NDK_VERSION}}}"
-        if [ ! -d "$NDK_ROOT" ]; then
-          echo "Error: Android NDK not found at $NDK_ROOT"
-          echo "Please set ANDROID_NDK_HOME or install NDK {{.NDK_VERSION}} via Android Studio"
-          exit 1
+        set -e
+        # Windows: go-task often runs without Git usr/bin (mkdir, etc.).
+        if [ -d "/c/Program Files/Git/usr/bin" ]; then
+          export PATH="/c/Program Files/Git/usr/bin:/c/Program Files/Git/bin:$PATH"
+        elif [ -d "C:/Program Files/Git/usr/bin" ]; then
+          export PATH="C:/Program Files/Git/usr/bin:C:/Program Files/Git/bin:$PATH"
         fi
+        resolve_ndk() {
+          if [ -n "$ANDROID_NDK_HOME" ] && [ -d "$ANDROID_NDK_HOME" ]; then
+            echo "$ANDROID_NDK_HOME"
+            return
+          fi
+          if [ -n "$ANDROID_HOME" ] && [ -d "$ANDROID_HOME/ndk/{{.NDK_VERSION}}" ]; then
+            echo "$ANDROID_HOME/ndk/{{.NDK_VERSION}}"
+            return
+          fi
+          if [ -n "$ANDROID_HOME" ] && [ -d "$ANDROID_HOME/ndk" ]; then
+            # Prefer newest numeric version directory.
+            latest=$(ls -1 "$ANDROID_HOME/ndk" 2>/dev/null | sort -V | tail -1)
+            if [ -n "$latest" ] && [ -d "$ANDROID_HOME/ndk/$latest" ]; then
+              echo "$ANDROID_HOME/ndk/$latest"
+              return
+            fi
+          fi
+          return 1
+        }
 
-        # Determine toolchain based on host OS
-        case "$(uname -s)" in
+        NDK_ROOT=$(resolve_ndk) || {
+          echo "Error: Android NDK not found."
+          echo "Set ANDROID_NDK_HOME or install an NDK under \$ANDROID_HOME/ndk/"
+          exit 1
+        }
+        echo "Using NDK: $NDK_ROOT"
+
+        UNAME_S=$(uname -s 2>/dev/null || echo unknown)
+        case "$UNAME_S" in
           Darwin) HOST_TAG="darwin-x86_64" ;;
           Linux)  HOST_TAG="linux-x86_64" ;;
-          *)      echo "Unsupported host OS"; exit 1 ;;
+          MINGW*|MSYS*|CYGWIN*|Windows_NT|unknown)
+            HOST_TAG="windows-x86_64"
+            ;;
+          *)
+            if [ -d "$NDK_ROOT/toolchains/llvm/prebuilt/windows-x86_64" ]; then
+              HOST_TAG="windows-x86_64"
+            else
+              echo "Unsupported host OS: $UNAME_S"
+              exit 1
+            fi
+            ;;
         esac
 
         TOOLCHAIN="$NDK_ROOT/toolchains/llvm/prebuilt/$HOST_TAG"
+        if [ ! -d "$TOOLCHAIN" ]; then
+          echo "Error: NDK toolchain not found at $TOOLCHAIN"
+          exit 1
+        fi
 
-        # Set compiler based on architecture
         case "{{.ARCH}}" in
           arm64)
-            export CC="$TOOLCHAIN/bin/aarch64-linux-android{{.MIN_SDK}}-clang"
-            export CXX="$TOOLCHAIN/bin/aarch64-linux-android{{.MIN_SDK}}-clang++"
+            CLANG_BASE="$TOOLCHAIN/bin/aarch64-linux-android{{.MIN_SDK}}-clang"
             export GOARCH=arm64
             JNI_DIR="arm64-v8a"
             ;;
           amd64|x86_64)
-            export CC="$TOOLCHAIN/bin/x86_64-linux-android{{.MIN_SDK}}-clang"
-            export CXX="$TOOLCHAIN/bin/x86_64-linux-android{{.MIN_SDK}}-clang++"
+            CLANG_BASE="$TOOLCHAIN/bin/x86_64-linux-android{{.MIN_SDK}}-clang"
             export GOARCH=amd64
             JNI_DIR="x86_64"
             ;;
@@ -83,6 +122,17 @@ tasks:
             ;;
         esac
 
+        if [ -x "$CLANG_BASE" ] || [ -f "$CLANG_BASE" ]; then
+          export CC="$CLANG_BASE"
+          export CXX="${CLANG_BASE}++"
+        elif [ -f "${CLANG_BASE}.cmd" ]; then
+          export CC="${CLANG_BASE}.cmd"
+          export CXX="${CLANG_BASE}++.cmd"
+        else
+          echo "Error: clang not found for {{.ARCH}} at $CLANG_BASE"
+          exit 1
+        fi
+
         export CGO_ENABLED=1
         export GOOS=android
 
@@ -91,6 +141,7 @@ tasks:
 
         go build -buildmode=c-shared {{.BUILD_FLAGS}} \
           -o build/android/app/src/main/jniLibs/$JNI_DIR/libwails.so
+        echo "Built libwails.so for $JNI_DIR"
     vars:
       BUILD_FLAGS: '{{if eq .PRODUCTION "true"}}-tags production,android -trimpath -buildvcs=false -ldflags="-w -s"{{else}}-tags android,debug -buildvcs=false -gcflags=all="-l"{{end}}'
 
@@ -123,8 +174,27 @@ tasks:
     summary: Assembles the APK using Gradle
     cmds:
       - |
+        set -e
+        if [ -d "/c/Program Files/Git/usr/bin" ]; then
+          export PATH="/c/Program Files/Git/usr/bin:/c/Program Files/Git/bin:$PATH"
+        fi
         cd build/android
-        ./gradlew assembleDebug
+        # Prefer .bat on Windows hosts; shell wrapper often fails under cmd-like sh.
+        UNAME_S=$(uname -s 2>/dev/null || echo unknown)
+        case "$UNAME_S" in
+          MINGW*|MSYS*|CYGWIN*|Windows_NT|unknown)
+            if [ -f "./gradlew.bat" ]; then
+              cmd.exe //c "gradlew.bat assembleDebug"
+            else
+              bash ./gradlew assembleDebug
+            fi
+            ;;
+          *)
+            chmod +x ./gradlew 2>/dev/null || true
+            ./gradlew assembleDebug
+            ;;
+        esac
+        mkdir -p "../../{{.BIN_DIR}}"
         cp app/build/outputs/apk/debug/app-debug.apk "../../{{.BIN_DIR}}/{{.APP_NAME}}.apk"
         echo "APK created: {{.BIN_DIR}}/{{.APP_NAME}}.apk"
 
@@ -132,8 +202,26 @@ tasks:
     summary: Assembles a release APK using Gradle
     cmds:
       - |
+        set -e
+        if [ -d "/c/Program Files/Git/usr/bin" ]; then
+          export PATH="/c/Program Files/Git/usr/bin:/c/Program Files/Git/bin:$PATH"
+        fi
         cd build/android
-        ./gradlew assembleRelease
+        UNAME_S=$(uname -s 2>/dev/null || echo unknown)
+        case "$UNAME_S" in
+          MINGW*|MSYS*|CYGWIN*|Windows_NT|unknown)
+            if [ -f "./gradlew.bat" ]; then
+              cmd.exe //c "gradlew.bat assembleRelease"
+            else
+              bash ./gradlew assembleRelease
+            fi
+            ;;
+          *)
+            chmod +x ./gradlew 2>/dev/null || true
+            ./gradlew assembleRelease
+            ;;
+        esac
+        mkdir -p "../../{{.BIN_DIR}}"
         cp app/build/outputs/apk/release/app-release-unsigned.apk "../../{{.BIN_DIR}}/{{.APP_NAME}}-release.apk"
         echo "Release APK created: {{.BIN_DIR}}/{{.APP_NAME}}-release.apk"
 
@@ -147,10 +235,11 @@ tasks:
     generates:
       - frontend/bindings/**/*
     cmds:
+      # CGO off: bindings only need to load packages; avoids requiring NDK CC just for codegen.
       - wails3 generate bindings -f '{{.BUILD_FLAGS}}' -clean=true
     env:
       GOOS: android
-      CGO_ENABLED: 1
+      CGO_ENABLED: "0"
       GOARCH: '{{.ARCH | default "arm64"}}'
 
   ensure-emulator:
@@ -197,6 +286,29 @@ tasks:
       - sh: command -v emulator
         msg: "emulator not found. Please install Android SDK and add emulator to PATH"
 
+  pick-device:
+    internal: true
+    summary: Resolve physical adb device serial into DEVICE_SERIAL
+    cmds:
+      - |
+        set -e
+        if [ -n "{{.DEVICE_ID}}" ]; then
+          export DEVICE_SERIAL="{{.DEVICE_ID}}"
+          echo "Using DEVICE_ID=$DEVICE_SERIAL"
+          echo "$DEVICE_SERIAL" > build/android/.device_serial
+          exit 0
+        fi
+        # Prefer non-emulator devices (wireless + USB).
+        DEVICE_SERIAL=$(adb devices | awk 'NR>1 && $2=="device" && $1 !~ /^emulator/ {print $1; exit}')
+        if [ -z "$DEVICE_SERIAL" ]; then
+          echo "No physical Android device found."
+          echo "Connect via USB or: adb connect <ip:port>"
+          adb devices -l
+          exit 1
+        fi
+        echo "Using device: $DEVICE_SERIAL"
+        echo "$DEVICE_SERIAL" > build/android/.device_serial
+
   deploy-emulator:
     summary: Deploy to Android Emulator
     deps: [package]
@@ -204,6 +316,27 @@ tasks:
       - adb uninstall {{.APP_ID}} 2>/dev/null || true
       - adb install "{{.BIN_DIR}}/{{.APP_NAME}}.apk"
       - adb shell am start -n {{.APP_ID}}/.MainActivity
+
+  deploy-device:
+    summary: Install + launch on a physical device (arm64 debug APK)
+    deps:
+      - task: pick-device
+      - task: build
+        vars:
+          ARCH: arm64
+    cmds:
+      - task: assemble:apk
+      - |
+        set -e
+        DEVICE_SERIAL=$(cat build/android/.device_serial 2>/dev/null || true)
+        ADB_ARGS=()
+        if [ -n "$DEVICE_SERIAL" ]; then
+          ADB_ARGS=(-s "$DEVICE_SERIAL")
+        fi
+        adb "${ADB_ARGS[@]}" uninstall {{.APP_ID}} 2>/dev/null || true
+        adb "${ADB_ARGS[@]}" install -r "{{.BIN_DIR}}/{{.APP_NAME}}.apk"
+        adb "${ADB_ARGS[@]}" shell am start -n {{.APP_ID}}/.MainActivity
+        echo "Launched {{.APP_ID}} on ${DEVICE_SERIAL:-default device}"
 
   run:
     summary: Run the application in Android Emulator
@@ -218,10 +351,24 @@ tasks:
       - adb install "{{.BIN_DIR}}/{{.APP_NAME}}.apk"
       - adb shell am start -n {{.APP_ID}}/.MainActivity
 
+  run:device:
+    summary: Build debug arm64 APK and run on physical device (USB or wireless adb)
+    cmds:
+      - task: deploy-device
+        vars:
+          DEVICE_ID: '{{.DEVICE_ID}}'
+
   logs:
     summary: Stream Android logcat filtered to this app
     cmds:
-      - adb logcat -v time | grep -E "(Wails|{{.APP_NAME}})"
+      - |
+        ADB_ARGS=()
+        if [ -n "{{.DEVICE_ID}}" ]; then
+          ADB_ARGS=(-s "{{.DEVICE_ID}}")
+        elif [ -f build/android/.device_serial ]; then
+          ADB_ARGS=(-s "$(cat build/android/.device_serial)")
+        fi
+        adb "${ADB_ARGS[@]}" logcat -v time | grep -E --line-buffered "(Wails|{{.APP_NAME}}|AndroidRuntime|chromium)"
 
   logs:all:
     summary: Stream all Android logcat (verbose)
@@ -235,3 +382,4 @@ tasks:
       - rm -rf build/android/app/build
       - rm -rf build/android/app/src/main/jniLibs/*/libwails.so
       - rm -rf build/android/.gradle
+      - rm -f build/android/.device_serial

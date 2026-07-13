@@ -113,12 +113,8 @@ func (s *DocumentService) SaveNote(path string, note NotePackage) error {
 }
 
 func (s *DocumentService) GetAppDataDir() (string, error) {
-	// 这个目录用于后续保存应用级配置；当前 .tnote 文件仍由用户显式选择路径。
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	path := filepath.Join(dir, "TimeNotes")
+	// 应用级配置与手账库根目录；Android 使用应用私有 files 目录。
+	path := platformDataRoot()
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		return "", err
 	}

@@ -193,6 +193,7 @@ textarea {
   padding: 0 8px;
 }
 
+/* 桌面端保持 Moveable 默认：空心蓝点（白底 + 蓝色描边） */
 .moveable-control,
 .moveable-line {
   --moveable-color: #2f6fed;
@@ -200,6 +201,43 @@ textarea {
 
 .moveable-control-box {
   z-index: 40 !important;
+}
+
+/* 仅移动端：加大可点区域，仍保持空心蓝点样式，不影响桌面 */
+.timenotes-moveable-mobile .moveable-control-box {
+  z-index: 80 !important;
+  pointer-events: auto !important;
+  touch-action: none !important;
+}
+
+.timenotes-moveable-mobile .moveable-control,
+.timenotes-moveable-mobile .moveable-line,
+.timenotes-moveable-mobile .moveable-direction,
+.timenotes-moveable-mobile .moveable-rotation,
+.timenotes-moveable-mobile .moveable-rotation-control {
+  pointer-events: auto !important;
+  touch-action: none !important;
+}
+
+.timenotes-moveable-mobile .moveable-control {
+  width: 18px !important;
+  height: 18px !important;
+  margin-top: -9px !important;
+  margin-left: -9px !important;
+  border: 2px solid #2f6fed !important;
+  background: #ffffff !important;
+  border-radius: 50% !important;
+  box-sizing: border-box !important;
+}
+
+.timenotes-moveable-mobile .moveable-rotation-control {
+  width: 18px !important;
+  height: 18px !important;
+  margin-left: -9px !important;
+  border: 2px solid #2f6fed !important;
+  background: #ffffff !important;
+  border-radius: 50% !important;
+  box-sizing: border-box !important;
 }
 
 .timenotes-alignment-guide {

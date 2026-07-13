@@ -8,7 +8,6 @@ import (
 	"io"
 	"mime"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -51,14 +50,7 @@ func notebooksConfigDir() string {
 	if notebooksConfigDirOverride != "" {
 		return notebooksConfigDirOverride
 	}
-	dir, err := os.UserConfigDir()
-	if err != nil || dir == "" {
-		if home, homeErr := os.UserHomeDir(); homeErr == nil && home != "" {
-			return filepath.Join(home, "AppData", "Roaming", "TimeNotes")
-		}
-		return filepath.Join(".", "TimeNotes")
-	}
-	return filepath.Join(dir, "TimeNotes")
+	return platformDataRoot()
 }
 
 func notebooksExecutableDir() string {
@@ -452,11 +444,13 @@ func (s *NotebookService) ImportNotebook(srcPath string) (NotebookMeta, error) {
 	now := time.Now().UTC()
 	id := fmt.Sprintf("%d", now.UnixNano())
 	coverType, coverData := coverFromPackageThumbnail(note.Thumbnail)
+	// 位于手账库目录内的文件（含 Blog 下载落盘）视为托管，删除列表项时应清理本地文件。
+	managed := sameOrChildPath(srcPath, notebooksRoot())
 	meta := NotebookMeta{
 		ID:        id,
 		Name:      note.Document.Title,
 		Path:      srcPath,
-		IsManaged: false,
+		IsManaged: managed,
 		CoverType: coverType,
 		CoverData: coverData,
 		CreatedAt: now.Format(time.RFC3339),
@@ -465,7 +459,7 @@ func (s *NotebookService) ImportNotebook(srcPath string) (NotebookMeta, error) {
 	if err := saveNotebookMeta(meta); err != nil {
 		return NotebookMeta{}, fmt.Errorf("保存元数据失败: %w", err)
 	}
-	logEvent("info", "notebook_registered_external", map[string]interface{}{"id": id, "path": srcPath})
+	logEvent("info", "notebook_registered_external", map[string]interface{}{"id": id, "path": srcPath, "managed": managed})
 	return meta, nil
 }
 
@@ -542,15 +536,21 @@ func (s *NotebookService) DeleteNotebook(id string) error {
 	if !found {
 		return fmt.Errorf("notebook %s not found", id)
 	}
-	if target.IsManaged {
-		if err := os.Remove(target.Path); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("删除文件失败: %w", err)
+	// 删除列表项时清理本地 .tnote：托管本始终删；落在 notebooks 目录内的也删
+	//（Blog「编辑」打开时可能 IsManaged=false，但文件仍在本地手账库）。
+	// 不触碰 Blog 服务端文件——此处只做本地磁盘操作。
+	if path := strings.TrimSpace(target.Path); path != "" {
+		underLibrary := sameOrChildPath(path, notebooksRoot())
+		if target.IsManaged || underLibrary {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("删除文件失败: %w", err)
+			}
 		}
 	}
 	if err := deleteNotebookMeta(id); err != nil {
 		return err
 	}
-	logEvent("info", "notebook_deleted", map[string]interface{}{"id": id, "path": target.Path})
+	logEvent("info", "notebook_deleted", map[string]interface{}{"id": id, "path": target.Path, "managed": target.IsManaged})
 	return nil
 }
 
@@ -837,6 +837,3 @@ func writeThumbnailDataURL(base64Data string) string {
 	return "data:image/png;base64," + base64Data
 }
 
-func openInExplorer(path string) error {
-	return exec.Command("explorer", "/select,", path).Start()
-}
