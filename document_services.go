@@ -29,7 +29,7 @@ import (
 
 const (
 	currentFormatVersion = 7
-	currentAppVersion    = "2.0.0"
+	currentAppVersion    = "2.9.0"
 )
 
 // DocumentService 暴露给前端负责 .tnote 的新建、打开和保存；这里不掺入 UI 状态。

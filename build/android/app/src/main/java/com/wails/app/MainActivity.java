@@ -115,7 +115,11 @@ public class MainActivity extends AppCompatActivity {
         settings.setAllowFileAccess(true);
         settings.setAllowContentAccess(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
-        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+        // App page is served as https://wails.localhost via WebViewAssetLoader.
+        // Collaboration (and local LAN tools) use plain http/ws on the LAN; Chromium
+        // blocks those as mixed content unless ALWAYS_ALLOW is set. Assets still
+        // only load from our PathHandler — this does not open third-party HTTPS pages.
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         // 平板/大屏稳定性：固定布局视口，禁止系统字体缩放把整页撑飞。
         settings.setUseWideViewPort(true);
         settings.setLoadWithOverviewMode(true);

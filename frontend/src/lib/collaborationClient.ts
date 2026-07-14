@@ -341,7 +341,30 @@ export class CollaborationClient {
   // WebSocket 是协作房间的控制面：首帧 auth 通过房间密钥鉴权，后续承载信令和中转包。
   private openSocket() {
     this.options.onStatus('连接中');
-    const socket = new WebSocket(this.options.url);
+    let socket: WebSocket;
+    try {
+      socket = new WebSocket(this.options.url);
+    } catch (error) {
+      // Android/iOS：页面若是 https://wails.localhost，浏览器会拒绝 ws:// 混合内容。
+      const reason = error instanceof Error ? error.message : String(error);
+      const mixed =
+        /insecure WebSocket|mixed content|HTTPS/i.test(reason) ||
+        (typeof window !== 'undefined' &&
+          window.location.protocol === 'https:' &&
+          /^ws:/i.test(this.options.url));
+      this.options.onStatus('连接失败');
+      this.options.onError(
+        mixed
+          ? [
+              '当前页面是 HTTPS 安全上下文，无法直接连接 ws:// 协作服务（混合内容被拦截）。',
+              `目标：${this.options.url}`,
+              'Android 需允许 WebView 混合内容（MIXED_CONTENT_ALWAYS_ALLOW）并重新安装 App；或改用 wss:// 协作服务器。',
+              `底层错误：${reason}`,
+            ].join('\n')
+          : `协作 WebSocket 创建失败：${reason}`,
+      );
+      return;
+    }
     this.socket = socket;
     socket.addEventListener('open', () => {
       this.sendSocket(
@@ -1131,8 +1154,21 @@ export class CollaborationClient {
     if (this.options.forceRelay || this.peers.has(user.id)) {
       return;
     }
+    // 部分 Android WebView / 受限环境可能没有 RTCPeerConnection；直接降级为 relay。
+    if (typeof RTCPeerConnection === 'undefined') {
+      this.peerUsers.set(user.id, { ...(this.peerUsers.get(user.id) ?? user), transport: 'relay' });
+      this.emitPeers();
+      return;
+    }
     // iceServers 优先使用联机服务器返回的内置 STUN，再合并本地调试配置。
-    const pc = new RTCPeerConnection({ iceServers: this.iceServers() });
+    let pc: RTCPeerConnection;
+    try {
+      pc = new RTCPeerConnection({ iceServers: this.iceServers() });
+    } catch {
+      this.peerUsers.set(user.id, { ...(this.peerUsers.get(user.id) ?? user), transport: 'relay' });
+      this.emitPeers();
+      return;
+    }
     const peer: PeerConnection = { id: user.id, user, pc, channels: {}, timer: 0 };
     this.peers.set(user.id, peer);
     pc.onicecandidate = (event) => {

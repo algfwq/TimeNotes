@@ -1,20 +1,36 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Avatar, Button, Checkbox, Input, Modal, Space, Tag, TextArea, Toast, Typography } from '@douyinfe/semi-ui';
 import { IconCloud, IconCopy, IconDelete, IconLink, IconUserGroup } from '@douyinfe/semi-icons';
 import { createCollaborationRoom, iceServersFromServerAddress, normalizeHttpServerUrl, parseInviteLink, serverAddressToWsUrl } from '../../lib/collaborationClient';
+import { copyTextToClipboard } from '../../lib/clipboard';
+import { isMobile } from '../../lib/platform';
 import { useCollaboration } from '../../providers/CollaborationProvider';
 import type { PresenceUser } from '../../types';
 
+/** 桌面本机默认；手机跨设备时 127.0.0.1 指向手机自身，必须填电脑局域网 IP 或用 adb reverse。 */
+const DEFAULT_SERVER_DESKTOP = 'http://127.0.0.1:8787';
+const DEFAULT_SERVER_MOBILE = '';
+
 export function CollaborationPanel() {
   const { status, peers, isConnected, isHost, forceRelay, setForceRelay, connect, disconnect, kickPeer } = useCollaboration();
-  const [serverAddress, setServerAddress] = useState('http://127.0.0.1:8787');
+  const mobile = isMobile();
+  const [serverAddress, setServerAddress] = useState(() => (isMobile() ? DEFAULT_SERVER_MOBILE : DEFAULT_SERVER_DESKTOP));
   const [roomId, setRoomId] = useState('');
   const [roomKey, setRoomKey] = useState('');
   const [inviteUrl, setInviteUrl] = useState('');
   const [inviteInput, setInviteInput] = useState('');
-  const [userName, setUserName] = useState('本机用户');
+  const [userName, setUserName] = useState(() => (isMobile() ? '手机用户' : '本机用户'));
   const [busy, setBusy] = useState(false);
   const [peerMenu, setPeerMenu] = useState<{ x: number; y: number; peer: PresenceUser } | null>(null);
+  const longPressTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    // 移动端 WebRTC 打洞常因 NAT/防火墙失败；默认走应用层 WebSocket 中转，保证联机可用。
+    // 桌面端仍默认尝试 P2P，用户可随时勾选「强制应用层中转」。
+    if (mobile) {
+      setForceRelay(true);
+    }
+  }, [mobile, setForceRelay]);
 
   useEffect(() => {
     try {
@@ -31,15 +47,37 @@ export function CollaborationPanel() {
 
   useEffect(() => {
     const close = () => setPeerMenu(null);
+    const clearLongPress = () => {
+      if (longPressTimerRef.current !== null) {
+        window.clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
+    };
     window.addEventListener('click', close);
     window.addEventListener('resize', close);
+    window.addEventListener('pointerup', clearLongPress);
+    window.addEventListener('pointercancel', clearLongPress);
     return () => {
       window.removeEventListener('click', close);
       window.removeEventListener('resize', close);
+      window.removeEventListener('pointerup', clearLongPress);
+      window.removeEventListener('pointercancel', clearLongPress);
+      clearLongPress();
     };
   }, []);
 
+  const openPeerMenu = (peer: PresenceUser, x: number, y: number) => {
+    if (!isHost) {
+      return;
+    }
+    setPeerMenu({ x, y, peer });
+  };
+
   const startRoom = async () => {
+    if (!serverAddress.trim()) {
+      Toast.warning(mobile ? '请填写电脑局域网地址，例如 http://192.168.x.x:8787（勿用 127.0.0.1）' : '请填写协作服务器地址');
+      return;
+    }
     setBusy(true);
     try {
       // 创建房间时服务端会返回 wsUrl、inviteUrl 和内置 STUN；本地兜底再按地址推导一次 STUN。
@@ -73,7 +111,11 @@ export function CollaborationPanel() {
 
   const connectCurrentRoom = () => {
     try {
-      // 手动输入房间时没有创建接口响应，因此从服务器地址推导 WebSocket 和 STUN。
+      if (!serverAddress.trim() || !roomId.trim() || !roomKey.trim()) {
+        Toast.warning('请填写服务器地址、房间 ID 和房间密钥');
+        return;
+      }
+      // 手动加入房间时没有创建接口响应，因此从服务器地址推导 WebSocket 和 STUN。
       connect({ url: serverAddressToWsUrl(serverAddress), roomId, roomKey, userName, forceRelay, iceServers: iceServersFromServerAddress(serverAddress) });
     } catch (error) {
       Toast.error(String(error instanceof Error ? error.message : error));
@@ -84,11 +126,11 @@ export function CollaborationPanel() {
     if (!inviteUrl) {
       return;
     }
-    try {
-      await navigator.clipboard.writeText(inviteUrl);
+    const ok = await copyTextToClipboard(inviteUrl);
+    if (ok) {
       Toast.success('邀请链接已复制');
-    } catch {
-      Toast.warning('当前环境无法自动复制，请手动复制邀请链接');
+    } else {
+      Toast.warning('当前环境无法自动复制，请长按文本框手动复制邀请链接');
     }
   };
 
@@ -105,7 +147,17 @@ export function CollaborationPanel() {
 
         <label className="block w-full">
           <span className="mb-1 block text-xs text-black/45">服务器地址</span>
-          <Input prefix={<IconCloud />} value={serverAddress} onChange={setServerAddress} placeholder="http://127.0.0.1:8787" />
+          <Input
+            prefix={<IconCloud />}
+            value={serverAddress}
+            onChange={setServerAddress}
+            placeholder={mobile ? 'http://电脑局域网IP:8787' : DEFAULT_SERVER_DESKTOP}
+          />
+          {mobile ? (
+            <span className="mt-1 block text-xs text-black/40">
+              手机上 127.0.0.1 是手机自己；请填电脑 WLAN IP，或用 adb reverse 后再填 http://127.0.0.1:8787
+            </span>
+          ) : null}
         </label>
         <label className="block w-full">
           <span className="mb-1 block text-xs text-black/45">你的显示名称</span>
@@ -113,7 +165,7 @@ export function CollaborationPanel() {
         </label>
         <Checkbox checked={forceRelay} onChange={(event) => setForceRelay(Boolean(event.target.checked))}>
           {/* 这是 TimeNotes 自己的 WebSocket 数据中转，不是浏览器 ICE 的标准 TURN 服务。 */}
-          强制应用层中转
+          强制应用层中转{mobile ? '（移动端默认开启）' : ''}
         </Checkbox>
 
         <div className="grid w-full grid-cols-2 gap-2">
@@ -169,7 +221,7 @@ export function CollaborationPanel() {
           {peers.map((peer) => (
             <div
               key={peer.id}
-              className="flex items-center gap-2 rounded-[8px] bg-white px-3 py-2"
+              className="flex items-center gap-2 rounded-[8px] bg-white px-3 py-2 touch-manipulation"
               style={{ cursor: isHost ? 'context-menu' : undefined }}
               onContextMenu={(event) => {
                 if (!isHost) {
@@ -177,18 +229,46 @@ export function CollaborationPanel() {
                 }
                 event.preventDefault();
                 event.stopPropagation();
-                setPeerMenu({ x: event.clientX, y: event.clientY, peer });
+                openPeerMenu(peer, event.clientX, event.clientY);
+              }}
+              onPointerDown={(event) => {
+                // 触屏没有稳定右键；房主长按成员打开踢人菜单。
+                if (!isHost || event.pointerType === 'mouse') {
+                  return;
+                }
+                if (longPressTimerRef.current !== null) {
+                  window.clearTimeout(longPressTimerRef.current);
+                }
+                const x = event.clientX;
+                const y = event.clientY;
+                longPressTimerRef.current = window.setTimeout(() => {
+                  longPressTimerRef.current = null;
+                  openPeerMenu(peer, x, y);
+                }, 480);
               }}
             >
               <Avatar size="small" style={{ background: peer.color }}>
                 {peer.name.slice(0, 1)}
               </Avatar>
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <div className="truncate text-sm">{peer.name}</div>
                 <div className="text-xs text-black/45">
                   {peer.editingElementId ? '正在编辑元素' : peer.selectedElementId ? '已选中元素' : `页面 ${peer.pageId || '-'}`} · {peer.transport === 'p2p' ? 'P2P' : '中转'} · {shortPeerId(peer.id)}
                 </div>
               </div>
+              {isHost ? (
+                <Button
+                  size="small"
+                  type="danger"
+                  theme="borderless"
+                  icon={<IconDelete />}
+                  aria-label={`踢出 ${peer.name || '协作者'}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    openPeerMenu(peer, event.clientX || 24, event.clientY || 24);
+                  }}
+                />
+              ) : null}
             </div>
           ))}
         </div>

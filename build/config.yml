@@ -11,7 +11,7 @@ info:
   description: "TimeNotes desktop hand-journal notebook" # The application description
   copyright: "© 2026, ALGFWQ" # Copyright text
   comments: "TimeNotes desktop hand-journal notebook" # Comments
-  version: "2.0.0" # The application version
+  version: "2.9.0" # The application version
   # cfBundleIconName: "appicon" # The macOS icon name in Assets.car icon bundles (optional)
   #                               # Should match the name of your .icon file without the extension
   #                               # If not set and Assets.car exists, defaults to "appicon"

@@ -1,20 +1,26 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { Avatar, Button, Input, Modal, Tabs, Tooltip, Typography } from '@douyinfe/semi-ui';
-import { IconDelete, IconEdit, IconFile, IconPlus } from '@douyinfe/semi-icons';
+import { IconDelete, IconEdit, IconFile, IconHandle, IconPlus } from '@douyinfe/semi-icons';
+import { isMobile } from '../lib/platform';
 import { useDocument } from '../providers/DocumentProvider';
 import { useCollaboration } from '../providers/CollaborationProvider';
 import type { PresenceUser } from '../types';
 import { AssetLibrary } from './library/AssetLibrary';
 import { CollaborationPanel } from './library/CollaborationPanel';
 
+/** 触控长按打开页面菜单的阈值；移动过阈值则转为拖拽排序。 */
+const PAGE_LONG_PRESS_MS = 480;
+const PAGE_DRAG_MOVE_PX = 10;
+
 export function LeftLibrary() {
-  const [pagesHeight, setPagesHeight] = useState(260);
+  const mobileHost = isMobile();
+  const [pagesHeight, setPagesHeight] = useState(mobileHost ? 300 : 260);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PagesPanel height={pagesHeight} />
-      <SectionResizeHandle onResize={setPagesHeight} />
+      <SectionResizeHandle onResize={setPagesHeight} touchFriendly={mobileHost} />
       <Tabs
         className="timenotes-left-tabs flex min-h-0 flex-1 flex-col"
         defaultActiveKey="assets"
@@ -35,10 +41,19 @@ export function LeftLibrary() {
 function PagesPanel({ height }: { height: number }) {
   const { document, activePageId, setActivePage, addPage, deletePage, renamePage, reorderPage } = useDocument();
   const { peers, canManagePages, isConnected } = useCollaboration();
+  const mobileHost = isMobile();
   const [menu, setMenu] = useState<{ x: number; y: number; pageId: string } | null>(null);
   const [renameTarget, setRenameTarget] = useState<{ pageId: string; title: string } | null>(null);
   const [dragPageId, setDragPageId] = useState<string | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const pageManagementLocked = isConnected && !canManagePages;
+
+  const dragPageIdRef = useRef<string | null>(null);
+  const dropTargetIdRef = useRef<string | null>(null);
+  const pointerDragActiveRef = useRef(false);
+  const suppressClickRef = useRef(false);
+  const longPressTimerRef = useRef<number | null>(null);
+  const pointerStartRef = useRef<{ x: number; y: number; pageId: string; pointerId: number } | null>(null);
 
   const elementCountByPage = useMemo(() => {
     const counts = new Map<string, number>();
@@ -64,29 +79,194 @@ function PagesPanel({ height }: { height: number }) {
     return groups;
   }, [peers]);
 
+  const clearLongPressTimer = () => {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const finishDrag = () => {
+    clearLongPressTimer();
+    pointerStartRef.current = null;
+    dragPageIdRef.current = null;
+    dropTargetIdRef.current = null;
+    pointerDragActiveRef.current = false;
+    setDragPageId(null);
+    setDropTargetId(null);
+  };
+
+  /** 仅清理触控 pointer 拖拽；切勿在 HTML5 原生拖拽过程中调用，否则 pointercancel 会清掉 dragPageId。 */
+  const finishTouchPointerDrag = () => {
+    if (!pointerDragActiveRef.current && !pointerStartRef.current) {
+      clearLongPressTimer();
+      return;
+    }
+    clearLongPressTimer();
+    pointerStartRef.current = null;
+    if (pointerDragActiveRef.current) {
+      dragPageIdRef.current = null;
+      dropTargetIdRef.current = null;
+      pointerDragActiveRef.current = false;
+      setDragPageId(null);
+      setDropTargetId(null);
+    }
+  };
+
+  const beginTouchPageInteraction = (pageId: string, event: React.PointerEvent<HTMLDivElement>) => {
+    // 桌面鼠标完全交给 HTML5 Drag and Drop，避免 pointercancel 打断原生拖拽。
+    if (event.pointerType === 'mouse' || !mobileHost) {
+      return;
+    }
+    if ((event.target as HTMLElement).closest('[data-page-action]')) {
+      return;
+    }
+
+    const fromHandle = Boolean((event.target as HTMLElement).closest('[data-page-drag-handle]'));
+    clearLongPressTimer();
+    pointerStartRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+      pageId,
+      pointerId: event.pointerId,
+    };
+    suppressClickRef.current = false;
+    pointerDragActiveRef.current = false;
+    dragPageIdRef.current = null;
+    dropTargetIdRef.current = null;
+
+    // 从手柄按下：直接进入排序拖拽，避免与列表滚动抢手势。
+    if (fromHandle && canManagePages && document.pages.length > 1) {
+      event.preventDefault();
+      pointerDragActiveRef.current = true;
+      suppressClickRef.current = true;
+      dragPageIdRef.current = pageId;
+      setDragPageId(pageId);
+      setDropTargetId(null);
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // ignore
+      }
+      try {
+        if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+          navigator.vibrate(8);
+        }
+      } catch {
+        // ignore
+      }
+      return;
+    }
+
+    // 行内长按：打开重命名/删除菜单（移动则取消，保留列表滚动）。
+    longPressTimerRef.current = window.setTimeout(() => {
+      longPressTimerRef.current = null;
+      if (pointerDragActiveRef.current || !pointerStartRef.current || pointerStartRef.current.pageId !== pageId) {
+        return;
+      }
+      const start = pointerStartRef.current;
+      suppressClickRef.current = true;
+      setMenu({ x: start.x, y: start.y, pageId });
+      pointerStartRef.current = null;
+      try {
+        if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+          navigator.vibrate(12);
+        }
+      } catch {
+        // ignore
+      }
+    }, PAGE_LONG_PRESS_MS);
+  };
+
+  const moveTouchPageInteraction = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'mouse' || !mobileHost) {
+      return;
+    }
+    const start = pointerStartRef.current;
+    if (!start || start.pointerId !== event.pointerId) {
+      return;
+    }
+
+    if (!pointerDragActiveRef.current) {
+      const moved = Math.hypot(event.clientX - start.x, event.clientY - start.y) >= PAGE_DRAG_MOVE_PX;
+      if (moved) {
+        // 非手柄区域滑动：视为滚动列表，取消长按菜单。
+        clearLongPressTimer();
+        pointerStartRef.current = null;
+      }
+      return;
+    }
+
+    event.preventDefault();
+    const el = window.document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
+    const row = el?.closest('[data-page-id]') as HTMLElement | null;
+    const targetId = row?.getAttribute('data-page-id') || null;
+    if (targetId && targetId !== dragPageIdRef.current) {
+      dropTargetIdRef.current = targetId;
+      setDropTargetId(targetId);
+    }
+  };
+
+  const endTouchPageInteraction = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'mouse' || !mobileHost) {
+      return;
+    }
+    if (pointerStartRef.current && pointerStartRef.current.pointerId !== event.pointerId) {
+      return;
+    }
+    clearLongPressTimer();
+    if (pointerDragActiveRef.current) {
+      const sourceId = dragPageIdRef.current;
+      const targetId = dropTargetIdRef.current;
+      if (sourceId && targetId && sourceId !== targetId) {
+        reorderPage(sourceId, targetId);
+      }
+      finishDrag();
+      return;
+    }
+    pointerStartRef.current = null;
+  };
+
   useEffect(() => {
     const close = () => setMenu(null);
+    const onCancel = () => {
+      // 仅取消触控手势；桌面 HTML5 拖拽不依赖这些 ref。
+      clearLongPressTimer();
+      if (pointerDragActiveRef.current) {
+        finishTouchPointerDrag();
+      } else {
+        pointerStartRef.current = null;
+      }
+    };
     window.addEventListener('click', close);
     window.addEventListener('resize', close);
+    window.addEventListener('blur', onCancel);
     return () => {
       window.removeEventListener('click', close);
       window.removeEventListener('resize', close);
+      window.removeEventListener('blur', onCancel);
+      clearLongPressTimer();
     };
   }, []);
 
   return (
     <section className="flex min-h-0 shrink-0 flex-col border-b border-black/10 px-4 py-4" style={{ height }}>
-      <div className="mb-3 flex items-center justify-between">
+      <div className="mb-3 flex items-center justify-between gap-2">
         <Typography.Text strong>页面</Typography.Text>
-        <Button size="small" type="primary" theme="solid" icon={<IconPlus />} onClick={addPage}>
+        <Button size="small" type="primary" theme="solid" icon={<IconPlus />} onClick={addPage} disabled={pageManagementLocked}>
           新建
         </Button>
       </div>
-      <div className="timenotes-scrollbar flex min-h-0 flex-1 flex-col gap-2 overflow-auto pr-1">
+      {mobileHost && canManagePages && document.pages.length > 1 ? (
+        <div className="mb-2 text-xs text-black/40">拖左侧手柄可编排页面顺序；长按页面可重命名/删除</div>
+      ) : null}
+      <div className="timenotes-scrollbar flex min-h-0 flex-1 flex-col gap-2 overflow-auto overscroll-contain pr-1">
         {document.pages.map((page, index) => {
           const active = page.id === activePageId;
           const count = elementCountByPage.get(page.id) ?? 0;
           const pageCollaborators = collaboratorsByPage.get(page.id) ?? [];
+          const isDragging = dragPageId === page.id;
+          const isDropTarget = dropTargetId === page.id && dragPageId !== page.id;
           return (
             <div
               key={page.id}
@@ -95,45 +275,82 @@ function PagesPanel({ height }: { height: number }) {
               data-page-collaborators={pageCollaborators.map((peer) => peer.id).join(',')}
               role="button"
               tabIndex={0}
-              draggable={canManagePages}
-              className={`group flex items-center gap-3 rounded-[8px] border px-2 py-2 text-left transition ${
+              draggable={canManagePages && !mobileHost}
+              className={`group flex items-center gap-2 rounded-[8px] border px-2 py-2 text-left transition select-none ${
                 canManagePages ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
               } ${
                 active ? 'border-[#2f6fed] bg-white shadow-sm' : 'border-transparent bg-white/45 hover:bg-white/75'
-              } ${dragPageId === page.id ? 'opacity-45' : ''}`}
+              } ${isDragging ? 'opacity-45 touch-none' : ''} ${
+                isDropTarget ? 'ring-2 ring-[#2f6fed]/30 border-[#2f6fed]/40' : ''
+              } ${mobileHost && !isDragging ? 'touch-manipulation' : ''}`}
+              onPointerDown={mobileHost ? (event) => beginTouchPageInteraction(page.id, event) : undefined}
+              onPointerMove={mobileHost ? moveTouchPageInteraction : undefined}
+              onPointerUp={mobileHost ? endTouchPageInteraction : undefined}
+              onPointerCancel={mobileHost ? finishTouchPointerDrag : undefined}
               onDragStart={(event) => {
-                if (!canManagePages) {
+                if (!canManagePages || mobileHost) {
+                  event.preventDefault();
+                  return;
+                }
+                if ((event.target as HTMLElement).closest('[data-page-action]')) {
                   event.preventDefault();
                   return;
                 }
                 setDragPageId(page.id);
+                dragPageIdRef.current = page.id;
+                dropTargetIdRef.current = null;
+                setDropTargetId(null);
                 event.dataTransfer.effectAllowed = 'move';
                 event.dataTransfer.setData('text/timenotes-page-id', page.id);
+                // 部分 WebView/浏览器只稳定暴露 text/plain，drop 时作兜底。
+                event.dataTransfer.setData('text/plain', page.id);
               }}
               onDragOver={(event) => {
-                if (canManagePages && dragPageId && dragPageId !== page.id) {
+                // 用 ref 判断来源：HTML5 拖拽开始时 pointercancel 曾误清 state，ref 更稳；且 state 异步。
+                const sourceId = dragPageIdRef.current;
+                if (canManagePages && sourceId && sourceId !== page.id) {
                   event.preventDefault();
                   event.dataTransfer.dropEffect = 'move';
+                  if (dropTargetIdRef.current !== page.id) {
+                    dropTargetIdRef.current = page.id;
+                    setDropTargetId(page.id);
+                  }
+                }
+              }}
+              onDragLeave={() => {
+                if (dropTargetIdRef.current === page.id) {
+                  dropTargetIdRef.current = null;
+                  setDropTargetId(null);
                 }
               }}
               onDrop={(event) => {
                 event.preventDefault();
                 if (!canManagePages) {
-                  setDragPageId(null);
+                  finishDrag();
                   return;
                 }
-                const sourceId = event.dataTransfer.getData('text/timenotes-page-id') || dragPageId;
+                const sourceId =
+                  event.dataTransfer.getData('text/timenotes-page-id') ||
+                  event.dataTransfer.getData('text/plain') ||
+                  dragPageIdRef.current ||
+                  dragPageId;
                 if (sourceId && sourceId !== page.id) {
                   reorderPage(sourceId, page.id);
                 }
-                setDragPageId(null);
+                finishDrag();
               }}
-              onDragEnd={() => setDragPageId(null)}
-              onClick={() => setActivePage(page.id)}
+              onDragEnd={finishDrag}
+              onClick={() => {
+                if (suppressClickRef.current) {
+                  suppressClickRef.current = false;
+                  return;
+                }
+                setActivePage(page.id);
+              }}
               onContextMenu={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                // 页面操作放在右键菜单里，避免常用的页面切换区域被额外按钮挤占。
+                // 页面操作放在右键/长按菜单里，避免常用的页面切换区域被额外按钮挤占。
                 setMenu({ x: event.clientX, y: event.clientY, pageId: page.id });
               }}
               onKeyDown={(event) => {
@@ -142,12 +359,26 @@ function PagesPanel({ height }: { height: number }) {
                 }
               }}
             >
+              {canManagePages && document.pages.length > 1 ? (
+                <span
+                  data-page-drag-handle
+                  className={`shrink-0 text-black/35 ${mobileHost ? 'touch-none p-2 -ml-1' : 'p-0.5'}`}
+                  title="拖动排序"
+                  aria-label="拖动排序"
+                  role="button"
+                >
+                  <IconHandle size={mobileHost ? 'large' : 'default'} />
+                </span>
+              ) : null}
               <div className="grid h-12 w-9 shrink-0 place-items-center rounded-[4px] border border-black/10 bg-[#fffaf0] shadow-sm">
                 <IconFile className={active ? 'text-[#2f6fed]' : 'text-black/35'} />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">{page.title || `第 ${index + 1} 页`}</div>
-                <div className="text-xs text-black/45">{count} 个元素</div>
+                <div className="text-xs text-black/45">
+                  {count} 个元素
+                  {mobileHost && canManagePages && document.pages.length > 1 ? ' · 可拖动' : ''}
+                </div>
               </div>
               <CollaboratorPageBadges peers={pageCollaborators} />
               {canManagePages && document.pages.length > 1 ? (
@@ -156,6 +387,8 @@ function PagesPanel({ height }: { height: number }) {
                   type="danger"
                   theme="borderless"
                   icon={<IconDelete />}
+                  data-page-action="delete"
+                  aria-label={`删除 ${page.title || `第 ${index + 1} 页`}`}
                   onClick={(event) => {
                     event.stopPropagation();
                     deletePage(page.id);
@@ -255,26 +488,59 @@ function avatarLabel(name: string) {
   return trimmed ? trimmed.slice(0, 1).toUpperCase() : '协';
 }
 
-function SectionResizeHandle({ onResize }: { onResize: Dispatch<SetStateAction<number>> }) {
+function SectionResizeHandle({
+  onResize,
+  touchFriendly,
+}: {
+  onResize: Dispatch<SetStateAction<number>>;
+  touchFriendly?: boolean;
+}) {
   const startDrag = (event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
+    const el = event.currentTarget;
+    const pointerId = event.pointerId;
+    try {
+      el.setPointerCapture(pointerId);
+    } catch {
+      // ignore
+    }
     const startY = event.clientY;
     onResize((startHeight) => {
       const move = (moveEvent: PointerEvent) => {
+        if (moveEvent.pointerId !== pointerId) {
+          return;
+        }
         const delta = moveEvent.clientY - startY;
         onResize(Math.min(520, Math.max(150, startHeight + delta)));
       };
-      const end = () => {
+      const end = (endEvent: PointerEvent) => {
+        if (endEvent.pointerId !== pointerId) {
+          return;
+        }
         window.removeEventListener('pointermove', move);
         window.removeEventListener('pointerup', end);
+        window.removeEventListener('pointercancel', end);
+        try {
+          el.releasePointerCapture(pointerId);
+        } catch {
+          // ignore
+        }
       };
       window.addEventListener('pointermove', move);
       window.addEventListener('pointerup', end);
+      window.addEventListener('pointercancel', end);
       return startHeight;
     });
   };
 
-  return <div title="拖拽调整页面和素材区域大小" className="h-1.5 shrink-0 cursor-row-resize bg-transparent hover:bg-[#2f6fed]/20" onPointerDown={startDrag} />;
+  const hit = touchFriendly ? 'h-3' : 'h-1.5';
+  return (
+    <div
+      title="拖拽调整页面和素材区域大小"
+      className={`${hit} shrink-0 cursor-row-resize touch-none bg-transparent hover:bg-[#2f6fed]/20 active:bg-[#2f6fed]/30`}
+      onPointerDown={startDrag}
+    />
+  );
 }
 
 function PageContextMenu({

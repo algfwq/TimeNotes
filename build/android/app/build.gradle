@@ -14,11 +14,13 @@ android {
         applicationId "com.wails.app"
         minSdk 21
         targetSdk 34
-        versionCode 1
-        versionName "1.0"
+        // versionCode: major*100 + minor*10 + patch  → 2.9.0 = 290
+        versionCode 290
+        versionName "2.9.0"
 
         ndk {
-            abiFilters 'arm64-v8a', 'x86_64'
+            // 生产 APK 仅打包 armv8 / arm64-v8a
+            abiFilters 'arm64-v8a'
         }
     }
 
