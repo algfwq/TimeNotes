@@ -116,6 +116,16 @@ public class MainActivity extends AppCompatActivity {
         settings.setAllowContentAccess(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+        // 平板/大屏稳定性：固定布局视口，禁止系统字体缩放把整页撑飞。
+        settings.setUseWideViewPort(true);
+        settings.setLoadWithOverviewMode(true);
+        settings.setSupportZoom(false);
+        settings.setBuiltInZoomControls(false);
+        settings.setDisplayZoomControls(false);
+        settings.setTextZoom(100);
+        settings.setDefaultFontSize(16);
+        settings.setMinimumFontSize(8);
+        webView.setInitialScale(100);
 
         // Enable debugging in debug builds
         if (DEBUG) {

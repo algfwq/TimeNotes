@@ -1,5 +1,5 @@
 import { Layout } from '@douyinfe/semi-ui';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { Toast } from '@douyinfe/semi-ui';
 import { CanvasStage } from './CanvasStage';
@@ -11,6 +11,7 @@ import { ReadOnlyViewer } from './ReadOnlyViewer';
 import { TopBar } from './TopBar';
 import { StatusBar } from './StatusBar';
 import { WorkspaceTabs } from './WorkspaceTabs';
+import { getShellLayout, isMobile, type ShellLayout } from '../lib/platform';
 import { useDocument } from '../providers/DocumentProvider';
 import * as NotebookService from '../../bindings/changeme/notebookservice';
 
@@ -28,13 +29,50 @@ function readDroppedFileAsBase64(file: File): Promise<{ base64: string; name: st
   });
 }
 
+function useShellLayout(): ShellLayout {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const onResize = () => setTick((n) => n + 1);
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+    };
+  }, []);
+  return useMemo(() => {
+    void tick;
+    return getShellLayout();
+  }, [tick]);
+}
+
 export function AppShell() {
   const { activeTabMode, undo, redo, canUndo, canRedo, openNotebookPath } = useDocument();
   const { Header, Sider, Content, Footer } = Layout;
-  const [leftWidth, setLeftWidth] = useState(306);
-  const [rightWidth, setRightWidth] = useState(340);
+  const shell = useShellLayout();
+  const mobileHost = isMobile();
+
+  const [leftWidth, setLeftWidth] = useState(() => getShellLayout().defaultLeft);
+  const [rightWidth, setRightWidth] = useState(() => getShellLayout().defaultRight);
   const openNotebookPathRef = useRef(openNotebookPath);
   openNotebookPathRef.current = openNotebookPath;
+
+  // 同步 document 布局 class：窄屏 compact，宽屏 full（大平板与桌面一致）
+  useEffect(() => {
+    if (!mobileHost) {
+      document.documentElement.classList.remove('layout-compact', 'layout-full-mobile');
+      return;
+    }
+    document.documentElement.classList.toggle('layout-compact', shell.compactChrome);
+    document.documentElement.classList.toggle('layout-full-mobile', shell.mode === 'full');
+  }, [mobileHost, shell.compactChrome, shell.mode]);
+
+  // 视口变化时把侧栏夹到合法范围，但不强制改回 default（保留用户拖拽结果）
+  useEffect(() => {
+    setLeftWidth((w) => clamp(w, shell.minLeft, maxPanelWidth(shell, 'left', rightWidth)));
+    setRightWidth((w) => clamp(w, shell.minRight, maxPanelWidth(shell, 'right', leftWidth)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅随 shell 约束变化收敛
+  }, [shell.width, shell.minLeft, shell.maxLeft, shell.minRight, shell.maxRight, shell.showInspector, shell.minCanvas]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -54,9 +92,6 @@ export function AppShell() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [canRedo, canUndo, redo, undo]);
 
-  // 全局文件拖放监听（capture 阶段，参考 AssetLibrary 模式）。
-  // WebView2 不暴露 File.path，因此通过 FileReader 读取文件二进制，
-  // 调用 ImportNotebookFromData 写入临时位置后再打开。
   useEffect(() => {
     const handleDragOver = (event: DragEvent) => {
       const files = event.dataTransfer?.files;
@@ -101,66 +136,153 @@ export function AppShell() {
     };
   }, []);
 
+  const footerH = shell.compactChrome ? 40 : 48;
+  const leftMax = maxPanelWidth(shell, 'left', shell.showInspector ? rightWidth : 0);
+  const rightMax = maxPanelWidth(shell, 'right', leftWidth);
+  const clampedLeft = clamp(leftWidth, shell.minLeft, leftMax);
+  const clampedRight = clamp(rightWidth, shell.minRight, rightMax);
+
   return (
     <Layout
-      className="h-screen w-screen overflow-hidden bg-linen text-ink"
-      style={{ display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr) 48px' }}
+      className={`overflow-hidden bg-linen text-ink ${mobileHost ? 'h-full w-full' : 'h-screen w-screen'}`}
+      style={{ display: 'grid', gridTemplateRows: `auto minmax(0, 1fr) ${footerH}px` }}
     >
       <FontFaceDefinitions />
       <Header className="z-20 min-w-0 shrink-0 overflow-hidden border-b border-black/10 bg-white/88 backdrop-blur">
-        <TopBar />
+        <TopBar compactChrome={shell.compactChrome} />
         <WorkspaceTabs />
       </Header>
-      <Layout className="min-h-0 overflow-hidden">
+      <Layout className="min-h-0 min-w-0 overflow-hidden">
         {activeTabMode === 'home' ? (
-          <Content className="min-w-0 overflow-hidden">
+          <Content className="min-h-0 min-w-0 overflow-hidden">
             <HomeWorkspace />
           </Content>
         ) : activeTabMode === 'edit' ? (
           <>
-            <Sider className="flex min-h-0 shrink-0 flex-col overflow-hidden border-r border-black/10 bg-[#f8f4ea] max-md:w-[220px]" style={{ width: leftWidth }}>
+            <Sider
+              className="flex min-h-0 shrink-0 flex-col overflow-hidden border-r border-black/10 bg-[#f8f4ea]"
+              style={{ width: clampedLeft, minWidth: shell.minLeft }}
+            >
               <LeftLibrary />
             </Sider>
-            <ResizeHandle side="left" onResize={setLeftWidth} />
-            <Content className="min-w-0 overflow-hidden">
+            <ResizeHandle
+              side="left"
+              min={shell.minLeft}
+              max={leftMax}
+              onResize={setLeftWidth}
+              touchFriendly={mobileHost}
+            />
+            <Content className="min-h-0 min-w-0 flex-1 overflow-hidden">
               <CanvasStage />
             </Content>
-            <ResizeHandle side="right" onResize={setRightWidth} />
-            <Sider className="flex min-h-0 shrink-0 flex-col overflow-hidden border-l border-black/10 bg-[#f8f4ea] max-lg:hidden" style={{ width: rightWidth }}>
-              <InspectorPanel />
-            </Sider>
+            {shell.showInspector ? (
+              <>
+                <ResizeHandle
+                  side="right"
+                  min={shell.minRight}
+                  max={rightMax}
+                  onResize={setRightWidth}
+                  touchFriendly={mobileHost}
+                />
+                <Sider
+                  className="flex min-h-0 shrink-0 flex-col overflow-hidden border-l border-black/10 bg-[#f8f4ea]"
+                  style={{ width: clampedRight, minWidth: shell.minRight }}
+                >
+                  <InspectorPanel />
+                </Sider>
+              </>
+            ) : null}
           </>
         ) : (
-          <Content className="min-w-0 overflow-hidden">
+          <Content className="min-h-0 min-w-0 overflow-hidden">
             <ReadOnlyViewer />
           </Content>
         )}
       </Layout>
-      <Footer className="h-12 shrink-0 border-t border-black/10 bg-white/80 px-0 py-0">
-        <StatusBar />
+      <Footer className={`shrink-0 border-t border-black/10 bg-white/80 px-0 py-0 ${shell.compactChrome ? 'h-10' : 'h-12'}`}>
+        <StatusBar compactChrome={shell.compactChrome} />
       </Footer>
     </Layout>
   );
 }
 
-function ResizeHandle({ side, onResize }: { side: 'left' | 'right'; onResize: Dispatch<SetStateAction<number>> }) {
+function maxPanelWidth(shell: ShellLayout, side: 'left' | 'right', otherPanelWidth: number): number {
+  // edit 模式左侧始终在；右侧仅 showInspector 时占用宽度
+  const occupiedOther = side === 'left' ? (shell.showInspector ? otherPanelWidth : 0) : otherPanelWidth;
+  const byCanvas = shell.width - occupiedOther - shell.minCanvas - 24;
+  const byCap = side === 'left' ? shell.maxLeft : shell.maxRight;
+  const min = side === 'left' ? shell.minLeft : shell.minRight;
+  return Math.max(min, Math.min(byCap, byCanvas));
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function ResizeHandle({
+  side,
+  min,
+  max,
+  onResize,
+  touchFriendly,
+}: {
+  side: 'left' | 'right';
+  min: number;
+  max: number;
+  onResize: Dispatch<SetStateAction<number>>;
+  touchFriendly?: boolean;
+}) {
   const startDrag = (event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
+    event.stopPropagation();
+    const el = event.currentTarget;
+    const pointerId = event.pointerId;
+    try {
+      el.setPointerCapture(pointerId);
+    } catch {
+      // ignore
+    }
     const startX = event.clientX;
-    onResize((startWidth) => {
-      const move = (moveEvent: PointerEvent) => {
-        const delta = side === 'left' ? moveEvent.clientX - startX : startX - moveEvent.clientX;
-        onResize(Math.min(520, Math.max(220, startWidth + delta)));
-      };
-      const end = () => {
-        window.removeEventListener('pointermove', move);
-        window.removeEventListener('pointerup', end);
-      };
-      window.addEventListener('pointermove', move);
-      window.addEventListener('pointerup', end);
-      return startWidth;
+    let baseWidth = 0;
+    onResize((current) => {
+      baseWidth = current;
+      return current;
     });
+
+    const move = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) {
+        return;
+      }
+      const delta = side === 'left' ? moveEvent.clientX - startX : startX - moveEvent.clientX;
+      onResize(clamp(Math.round(baseWidth + delta), min, max));
+    };
+    const end = (endEvent: PointerEvent) => {
+      if (endEvent.pointerId !== pointerId) {
+        return;
+      }
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+      try {
+        el.releasePointerCapture(pointerId);
+      } catch {
+        // ignore
+      }
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
   };
 
-  return <div className="w-1.5 shrink-0 cursor-col-resize bg-transparent hover:bg-[#2f6fed]/20" onPointerDown={startDrag} />;
+  // 触控端加宽命中条，桌面保持细条
+  const hit = touchFriendly ? 'w-3' : 'w-1.5';
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      title="拖拽调整面板宽度"
+      className={`${hit} shrink-0 cursor-col-resize touch-none bg-transparent hover:bg-[#2f6fed]/25 active:bg-[#2f6fed]/35`}
+      onPointerDown={startDrag}
+    />
+  );
 }

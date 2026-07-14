@@ -32,6 +32,72 @@ html,
   overscroll-behavior: none;
 }
 
+/* 移动端：锁死视口，避免平板/异形屏 100vh 跳动或页面被系统字号放大 */
+html.platform-mobile,
+html.platform-mobile body,
+html.platform-mobile #root {
+  width: 100%;
+  max-width: 100vw;
+  height: 100%;
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+html.platform-mobile body {
+  min-height: 0;
+  position: fixed;
+  inset: 0;
+}
+
+html.platform-mobile #root {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* 仅窄屏 compact：压缩顶栏/底栏。宽屏平板 layout-full-mobile 与桌面一致，不套这些规则 */
+html.platform-mobile.layout-compact .timenotes-topbar {
+  flex-wrap: nowrap !important;
+  min-height: 48px;
+  height: auto;
+  max-height: 56px;
+  padding-top: 4px !important;
+  padding-bottom: 4px !important;
+  padding-left: max(8px, env(safe-area-inset-left, 0px)) !important;
+  padding-right: max(8px, env(safe-area-inset-right, 0px)) !important;
+  gap: 6px !important;
+}
+
+html.platform-mobile.layout-compact .timenotes-topbar-tools {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  justify-content: flex-start !important;
+  padding: 0 4px !important;
+}
+
+html.platform-mobile.layout-compact .timenotes-topbar-tools .semi-button-content {
+  white-space: nowrap;
+}
+
+html.platform-mobile.layout-compact .timenotes-statusbar {
+  min-height: 40px;
+  height: 40px;
+  padding-left: max(8px, env(safe-area-inset-left, 0px)) !important;
+  padding-right: max(8px, env(safe-area-inset-right, 0px)) !important;
+  gap: 8px !important;
+  font-size: 11px;
+}
+
 /* macOS 窗口控件 (红绿灯按钮) 占据左侧约 70px 空间。
  * 仅在显式标记 platform-darwin 时启用，避免 Windows/Linux 顶部工具栏被整体右推留白。 */
 .platform-darwin .mac-traffic-light-padding {

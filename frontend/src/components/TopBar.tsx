@@ -33,20 +33,20 @@ const toolItems: Array<{ key: ToolMode; label: string; icon: React.ReactNode }> 
 
 const noteFilter = [{ DisplayName: 'TimeNotes 文件', Pattern: '*.tnote' }];
 
-export function TopBar() {
+export function TopBar({ compactChrome = false }: { compactChrome?: boolean }) {
   const { document, activeTabMode, activeTabId, tabs, createPackage, openNotebookPath, saveActiveTab, openHomeTab, openReadTab, tool, setTool, undo, redo, canUndo, canRedo } = useDocument();
   const [savePath, setSavePath] = useState('sample.tnote');
   const [openPath, setOpenPath] = useState('');
   const [saveDirectoryTrusted, setSaveDirectoryTrusted] = useState(false);
   const [saveVisible, setSaveVisible] = useState(false);
   const [openVisible, setOpenVisible] = useState(false);
+  // 仅窄屏 compactChrome：压缩顶栏；宽屏平板与桌面一致（完整文字按钮）
 
   const updatedAt = useMemo(() => new Date(document.updatedAt).toLocaleString(), [document.updatedAt]);
 
   const handleSaveOrSaveAs = async () => {
     const activeTab = tabs.find((tab) => tab.id === activeTabId);
     if (activeTab?.sourcePath && activeTab.mode === 'edit') {
-      // 已有路径，直接保存（和自动保存逻辑一致）。
       try {
         await saveActiveTab();
         Toast.success('已保存');
@@ -55,7 +55,6 @@ export function TopBar() {
       }
       return;
     }
-    // Android/iOS 不支持 SaveFile 对话框；引导走沙箱手账库。
     if (isMobile()) {
       Toast.warning('移动端请从首页「新建手账」创建后再保存');
       openHomeTab();
@@ -119,17 +118,29 @@ export function TopBar() {
   };
 
   return (
-    <div className="flex min-h-14 flex-wrap items-center gap-3 px-4 py-2">
-      <div className="flex shrink-0 items-center gap-3">
-        <img className="h-10 w-10 rounded-[8px] object-cover shadow-sm" src={logoUrl} alt="TimeNotes" draggable={false} />
-        <div>
-          <Typography.Text strong>{document.title}</Typography.Text>
-          <div className="text-xs text-black/45">更新于 {updatedAt}</div>
-        </div>
+    <div className={`timenotes-topbar flex min-h-14 items-center gap-3 px-4 py-2 ${compactChrome ? 'flex-nowrap' : 'flex-wrap'}`}>
+      <div className={`flex shrink-0 items-center ${compactChrome ? 'gap-2' : 'gap-3'}`}>
+        <img
+          className={`rounded-[8px] object-cover shadow-sm ${compactChrome ? 'h-8 w-8' : 'h-10 w-10'}`}
+          src={logoUrl}
+          alt="TimeNotes"
+          draggable={false}
+        />
+        {/* 窄屏压缩标题；宽屏/桌面保留完整标题与更新时间 */}
+        {!compactChrome ? (
+          <div>
+            <Typography.Text strong>{document.title}</Typography.Text>
+            <div className="text-xs text-black/45">更新于 {updatedAt}</div>
+          </div>
+        ) : (
+          <Typography.Text strong className="max-w-[7rem] truncate text-sm">
+            {document.title}
+          </Typography.Text>
+        )}
       </div>
 
-      <div className="flex min-w-0 flex-1 justify-center overflow-x-auto px-2">
-        <ButtonGroup>
+      <div className={`timenotes-topbar-tools flex min-w-0 flex-1 justify-center px-2 ${compactChrome ? 'overflow-x-auto' : ''}`}>
+        <ButtonGroup className={compactChrome ? 'flex-nowrap' : undefined}>
           {toolItems.map((item) => (
             <Tooltip key={item.key} content={item.label}>
               <Button
@@ -138,40 +149,57 @@ export function TopBar() {
                 icon={item.icon}
                 aria-label={item.label}
                 title={item.label}
+                size={compactChrome ? 'small' : 'default'}
                 disabled={activeTabMode !== 'edit'}
                 onClick={() => {
                   setTool(item.key);
                   window.dispatchEvent(new Event('timenotes-open-controls'));
                 }}
               >
-                {item.label}
+                {compactChrome ? null : item.label}
               </Button>
             </Tooltip>
           ))}
         </ButtonGroup>
       </div>
 
-      <Space className="shrink-0">
+      <Space className="shrink-0" spacing={compactChrome ? 4 : 8}>
         <ButtonGroup>
           <Tooltip content="撤销">
-            <Button icon={<IconUndo />} disabled={!canUndo || activeTabMode !== 'edit'} onClick={undo} />
+            <Button size={compactChrome ? 'small' : 'default'} icon={<IconUndo />} disabled={!canUndo || activeTabMode !== 'edit'} onClick={undo} />
           </Tooltip>
           <Tooltip content="恢复">
-            <Button icon={<IconRedo />} disabled={!canRedo || activeTabMode !== 'edit'} onClick={redo} />
+            <Button size={compactChrome ? 'small' : 'default'} icon={<IconRedo />} disabled={!canRedo || activeTabMode !== 'edit'} onClick={redo} />
           </Tooltip>
         </ButtonGroup>
-        <Button icon={<IconHome />} onClick={openHomeTab}>
-          首页
-        </Button>
-        <Button icon={<IconFolderOpen />} onClick={() => setOpenVisible(true)}>
-          打开
-        </Button>
-        <Button icon={<IconBookOpenStroked />} onClick={openReadTab}>
-          阅读
-        </Button>
-        <Button type="primary" theme="solid" icon={<IconSave />} disabled={activeTabMode !== 'edit'} onClick={handleSaveOrSaveAs}>
-          保存
-        </Button>
+        <Tooltip content="首页">
+          <Button size={compactChrome ? 'small' : 'default'} icon={<IconHome />} onClick={openHomeTab}>
+            {compactChrome ? null : '首页'}
+          </Button>
+        </Tooltip>
+        {/* 宽屏与桌面：保留「打开」；窄屏隐藏（仍可走首页手账库） */}
+        {!compactChrome ? (
+          <Button icon={<IconFolderOpen />} onClick={() => setOpenVisible(true)}>
+            打开
+          </Button>
+        ) : null}
+        <Tooltip content="阅读">
+          <Button size={compactChrome ? 'small' : 'default'} icon={<IconBookOpenStroked />} onClick={openReadTab}>
+            {compactChrome ? null : '阅读'}
+          </Button>
+        </Tooltip>
+        <Tooltip content="保存">
+          <Button
+            size={compactChrome ? 'small' : 'default'}
+            type="primary"
+            theme="solid"
+            icon={<IconSave />}
+            disabled={activeTabMode !== 'edit'}
+            onClick={handleSaveOrSaveAs}
+          >
+            {compactChrome ? null : '保存'}
+          </Button>
+        </Tooltip>
       </Space>
 
       <PathModal
@@ -224,31 +252,28 @@ function PathModal({
   visible: boolean;
   value: string;
   actionText: string;
-  onChoosePath: () => void;
+  onChoosePath: () => void | Promise<void>;
   onChange: (value: string) => void;
   onCancel: () => void;
-  onOk: () => void;
+  onOk: () => void | Promise<void>;
 }) {
   return (
     <Modal title={title} visible={visible} onCancel={onCancel} onOk={onOk} okText={actionText} cancelText="取消">
-      <Input
-        value={value}
-        onChange={onChange}
-        suffix={
-          <Button size="small" theme="borderless" icon={<IconFolderOpen />} onClick={onChoosePath}>
-            选择
-          </Button>
-        }
-      />
+      <div className="flex gap-2">
+        <Input value={value} onChange={onChange} placeholder="文件路径" />
+        <Button onClick={() => void onChoosePath()}>浏览</Button>
+      </div>
     </Modal>
   );
 }
 
 function fileNameFromPath(path: string) {
-  return path.split(/[\\/]/).pop() ?? '';
+  const parts = path.replace(/\\/g, '/').split('/');
+  return parts[parts.length - 1] || '';
 }
 
 function directoryFromPath(path: string) {
-  const index = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'));
-  return index > 0 ? path.slice(0, index) : undefined;
+  const normalized = path.replace(/\\/g, '/');
+  const index = normalized.lastIndexOf('/');
+  return index >= 0 ? normalized.slice(0, index) : '';
 }
