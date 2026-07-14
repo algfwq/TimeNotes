@@ -17,11 +17,13 @@ export {
 export {
     AssetBlob,
     AssetMeta,
+    BlogLoginResult,
     NoteDocument,
     NoteElement,
     NoteManifest,
     NotePackage,
     NotePage,
+    NotebookBytesForBlog,
     NotebookMeta,
     ServiceNote,
     SystemFont,

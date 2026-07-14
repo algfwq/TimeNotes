@@ -19,6 +19,32 @@ export function BackupNotebook(id: string, destPath: string): $CancellablePromis
 }
 
 /**
+ * BlogLogin performs auth.pow.challenge + PoW solve + auth.login on ONE WebSocket.
+ * Blog server binds PoW to the websocket session id; splitting challenge/login across
+ * connections always returns "proof of work failed".
+ */
+export function BlogLogin(blogURL: string, username: string, password: string, timeoutMs: number): $CancellablePromise<$models.BlogLoginResult> {
+    return $Call.ByID(1655737353, blogURL, username, password, timeoutMs).then(($result: any) => {
+        return $$createType0($result);
+    });
+}
+
+/**
+ * BlogWSRequest performs one Blog WebSocket RPC from native Go.
+ * Used on Android because the app page is served over HTTPS (wails.localhost)
+ * and the WebView blocks insecure ws:// mixed-content WebSockets.
+ * 
+ * If authToken is non-empty and msgType is not auth.login / auth.pow.challenge,
+ * the connection first authenticates with auth.login {token} on the same socket.
+ * Returns the response payload as a JSON string (or "null").
+ * 
+ * Do NOT use this for password login with PoW: call BlogLogin instead.
+ */
+export function BlogWSRequest(blogURL: string, authToken: string, msgType: string, payloadJSON: string, timeoutMs: number): $CancellablePromise<string> {
+    return $Call.ByID(2452132979, blogURL, authToken, msgType, payloadJSON, timeoutMs);
+}
+
+/**
  * ConfirmAppQuit 由前端保存完所有手账本后调用，确认可以退出应用。
  */
 export function ConfirmAppQuit(): $CancellablePromise<void> {
@@ -27,12 +53,40 @@ export function ConfirmAppQuit(): $CancellablePromise<void> {
 
 export function CreateNotebook(name: string): $CancellablePromise<$models.NotebookMeta> {
     return $Call.ByID(338452749, name).then(($result: any) => {
-        return $$createType0($result);
+        return $$createType1($result);
     });
 }
 
 export function DeleteNotebook(id: string): $CancellablePromise<void> {
     return $Call.ByID(1780839630, id);
+}
+
+/**
+ * GetBlogConnection returns the stored Blog connection (password decrypted when remembered).
+ */
+export function GetBlogConnection(): $CancellablePromise<$models.blogConnectionConfig> {
+    return $Call.ByID(3815208256).then(($result: any) => {
+        return $$createType2($result);
+    });
+}
+
+/**
+ * GetBlogSyncMap returns local notebookId -> remote Blog note mapping.
+ */
+export function GetBlogSyncMap(): $CancellablePromise<$models.blogSyncStore> {
+    return $Call.ByID(1374952211).then(($result: any) => {
+        return $$createType3($result);
+    });
+}
+
+/**
+ * GetNotebookBytesForBlog returns the full .tnote archive as base64 for Blog upload/update.
+ * Mirrors /api/blog-bridge/notebook-bytes without requiring the desktop HTTP bridge.
+ */
+export function GetNotebookBytesForBlog(id: string): $CancellablePromise<$models.NotebookBytesForBlog> {
+    return $Call.ByID(3169353963, id).then(($result: any) => {
+        return $$createType4($result);
+    });
 }
 
 export function GetNotebooksDir(): $CancellablePromise<string> {
@@ -45,7 +99,7 @@ export function GetStartupFilePath(): $CancellablePromise<string> {
 
 export function ImportNotebook(srcPath: string): $CancellablePromise<$models.NotebookMeta> {
     return $Call.ByID(3094445872, srcPath).then(($result: any) => {
-        return $$createType0($result);
+        return $$createType1($result);
     });
 }
 
@@ -55,13 +109,13 @@ export function ImportNotebook(srcPath: string): $CancellablePromise<$models.Not
  */
 export function ImportNotebookFromData(dataBase64: string, name: string): $CancellablePromise<$models.NotebookMeta> {
     return $Call.ByID(4254562472, dataBase64, name).then(($result: any) => {
-        return $$createType0($result);
+        return $$createType1($result);
     });
 }
 
 export function ListNotebooks(): $CancellablePromise<$models.NotebookMeta[]> {
     return $Call.ByID(3870406390).then(($result: any) => {
-        return $$createType1($result);
+        return $$createType5($result);
     });
 }
 
@@ -74,8 +128,15 @@ export function OpenFileDirectory(path: string): $CancellablePromise<void> {
 
 export function OpenNotebook(id: string): $CancellablePromise<$models.NotePackage> {
     return $Call.ByID(929955393, id).then(($result: any) => {
-        return $$createType2($result);
+        return $$createType6($result);
     });
+}
+
+/**
+ * PutBlogSyncEntry records that a local notebook is linked to a remote Blog note.
+ */
+export function PutBlogSyncEntry(notebookID: string, remoteID: string, filename: string): $CancellablePromise<void> {
+    return $Call.ByID(3683498442, notebookID, remoteID, filename);
 }
 
 /**
@@ -87,12 +148,19 @@ export function ReadImageAsDataURL(path: string): $CancellablePromise<string> {
 
 export function RegisterExternalNotebook(srcPath: string): $CancellablePromise<$models.NotebookMeta> {
     return $Call.ByID(526952511, srcPath).then(($result: any) => {
-        return $$createType0($result);
+        return $$createType1($result);
     });
 }
 
 export function RenameNotebook(id: string, newName: string): $CancellablePromise<void> {
     return $Call.ByID(3745787803, id, newName);
+}
+
+/**
+ * SaveBlogConnectionConfig persists Blog connection settings (encrypts password when requested).
+ */
+export function SaveBlogConnectionConfig(cfg: $models.blogConnectionConfig): $CancellablePromise<void> {
+    return $Call.ByID(1898073471, cfg);
 }
 
 export function UpdateNotebookCover(id: string, coverData: string): $CancellablePromise<void> {
@@ -104,6 +172,10 @@ export function UpdateNotebookThumbnail(id: string, coverData: string): $Cancell
 }
 
 // Private type creation functions
-const $$createType0 = $models.NotebookMeta.createFrom;
-const $$createType1 = $Create.Array($$createType0);
-const $$createType2 = $models.NotePackage.createFrom;
+const $$createType0 = $models.BlogLoginResult.createFrom;
+const $$createType1 = $models.NotebookMeta.createFrom;
+const $$createType2 = $models.blogConnectionConfig.createFrom;
+const $$createType3 = $models.blogSyncStore.createFrom;
+const $$createType4 = $models.NotebookBytesForBlog.createFrom;
+const $$createType5 = $Create.Array($$createType1);
+const $$createType6 = $models.NotePackage.createFrom;

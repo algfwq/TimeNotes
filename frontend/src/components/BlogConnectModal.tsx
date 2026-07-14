@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Checkbox, Input, Modal, Toast } from '@douyinfe/semi-ui';
 import { loadBlogConnection, testBlogConnection, type BlogConnection } from '../lib/blogClient';
+import { isMobile } from '../lib/platform';
+
+const DEFAULT_BLOG_URL = 'http://127.0.0.1:8090';
 
 export function BlogConnectModal({
   visible,
@@ -11,7 +14,8 @@ export function BlogConnectModal({
   onClose: () => void;
   onConnected: (conn: BlogConnection) => void;
 }) {
-  const [url, setUrl] = useState('http://127.0.0.1:8090');
+  const mobile = isMobile();
+  const [url, setUrl] = useState(DEFAULT_BLOG_URL);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [rememberPassword, setRememberPassword] = useState(false);
@@ -25,7 +29,7 @@ export function BlogConnectModal({
       if (!cfg) {
         return;
       }
-      setUrl(cfg.url || 'http://127.0.0.1:8090');
+      setUrl(cfg.url || DEFAULT_BLOG_URL);
       setUsername(cfg.username || '');
       setRememberPassword(Boolean(cfg.rememberPassword));
       if (cfg.rememberPassword && cfg.password) {
@@ -68,7 +72,12 @@ export function BlogConnectModal({
       confirmLoading={loading}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <Input prefix="URL" value={url} onChange={setUrl} placeholder="http://127.0.0.1:8090" />
+        <Input
+          prefix="URL"
+          value={url}
+          onChange={setUrl}
+          placeholder={mobile ? 'http://电脑局域网IP:8090' : DEFAULT_BLOG_URL}
+        />
         <Input prefix="用户" value={username} onChange={setUsername} placeholder="用户名" />
         <Input mode="password" prefix="密码" value={password} onChange={setPassword} placeholder="密码" />
         <Checkbox checked={rememberPassword} onChange={(e) => setRememberPassword(Boolean(e.target.checked))}>

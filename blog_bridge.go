@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -719,4 +720,90 @@ func decryptSecret(enc string) (string, error) {
 		return "", err
 	}
 	return string(plain), nil
+}
+
+// NotebookBytesForBlog is the payload for Blog upload/update (Wails binding path).
+// Used on Android where the loopback blog-bridge HTTP server is not started.
+type NotebookBytesForBlog struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Path       string `json:"path"`
+	Filename   string `json:"filename"`
+	Size       int    `json:"size"`
+	DataBase64 string `json:"dataBase64"`
+}
+
+// GetBlogConnection returns the stored Blog connection (password decrypted when remembered).
+func (s *NotebookService) GetBlogConnection() (blogConnectionConfig, error) {
+	return loadBlogConnection()
+}
+
+// SaveBlogConnectionConfig persists Blog connection settings (encrypts password when requested).
+func (s *NotebookService) SaveBlogConnectionConfig(cfg blogConnectionConfig) error {
+	return saveBlogConnection(cfg)
+}
+
+// GetBlogSyncMap returns local notebookId -> remote Blog note mapping.
+func (s *NotebookService) GetBlogSyncMap() (blogSyncStore, error) {
+	return loadBlogSync()
+}
+
+// PutBlogSyncEntry records that a local notebook is linked to a remote Blog note.
+func (s *NotebookService) PutBlogSyncEntry(notebookID string, remoteID string, filename string) error {
+	notebookID = strings.TrimSpace(notebookID)
+	remoteID = strings.TrimSpace(remoteID)
+	if notebookID == "" || remoteID == "" {
+		return errors.New("notebookId and remoteId required")
+	}
+	store, err := loadBlogSync()
+	if err != nil {
+		return err
+	}
+	store.Entries[notebookID] = blogSyncEntry{
+		RemoteID:  remoteID,
+		Filename:  strings.TrimSpace(filename),
+		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	return saveBlogSync(store)
+}
+
+// GetNotebookBytesForBlog returns the full .tnote archive as base64 for Blog upload/update.
+// Mirrors /api/blog-bridge/notebook-bytes without requiring the desktop HTTP bridge.
+func (s *NotebookService) GetNotebookBytesForBlog(id string) (NotebookBytesForBlog, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return NotebookBytesForBlog{}, errors.New("id required")
+	}
+	list, err := s.ListNotebooks()
+	if err != nil {
+		return NotebookBytesForBlog{}, err
+	}
+	var meta *NotebookMeta
+	for i := range list {
+		if list[i].ID == id {
+			meta = &list[i]
+			break
+		}
+	}
+	if meta == nil {
+		return NotebookBytesForBlog{}, errors.New("notebook not found")
+	}
+	if err := ensureNotebookPackageThumbnail(*meta); err != nil {
+		if strings.Contains(err.Error(), "thumbnail_required") {
+			return NotebookBytesForBlog{}, errors.New("请先打开该手账生成封面后再上传 Blog")
+		}
+		return NotebookBytesForBlog{}, err
+	}
+	raw, err := os.ReadFile(meta.Path)
+	if err != nil {
+		return NotebookBytesForBlog{}, err
+	}
+	return NotebookBytesForBlog{
+		ID:         meta.ID,
+		Name:       meta.Name,
+		Path:       meta.Path,
+		Filename:   filepath.Base(meta.Path),
+		Size:       len(raw),
+		DataBase64: encodeBase64(raw),
+	}, nil
 }

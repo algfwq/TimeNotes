@@ -124,6 +124,50 @@ export class AssetMeta {
     }
 }
 
+/**
+ * BlogLoginResult is returned by BlogLogin (password + PoW on one WS session).
+ */
+export class BlogLoginResult {
+    "token": string;
+    "username": string;
+    "role": string;
+    "expiresAt": number;
+    "canUpload": boolean;
+    "userId": string;
+
+    /** Creates a new BlogLoginResult instance. */
+    constructor($$source: Partial<BlogLoginResult> = {}) {
+        if (!("token" in $$source)) {
+            this["token"] = "";
+        }
+        if (!("username" in $$source)) {
+            this["username"] = "";
+        }
+        if (!("role" in $$source)) {
+            this["role"] = "";
+        }
+        if (!("expiresAt" in $$source)) {
+            this["expiresAt"] = 0;
+        }
+        if (!("canUpload" in $$source)) {
+            this["canUpload"] = false;
+        }
+        if (!("userId" in $$source)) {
+            this["userId"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new BlogLoginResult instance from a string or object.
+     */
+    static createFrom($$source: any = {}): BlogLoginResult {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new BlogLoginResult($$parsedSource as Partial<BlogLoginResult>);
+    }
+}
+
 export class NoteDocument {
     /**
      * Document 是可编辑状态的完整快照；协同时仍以 Yjs update 为事实源。
@@ -545,6 +589,51 @@ export class NotePage {
     }
 }
 
+/**
+ * NotebookBytesForBlog is the payload for Blog upload/update (Wails binding path).
+ * Used on Android where the loopback blog-bridge HTTP server is not started.
+ */
+export class NotebookBytesForBlog {
+    "id": string;
+    "name": string;
+    "path": string;
+    "filename": string;
+    "size": number;
+    "dataBase64": string;
+
+    /** Creates a new NotebookBytesForBlog instance. */
+    constructor($$source: Partial<NotebookBytesForBlog> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("name" in $$source)) {
+            this["name"] = "";
+        }
+        if (!("path" in $$source)) {
+            this["path"] = "";
+        }
+        if (!("filename" in $$source)) {
+            this["filename"] = "";
+        }
+        if (!("size" in $$source)) {
+            this["size"] = 0;
+        }
+        if (!("dataBase64" in $$source)) {
+            this["dataBase64"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new NotebookBytesForBlog instance from a string or object.
+     */
+    static createFrom($$source: any = {}): NotebookBytesForBlog {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new NotebookBytesForBlog($$parsedSource as Partial<NotebookBytesForBlog>);
+    }
+}
+
 export class NotebookMeta {
     /**
      * NotebookMeta 是主页手账本卡片的元数据，持久化在 notebooks.json 中。
@@ -718,6 +807,108 @@ export class TemplateDef {
     }
 }
 
+export class blogConnectionConfig {
+    "url": string;
+    "username": string;
+    "token": string;
+    "expiresAt": number;
+    "rememberPassword": boolean;
+
+    /**
+     * Password is never stored in plaintext. When rememberPassword is true the
+     * encrypted payload is kept in PasswordEnc instead.
+     */
+    "password"?: string;
+    "passwordEnc"?: string;
+    "updatedAt": string;
+
+    /** Creates a new blogConnectionConfig instance. */
+    constructor($$source: Partial<blogConnectionConfig> = {}) {
+        if (!("url" in $$source)) {
+            this["url"] = "";
+        }
+        if (!("username" in $$source)) {
+            this["username"] = "";
+        }
+        if (!("token" in $$source)) {
+            this["token"] = "";
+        }
+        if (!("expiresAt" in $$source)) {
+            this["expiresAt"] = 0;
+        }
+        if (!("rememberPassword" in $$source)) {
+            this["rememberPassword"] = false;
+        }
+        if (!("updatedAt" in $$source)) {
+            this["updatedAt"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new blogConnectionConfig instance from a string or object.
+     */
+    static createFrom($$source: any = {}): blogConnectionConfig {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new blogConnectionConfig($$parsedSource as Partial<blogConnectionConfig>);
+    }
+}
+
+export class blogSyncEntry {
+    "remoteId": string;
+    "filename": string;
+    "updatedAt": string;
+
+    /** Creates a new blogSyncEntry instance. */
+    constructor($$source: Partial<blogSyncEntry> = {}) {
+        if (!("remoteId" in $$source)) {
+            this["remoteId"] = "";
+        }
+        if (!("filename" in $$source)) {
+            this["filename"] = "";
+        }
+        if (!("updatedAt" in $$source)) {
+            this["updatedAt"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new blogSyncEntry instance from a string or object.
+     */
+    static createFrom($$source: any = {}): blogSyncEntry {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new blogSyncEntry($$parsedSource as Partial<blogSyncEntry>);
+    }
+}
+
+export class blogSyncStore {
+    "entries": { [_ in string]?: blogSyncEntry };
+
+    /** Creates a new blogSyncStore instance. */
+    constructor($$source: Partial<blogSyncStore> = {}) {
+        if (!("entries" in $$source)) {
+            this["entries"] = {};
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new blogSyncStore instance from a string or object.
+     */
+    static createFrom($$source: any = {}): blogSyncStore {
+        const $$createField0_0 = $$createType17;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("entries" in $$parsedSource) {
+            $$parsedSource["entries"] = $$createField0_0($$parsedSource["entries"]);
+        }
+        return new blogSyncStore($$parsedSource as Partial<blogSyncStore>);
+    }
+}
+
 // Private type creation functions
 const $$createType0 = NotePage.createFrom;
 const $$createType1 = $Create.Array($$createType0);
@@ -735,3 +926,5 @@ const $$createType12 = AssetBlob.createFrom;
 const $$createType13 = $Create.Array($$createType12);
 const $$createType14 = ServiceNote.createFrom;
 const $$createType15 = $Create.Array($$createType14);
+const $$createType16 = blogSyncEntry.createFrom;
+const $$createType17 = $Create.Map($Create.Any, $$createType16);

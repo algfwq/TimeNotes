@@ -387,11 +387,19 @@ function TextMoveHandle({
 }) {
   const mobile = isMobile();
   const beginDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    // 捕获阶段已 stop；此处再防一次，避免 Moveable / 画布 pan 抢走。
     event.preventDefault();
     event.stopPropagation();
     onBegin();
+    const handleEl = event.currentTarget;
+    const pointerId = event.pointerId;
+    try {
+      handleEl.setPointerCapture(pointerId);
+    } catch {
+      // ignore capture failures
+    }
     const start = { x: event.clientX, y: event.clientY, elementX: element.x, elementY: element.y };
-    const target = event.currentTarget.closest<HTMLElement>('[data-element-id]');
+    const target = handleEl.closest<HTMLElement>('[data-element-id]');
     let nextPosition = { x: element.x, y: element.y };
     let liveTimer: number | undefined;
     let lastLiveAt = 0;
@@ -407,6 +415,9 @@ function TextMoveHandle({
     };
 
     const move = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) {
+        return;
+      }
       nextPosition = {
         x: clamp(Math.round(start.elementX + (moveEvent.clientX - start.x) / zoom), 0, Math.max(0, page.width - element.width)),
         y: clamp(Math.round(start.elementY + (moveEvent.clientY - start.y) / zoom), 0, Math.max(0, page.height - element.height)),
@@ -436,7 +447,10 @@ function TextMoveHandle({
         window.dispatchEvent(new CustomEvent('timenotes-moveable-update'));
       }
     };
-    const end = () => {
+    const end = (endEvent: PointerEvent) => {
+      if (endEvent.pointerId !== pointerId) {
+        return;
+      }
       if (liveTimer) {
         window.clearTimeout(liveTimer);
         liveTimer = undefined;
@@ -446,9 +460,16 @@ function TextMoveHandle({
       }
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+      try {
+        handleEl.releasePointerCapture(pointerId);
+      } catch {
+        // ignore
+      }
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
   };
 
   return (
@@ -461,9 +482,11 @@ function TextMoveHandle({
           ? 'timenotes-element-move-handle-mobile'
           : '-left-3 -top-3 z-20 h-7 w-7'
       }`}
-      onPointerDown={beginDrag}
+      // 移动端在捕获阶段拦截，避免外壳 onPointerDown 先处理选中/拖拽逻辑。
+      onPointerDownCapture={mobile ? beginDrag : undefined}
+      onPointerDown={mobile ? undefined : beginDrag}
     >
-      <IconHandle />
+      <IconHandle size={mobile ? 'large' : 'default'} />
     </button>
   );
 }

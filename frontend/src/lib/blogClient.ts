@@ -1,3 +1,6 @@
+import { NotebookService } from '../../bindings/changeme';
+import { isMobile } from './platform';
+
 const BRIDGE = 'http://127.0.0.1:54088';
 const LS_CONN = 'timenotes.blog.connection';
 const LS_SYNC = 'timenotes.blog.sync';
@@ -75,6 +78,9 @@ async function solvePow(salt: string, difficulty: number): Promise<string> {
 
 class BlogSocket {
   private ws: WebSocket | null = null;
+  private blogURL = '';
+  /** 移动端 Go 代理鉴权用 JWT；登录成功后写入。 */
+  private authToken = '';
   private pending = new Map<string, {
     resolve: (env: Envelope) => void;
     reject: (err: Error) => void;
@@ -82,6 +88,12 @@ class BlogSocket {
   }>();
 
   async connect(blogURL: string): Promise<void> {
+    this.blogURL = normalizeBlogURL(blogURL);
+    // Android WebView 页面是 https://wails.localhost，浏览器禁止从 HTTPS 发起 ws://。
+    // 移动端改走 Go 原生 WebSocket 代理，不构造浏览器 WebSocket。
+    if (isMobile()) {
+      return;
+    }
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       return;
     }
@@ -133,9 +145,32 @@ class BlogSocket {
   close() {
     this.ws?.close();
     this.ws = null;
+    this.authToken = '';
   }
 
   async request<T>(type: string, payload?: unknown, timeoutMs = 60000): Promise<T> {
+    if (isMobile()) {
+      if (!this.blogURL) {
+        throw new Error('未连接');
+      }
+      // 登录成功后把 token 交给后续请求，Go 侧同连接先鉴权再发业务消息。
+      let authToken = this.authToken;
+      if (type === 'auth.login' && payload && typeof payload === 'object' && 'token' in (payload as object)) {
+        authToken = '';
+      }
+      const raw = await NotebookService.BlogWSRequest(
+        this.blogURL,
+        authToken,
+        type,
+        JSON.stringify(payload ?? null),
+        timeoutMs,
+      );
+      const parsed = raw === 'null' || raw === '' ? null : JSON.parse(raw);
+      if (type === 'auth.login' && parsed && typeof parsed === 'object' && parsed !== null && 'token' in (parsed as object)) {
+        this.authToken = String((parsed as { token: string }).token || '');
+      }
+      return parsed as T;
+    }
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error('未连接');
     }
@@ -193,6 +228,19 @@ function writeLocalSync(entries: Record<string, BlogSyncEntry>) {
 }
 
 export async function loadBlogConnection(): Promise<BlogConnection | null> {
+  // Android：无 54088 桥，走 Wails 持久化（含加密密码）。
+  if (isMobile()) {
+    try {
+      const cfg = (await NotebookService.GetBlogConnection()) as BlogConnection;
+      if (cfg?.url) {
+        writeLocalConnection(cfg);
+        return cfg;
+      }
+    } catch {
+      // fall through to localStorage
+    }
+    return readLocalConnection();
+  }
   try {
     const resp = await fetch(`${BRIDGE}/api/blog-bridge/connection`);
     if (resp.ok) {
@@ -210,6 +258,14 @@ export async function loadBlogConnection(): Promise<BlogConnection | null> {
 
 export async function saveBlogConnection(cfg: BlogConnection): Promise<void> {
   writeLocalConnection(cfg);
+  if (isMobile()) {
+    try {
+      await NotebookService.SaveBlogConnectionConfig(cfg as any);
+    } catch (err) {
+      console.warn('mobile blog connection save failed', err);
+    }
+    return;
+  }
   try {
     const resp = await fetch(`${BRIDGE}/api/blog-bridge/connection`, {
       method: 'POST',
@@ -226,6 +282,16 @@ export async function saveBlogConnection(cfg: BlogConnection): Promise<void> {
 }
 
 export async function loadBlogSyncMap(): Promise<Record<string, BlogSyncEntry>> {
+  if (isMobile()) {
+    try {
+      const data = (await NotebookService.GetBlogSyncMap()) as { entries?: Record<string, BlogSyncEntry> };
+      const entries = data.entries || {};
+      writeLocalSync(entries);
+      return entries;
+    } catch {
+      return readLocalSync();
+    }
+  }
   try {
     const resp = await fetch(`${BRIDGE}/api/blog-bridge/sync`);
     if (resp.ok) {
@@ -248,6 +314,14 @@ export async function saveBlogSyncEntry(notebookId: string, remoteId: string, fi
     updatedAt: new Date().toISOString(),
   };
   writeLocalSync(entries);
+  if (isMobile()) {
+    try {
+      await NotebookService.PutBlogSyncEntry(notebookId, remoteId, filename);
+    } catch {
+      // local already saved
+    }
+    return;
+  }
   try {
     await fetch(`${BRIDGE}/api/blog-bridge/sync`, {
       method: 'POST',
@@ -266,11 +340,38 @@ export async function testBlogConnection(input: {
   rememberPassword: boolean;
 }): Promise<BlogConnection> {
   const url = normalizeBlogURL(input.url);
+
+  // 移动端：PoW 与 login 必须在同一 WebSocket 会话；用 Go 一次完成。
+  if (isMobile()) {
+    try {
+      const login = await NotebookService.BlogLogin(url, input.username, input.password, 120_000);
+      const cfg: BlogConnection = {
+        url,
+        username: login.username || input.username,
+        token: login.token,
+        expiresAt: Number(login.expiresAt) || 0,
+        rememberPassword: input.rememberPassword,
+        password: input.rememberPassword ? input.password : '',
+        updatedAt: new Date().toISOString(),
+      };
+      await saveBlogConnection(cfg);
+      return cfg;
+    } catch (e) {
+      const msg = String(e);
+      throw new Error(
+        `${msg}。请确认 Blog 地址正确且服务已启动（手机请填电脑局域网 IP，例如 http://192.168.x.x:8090，不要用 127.0.0.1）`,
+      );
+    }
+  }
+
   const sock = new BlogSocket();
   try {
     await sock.connect(url);
   } catch (e) {
-    throw new Error(`${String(e)}。请确认 Blog 地址正确且服务已启动（默认 http://127.0.0.1:8090）`);
+    const msg = String(e);
+    throw new Error(
+      `${msg}。请确认 Blog 地址正确且服务已启动（默认 http://127.0.0.1:8090）`,
+    );
   }
   try {
     const challenge = await sock.request<{ id: string; salt: string; difficulty: number }>('auth.pow.challenge', {});
@@ -321,6 +422,23 @@ async function ensureAuthedSocket(conn: BlogConnection): Promise<BlogSocket> {
     sock.close();
     throw new Error('登录已过期，请重新连接 Blog 并输入密码');
   }
+
+  // 移动端密码重登同样必须同连接 PoW。
+  if (isMobile()) {
+    const login = await NotebookService.BlogLogin(conn.url, conn.username, conn.password, 120_000);
+    conn.token = login.token;
+    conn.expiresAt = Number(login.expiresAt) || 0;
+    if (login.username) {
+      conn.username = login.username;
+    }
+    await saveBlogConnection(conn);
+    // 后续上传用 token 鉴权；再 connect 一次让 sock 记住 URL + token。
+    const authed = new BlogSocket();
+    await authed.connect(conn.url);
+    await authed.request('auth.login', { token: conn.token });
+    return authed;
+  }
+
   const challenge = await sock.request<{ id: string; salt: string; difficulty: number }>('auth.pow.challenge', {});
   const nonce = await solvePow(challenge.salt, challenge.difficulty);
   const login = await sock.request<{ token: string; expiresAt: number; username: string }>('auth.login', {
@@ -336,7 +454,28 @@ async function ensureAuthedSocket(conn: BlogConnection): Promise<BlogSocket> {
   return sock;
 }
 
+function decodeBase64ToBytes(dataBase64: string): Uint8Array {
+  const binary = atob(dataBase64);
+  const data = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    data[i] = binary.charCodeAt(i);
+  }
+  return data;
+}
+
 async function readNotebookBytes(notebookId: string): Promise<{ filename: string; data: Uint8Array; name: string }> {
+  // Android：通过 Go 绑定读取 .tnote（移动端不启动 54088 桥）。
+  if (isMobile()) {
+    const body = await NotebookService.GetNotebookBytesForBlog(notebookId);
+    if (!body?.dataBase64) {
+      throw new Error('读取手账包失败：空数据');
+    }
+    return {
+      filename: body.filename || `${notebookId}.tnote`,
+      name: body.name || body.filename || notebookId,
+      data: decodeBase64ToBytes(body.dataBase64),
+    };
+  }
   let resp: Response;
   try {
     resp = await fetch(`${BRIDGE}/api/blog-bridge/notebook-bytes`, {
@@ -351,12 +490,11 @@ async function readNotebookBytes(notebookId: string): Promise<{ filename: string
     throw new Error(await resp.text());
   }
   const body = (await resp.json()) as { filename: string; dataBase64: string; name: string };
-  const binary = atob(body.dataBase64);
-  const data = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    data[i] = binary.charCodeAt(i);
-  }
-  return { filename: body.filename, data, name: body.name };
+  return {
+    filename: body.filename,
+    name: body.name,
+    data: decodeBase64ToBytes(body.dataBase64),
+  };
 }
 
 async function uploadChunks(
