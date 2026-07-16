@@ -38,21 +38,6 @@
 - **Blog 桥接**：客户端可连接 TimeNotesBlog 上传/更新完整 `.tnote`（含 Android 原生 WebSocket 代理，规避混合内容限制）。
 - **`.tnote` 格式版本 7**：含 models 等资源组；旧文件打开时自动迁移。
 
-## 发布产物（v2.9.0）
-
-构建产物位于项目 `bin/` 目录，命名规则：`TimeNotes-{version}-{arch}-{os}`。
-
-| 文件 | 说明 |
-|------|------|
-| `bin/TimeNotes-2.9.0-arm64-android.apk` | 生产前端 + Go 嵌入的 Android APK（仅 arm64-v8a / ARMv8） |
-
-```powershell
-# 安装到已连接设备
-adb install -r .\bin\TimeNotes-2.9.0-arm64-android.apk
-```
-
-> Android 包名当前为 `com.wails.app`（Wails 模板默认）。上架商店前请改为正式 `applicationId` 并使用正式签名密钥。
-
 ## 💝 支持项目
 
 <p align="center">
