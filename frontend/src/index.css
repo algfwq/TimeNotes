@@ -18,12 +18,43 @@
 }
 
 :root {
-  color: #2f2a24;
-  background: #ece7dc;
+  --tn-paper: 255 250 240;
+  --tn-ink: 47 42 36;
+  --tn-linen: 236 231 220;
+  --tn-canvas: 232 226 214;
+  --tn-panel: 248 244 234;
+  --tn-chrome: 255 255 255;
+  --tn-muted: 47 42 36;
+  --tn-border: 0 0 0;
+  --tn-shadow-page: 0 30px 90px rgba(87, 70, 45, 0.22);
+  --theme-reveal-x: 50%;
+  --theme-reveal-y: 50%;
+  color: rgb(var(--tn-ink));
+  background: rgb(var(--tn-linen));
+  color-scheme: light;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+}
+
+html.theme-dark,
+html[data-theme="dark"] {
+  /* Vivid black-gold chrome (true metallic gold, not ochre). */
+  --tn-paper: 14 14 14;
+  --tn-ink: 250 246 236;
+  --tn-linen: 7 7 7;
+  --tn-canvas: 8 8 8;
+  --tn-panel: 16 16 16;
+  --tn-chrome: 12 12 12;
+  --tn-muted: 255 228 140;
+  --tn-border: 255 215 0;
+  --tn-gold: 255 215 0;
+  --tn-gold-bright: 255 232 100;
+  --tn-gold-soft: 255 224 102;
+  --tn-gold-dim: 204 160 0;
+  --tn-shadow-page: 0 30px 90px rgba(0, 0, 0, 0.72);
+  color-scheme: dark;
 }
 
 html,
@@ -120,11 +151,23 @@ body {
   min-height: 100vh;
   margin: 0;
   overflow: hidden;
+  color: rgb(var(--tn-ink));
   background:
     linear-gradient(90deg, rgba(255, 255, 255, 0.42) 1px, transparent 1px),
     linear-gradient(0deg, rgba(255, 255, 255, 0.42) 1px, transparent 1px),
-    #ece7dc;
+    rgb(var(--tn-linen));
   background-size: 24px 24px;
+  transition: background-color 280ms ease, color 280ms ease;
+}
+
+html.theme-dark body,
+html[data-theme="dark"] body {
+  background:
+    radial-gradient(120% 80% at 50% -10%, rgba(255, 215, 0, 0.1), transparent 52%),
+    linear-gradient(90deg, rgba(255, 215, 0, 0.05) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(255, 215, 0, 0.05) 1px, transparent 1px),
+    rgb(var(--tn-linen));
+  background-size: auto, 28px 28px, 28px 28px, auto;
 }
 
 button,
@@ -1118,6 +1161,410 @@ html.platform-mobile .semi-cropper-box-corner-br {
   }
   100% {
     opacity: 0;
+  }
+}
+
+/* ---------- Theme toggle (status bar) ---------- */
+
+.theme-toggle {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 999px;
+  background:
+    radial-gradient(120% 120% at 30% 20%, rgba(255, 214, 120, 0.55), transparent 55%),
+    linear-gradient(180deg, #fff7e8, #f3e7d0);
+  color: #c47b14;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.65) inset,
+    0 6px 14px rgba(87, 70, 45, 0.12);
+  cursor: pointer;
+  overflow: hidden;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    background 320ms ease,
+    color 320ms ease,
+    border-color 320ms ease,
+    box-shadow 320ms ease;
+  will-change: transform;
+}
+
+.theme-toggle--dark {
+  border-color: rgba(255, 215, 0, 0.55);
+  background:
+    radial-gradient(120% 120% at 70% 28%, rgba(255, 232, 100, 0.42), transparent 52%),
+    linear-gradient(180deg, #1a1a1a, #0a0a0a);
+  color: #ffd700;
+  box-shadow:
+    0 1px 0 rgba(255, 232, 100, 0.28) inset,
+    0 8px 18px rgba(0, 0, 0, 0.5),
+    0 0 18px rgba(255, 215, 0, 0.18);
+}
+
+.theme-toggle--pressed {
+  transform: scale(0.92);
+  transition-duration: 90ms;
+}
+
+.theme-toggle--bump {
+  animation: themeToggleBump 420ms cubic-bezier(0.22, 1.2, 0.36, 1);
+}
+
+.theme-toggle__glow {
+  position: absolute;
+  inset: -30%;
+  background: radial-gradient(circle at 50% 50%, rgba(255, 210, 120, 0.35), transparent 58%);
+  opacity: 0.55;
+  transform: scale(0.85);
+  transition: opacity 320ms ease, transform 420ms cubic-bezier(0.22, 1, 0.36, 1), background 320ms ease;
+  pointer-events: none;
+}
+
+.theme-toggle--dark .theme-toggle__glow {
+  background: radial-gradient(circle at 50% 50%, rgba(255, 215, 0, 0.55), transparent 60%);
+  opacity: 0.88;
+  transform: scale(1);
+}
+
+.theme-toggle__orbit {
+  position: relative;
+  z-index: 1;
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+}
+
+.theme-toggle__icon {
+  grid-area: 1 / 1;
+  display: grid;
+  place-items: center;
+  transition:
+    transform 420ms cubic-bezier(0.22, 1.15, 0.36, 1),
+    opacity 280ms ease;
+  will-change: transform, opacity;
+}
+
+.theme-toggle__icon--sun {
+  opacity: 1;
+  transform: rotate(0deg) scale(1);
+}
+
+.theme-toggle__icon--moon {
+  opacity: 0;
+  transform: rotate(-40deg) scale(0.45);
+}
+
+.theme-toggle--dark .theme-toggle__icon--sun {
+  opacity: 0;
+  transform: rotate(48deg) scale(0.4);
+}
+
+.theme-toggle--dark .theme-toggle__icon--moon {
+  opacity: 1;
+  transform: rotate(0deg) scale(1);
+}
+
+.theme-toggle__spark {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.theme-toggle--bump .theme-toggle__spark {
+  animation: themeSpark 420ms ease-out forwards;
+}
+
+.theme-toggle__spark--a {
+  top: 18%;
+  right: 22%;
+  animation-delay: 20ms;
+}
+
+.theme-toggle__spark--b {
+  bottom: 20%;
+  left: 18%;
+  animation-delay: 60ms;
+}
+
+.theme-toggle__spark--c {
+  top: 28%;
+  left: 20%;
+  animation-delay: 100ms;
+}
+
+@keyframes themeToggleBump {
+  0% {
+    transform: scale(0.92);
+  }
+  55% {
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes themeSpark {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.4);
+  }
+  35% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--sx, 6px), var(--sy, -8px)) scale(0.2);
+  }
+}
+
+.theme-toggle__spark--a {
+  --sx: 8px;
+  --sy: -10px;
+}
+
+.theme-toggle__spark--b {
+  --sx: -8px;
+  --sy: 8px;
+}
+
+.theme-toggle__spark--c {
+  --sx: -7px;
+  --sy: -7px;
+}
+
+/* Circular reveal when switching theme (View Transitions API) */
+html[data-theme-transition] {
+  view-transition-name: root;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+::view-transition-old(root) {
+  z-index: 1;
+}
+
+::view-transition-new(root) {
+  z-index: 2;
+}
+
+html[data-theme-transition="to-dark"]::view-transition-new(root) {
+  animation: themeRevealIn 560ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+html[data-theme-transition="to-light"]::view-transition-old(root) {
+  z-index: 2;
+  animation: themeRevealOut 520ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+html[data-theme-transition="to-light"]::view-transition-new(root) {
+  z-index: 1;
+}
+
+@keyframes themeRevealIn {
+  from {
+    clip-path: circle(0px at var(--theme-reveal-x) var(--theme-reveal-y));
+  }
+  to {
+    clip-path: circle(150vmax at var(--theme-reveal-x) var(--theme-reveal-y));
+  }
+}
+
+@keyframes themeRevealOut {
+  from {
+    clip-path: circle(150vmax at var(--theme-reveal-x) var(--theme-reveal-y));
+  }
+  to {
+    clip-path: circle(0px at var(--theme-reveal-x) var(--theme-reveal-y));
+  }
+}
+
+/* ---------- Dark chrome surfaces (vivid black-gold) ---------- */
+
+html.dark .timenotes-chrome-header,
+html.dark .timenotes-chrome-footer {
+  background:
+    linear-gradient(180deg, rgba(22, 22, 22, 0.96), rgba(10, 10, 10, 0.94)) !important;
+  border-color: rgba(255, 215, 0, 0.28) !important;
+  backdrop-filter: blur(18px) saturate(150%);
+  box-shadow: 0 1px 0 rgba(255, 232, 100, 0.14) inset;
+}
+
+html.dark .timenotes-chrome-sider {
+  background:
+    linear-gradient(180deg, #141414 0%, #0f0f0f 100%) !important;
+  border-color: rgba(255, 215, 0, 0.22) !important;
+}
+
+html.dark .timenotes-canvas-stage {
+  background:
+    radial-gradient(90% 70% at 50% 0%, rgba(255, 215, 0, 0.09), transparent 58%),
+    #080808 !important;
+}
+
+html.dark .timenotes-workspace-tabs {
+  background: #101010 !important;
+  border-color: rgba(255, 215, 0, 0.18) !important;
+}
+
+html.dark .book-toolbar {
+  border-bottom-color: rgba(255, 215, 0, 0.28);
+  background: linear-gradient(180deg, rgba(22, 22, 22, 0.97), rgba(10, 10, 10, 0.94));
+  color: rgba(250, 246, 236, 0.92);
+  box-shadow: 0 1px 0 rgba(255, 232, 100, 0.14) inset, 0 8px 20px rgba(0, 0, 0, 0.5);
+}
+
+html.dark .book-flip-perspective {
+  background: #080808;
+}
+
+html.dark .reading-mode-stage {
+  background: #080808;
+}
+
+html.dark .timenotes-home {
+  background:
+    radial-gradient(80% 50% at 50% 0%, rgba(255, 215, 0, 0.1), transparent 55%),
+    transparent;
+}
+
+/*
+ * Soften light-only utilities inside chrome only.
+ * Do NOT target .timenotes-canvas-stage paper content — notebook pages stay warm.
+ */
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar, .timenotes-statusbar) .text-black\/35,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar, .timenotes-statusbar) .text-black\/40,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar, .timenotes-statusbar) .text-black\/45,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar, .timenotes-statusbar) .text-black\/50,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar, .timenotes-statusbar) .text-black\/55,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar, .timenotes-statusbar) .text-black\/58,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar, .timenotes-statusbar) .text-black\/60,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar, .timenotes-statusbar) .text-black\/65,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar, .timenotes-statusbar) .text-black\/70 {
+  color: rgba(255, 228, 140, 0.72) !important;
+}
+
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .border-black\/5,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .border-black\/10,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .border-black\/15 {
+  border-color: rgba(255, 215, 0, 0.22) !important;
+}
+
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .bg-white,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .bg-white\/45,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .bg-white\/55,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .bg-white\/60,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .bg-white\/70,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .bg-white\/75,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .bg-white\/80,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .bg-white\/88,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .bg-white\/90 {
+  background-color: rgba(22, 22, 22, 0.96) !important;
+}
+
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .hover\:bg-white:hover,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .hover\:bg-white\/75:hover,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .hover\:bg-black\/5:hover {
+  background-color: rgba(255, 215, 0, 0.12) !important;
+}
+
+html.dark :is(.timenotes-chrome-sider, .timenotes-home) .bg-\[\#f8f4ea\],
+html.dark :is(.timenotes-chrome-header, .timenotes-home) .bg-\[\#f7f4ed\],
+html.dark :is(.timenotes-chrome-sider, .timenotes-home) .bg-\[\#e8e2d6\],
+html.dark :is(.timenotes-chrome-sider, .timenotes-home) .bg-\[\#e8e2d6\]\/60 {
+  background-color: #141414 !important;
+}
+
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .bg-black\/5,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .bg-black\/10 {
+  background-color: rgba(255, 215, 0, 0.12) !important;
+}
+
+/* Active / accent blues become vivid gold in dark chrome only. */
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .border-\[\#2f6fed\],
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home) .border-\[\#2f6fed\]\/20,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home) .border-\[\#2f6fed\]\/30,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home) .border-\[\#2f6fed\]\/35,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home) .border-\[\#2f6fed\]\/60 {
+  border-color: rgba(255, 215, 0, 0.7) !important;
+}
+
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home) .text-\[\#2f6fed\],
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home) .text-\[\#1f5fd2\],
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home) .text-\[\#7eb0ff\] {
+  color: #ffd700 !important;
+}
+
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home) .bg-\[\#2f6fed\]\/10,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home) .bg-\[\#2f6fed\]\/12,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home) .bg-\[\#2f6fed\]\/20,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home) .hover\:bg-\[\#2f6fed\]\/20:hover,
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home) .hover\:bg-\[\#2f6fed\]\/25:hover {
+  background-color: rgba(255, 215, 0, 0.16) !important;
+}
+
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home) .ring-\[\#2f6fed\]\/20 {
+  --tw-ring-color: rgba(255, 215, 0, 0.35) !important;
+}
+
+/* Keep notebook paper itself warm/light — only chrome goes dark. */
+html.dark .shadow-page {
+  box-shadow: var(--tn-shadow-page);
+}
+
+/* Semi primary buttons: vivid gold on black. */
+html.dark .semi-button-primary,
+html.dark .semi-button.semi-button-primary {
+  background-color: #ffd700 !important;
+  border-color: #ffe864 !important;
+  color: #111111 !important;
+}
+
+html.dark .semi-button-primary:not(.semi-button-disabled):hover,
+html.dark .semi-button.semi-button-primary:not(.semi-button-disabled):hover {
+  background-color: #ffe864 !important;
+  border-color: #fff1a0 !important;
+}
+
+html.dark .semi-tabs-tab-active,
+html.dark .semi-tabs-tab.semi-tabs-tab-active {
+  color: #ffd700 !important;
+}
+
+html.dark .semi-tabs-bar .semi-tabs-ink-bar {
+  background-color: #ffd700 !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-toggle,
+  .theme-toggle__icon,
+  .theme-toggle__glow,
+  body {
+    transition: none !important;
+    animation: none !important;
+  }
+
+  .theme-toggle--bump,
+  .theme-toggle--bump .theme-toggle__spark {
+    animation: none !important;
+  }
+
+  html[data-theme-transition="to-dark"]::view-transition-new(root),
+  html[data-theme-transition="to-light"]::view-transition-old(root) {
+    animation: none !important;
   }
 }
 

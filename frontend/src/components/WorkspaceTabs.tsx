@@ -22,7 +22,7 @@ export function WorkspaceTabs() {
     <>
       <div
         data-workspace-tabs
-        className="flex h-9 w-full min-w-0 items-center gap-1 overflow-x-auto overflow-y-hidden border-t border-black/5 bg-[#f7f4ed] px-3"
+        className="timenotes-workspace-tabs flex h-9 w-full min-w-0 items-center gap-1 overflow-x-auto overflow-y-hidden border-t border-black/5 bg-[#f7f4ed] px-3 dark:border-[#ffd700]/20 dark:bg-[#101010]"
         style={{ scrollbarGutter: 'stable' }}
       >
         {tabs.map((tab) => {
@@ -36,7 +36,9 @@ export function WorkspaceTabs() {
               role="button"
               tabIndex={0}
               className={`flex h-7 max-w-56 shrink-0 items-center gap-2 rounded-[6px] border px-2 text-sm transition ${
-                active ? 'border-[#2f6fed] bg-white text-[#1f5fd2] shadow-sm' : 'border-transparent bg-white/45 text-black/60 hover:bg-white'
+                active
+                  ? 'border-[#2f6fed] bg-white text-[#1f5fd2] shadow-sm dark:border-[#ffd700]/75 dark:bg-[#1a1a1a] dark:text-[#ffd700]'
+                  : 'border-transparent bg-white/45 text-black/60 hover:bg-white dark:bg-[#ffd700]/06 dark:text-[#ffe48c]/80 dark:hover:bg-[#ffd700]/14'
               }`}
               onClick={() => switchTab(tab.id)}
               onContextMenu={(event) => {
@@ -105,7 +107,7 @@ function TabContextMenu({ state, onRename }: { state: { x: number; y: number; ta
   }
   return (
     <div
-      className="fixed z-[900] min-w-36 rounded-[8px] border border-black/10 bg-white py-1 text-sm shadow-xl"
+      className="fixed z-[900] min-w-36 rounded-[8px] border border-black/10 bg-white py-1 text-sm shadow-xl dark:border-[#ffd700]/28 dark:bg-[#141414] dark:text-[#faf6ec]"
       style={{ left: state.x, top: state.y }}
       onClick={(event) => event.stopPropagation()}
       onContextMenu={(event) => event.preventDefault()}

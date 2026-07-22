@@ -144,11 +144,11 @@ export function AppShell() {
 
   return (
     <Layout
-      className={`overflow-hidden bg-linen text-ink ${mobileHost ? 'h-full w-full' : 'h-screen w-screen'}`}
+      className={`timenotes-shell overflow-hidden bg-linen text-ink ${mobileHost ? 'h-full w-full' : 'h-screen w-screen'}`}
       style={{ display: 'grid', gridTemplateRows: `auto minmax(0, 1fr) ${footerH}px` }}
     >
       <FontFaceDefinitions />
-      <Header className="z-20 min-w-0 shrink-0 overflow-hidden border-b border-black/10 bg-white/88 backdrop-blur">
+      <Header className="timenotes-chrome-header z-20 min-w-0 shrink-0 overflow-hidden border-b border-black/10 bg-white/88 backdrop-blur dark:border-[#ffd700]/30 dark:bg-[#0c0c0c]/94">
         <TopBar compactChrome={shell.compactChrome} />
         <WorkspaceTabs />
       </Header>
@@ -160,7 +160,7 @@ export function AppShell() {
         ) : activeTabMode === 'edit' ? (
           <>
             <Sider
-              className="flex min-h-0 shrink-0 flex-col overflow-hidden border-r border-black/10 bg-[#f8f4ea]"
+              className="timenotes-chrome-sider flex min-h-0 shrink-0 flex-col overflow-hidden border-r border-black/10 bg-[#f8f4ea] dark:border-[#ffd700]/25 dark:bg-[#121212]"
               style={{ width: clampedLeft, minWidth: shell.minLeft }}
             >
               <LeftLibrary />
@@ -185,7 +185,7 @@ export function AppShell() {
                   touchFriendly={mobileHost}
                 />
                 <Sider
-                  className="flex min-h-0 shrink-0 flex-col overflow-hidden border-l border-black/10 bg-[#f8f4ea]"
+                  className="timenotes-chrome-sider flex min-h-0 shrink-0 flex-col overflow-hidden border-l border-black/10 bg-[#f8f4ea] dark:border-[#ffd700]/25 dark:bg-[#121212]"
                   style={{ width: clampedRight, minWidth: shell.minRight }}
                 >
                   <InspectorPanel />
@@ -199,7 +199,7 @@ export function AppShell() {
           </Content>
         )}
       </Layout>
-      <Footer className={`shrink-0 border-t border-black/10 bg-white/80 px-0 py-0 ${shell.compactChrome ? 'h-10' : 'h-12'}`}>
+      <Footer className={`timenotes-chrome-footer shrink-0 border-t border-black/10 bg-white/80 px-0 py-0 dark:border-[#ffd700]/30 dark:bg-[#0c0c0c]/94 ${shell.compactChrome ? 'h-10' : 'h-12'}`}>
         <StatusBar compactChrome={shell.compactChrome} />
       </Footer>
     </Layout>

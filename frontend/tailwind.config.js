@@ -1,15 +1,16 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
+  darkMode: 'class',
   theme: {
     extend: {
       colors: {
-        paper: '#fffaf0',
-        ink: '#2f2a24',
-        linen: '#ece7dc',
+        paper: 'rgb(var(--tn-paper) / <alpha-value>)',
+        ink: 'rgb(var(--tn-ink) / <alpha-value>)',
+        linen: 'rgb(var(--tn-linen) / <alpha-value>)',
       },
       boxShadow: {
-        page: '0 30px 90px rgba(87, 70, 45, 0.22)',
+        page: 'var(--tn-shadow-page)',
       },
     },
   },

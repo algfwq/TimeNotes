@@ -130,7 +130,7 @@ export function TopBar({ compactChrome = false }: { compactChrome?: boolean }) {
         {!compactChrome ? (
           <div>
             <Typography.Text strong>{document.title}</Typography.Text>
-            <div className="text-xs text-black/45">更新于 {updatedAt}</div>
+            <div className="text-xs text-black/45 dark:text-white/45">更新于 {updatedAt}</div>
           </div>
         ) : (
           <Typography.Text strong className="max-w-[7rem] truncate text-sm">

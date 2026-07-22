@@ -3,6 +3,7 @@ import { IconMicrophone, IconMicrophoneOff } from '@douyinfe/semi-icons';
 import { useCollaboration } from '../providers/CollaborationProvider';
 import { useDocument } from '../providers/DocumentProvider';
 import type { ToolMode } from '../types';
+import { ThemeToggle } from './ThemeToggle';
 
 const toolLabels: Record<ToolMode, string> = {
   select: '选择',
@@ -36,7 +37,7 @@ export function StatusBar({ compactChrome = false }: { compactChrome?: boolean }
   };
 
   return (
-    <div className={`timenotes-statusbar flex min-w-0 items-center justify-between overflow-hidden text-xs text-black/58 ${compactChrome ? 'h-10 gap-2 px-2' : 'h-12 gap-3 px-4'}`}>
+    <div className={`timenotes-statusbar flex min-w-0 items-center justify-between overflow-hidden text-xs text-black/58 dark:text-[#ffe48c]/75 ${compactChrome ? 'h-10 gap-2 px-2' : 'h-12 gap-3 px-4'}`}>
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
         {autoSaveState !== 'idle' ? (
           <Tag size="small" color={autoSaveState === 'saving' ? 'blue' : autoSaveState === 'saved' ? 'green' : 'red'}>
@@ -91,9 +92,10 @@ export function StatusBar({ compactChrome = false }: { compactChrome?: boolean }
           </>
         )}
       </div>
-      <div className={`flex shrink-0 items-center gap-2 ${compactChrome ? 'w-36' : 'w-64 gap-3'}`}>
+      <div className={`flex shrink-0 items-center ${compactChrome ? 'w-auto gap-2' : 'w-auto min-w-[18rem] gap-3'}`}>
         <span className="shrink-0">{compactChrome ? `${Math.round(safeZoom * 100)}%` : `缩放 ${Math.round(safeZoom * 100)}%`}</span>
         <Slider
+          className={compactChrome ? 'w-20' : 'w-40'}
           value={safeZoom * 100}
           min={35}
           max={200}
@@ -107,6 +109,7 @@ export function StatusBar({ compactChrome = false }: { compactChrome?: boolean }
             setZoom(Math.min(2, Math.max(0.35, next / 100)));
           }}
         />
+        <ThemeToggle compact={compactChrome} />
       </div>
     </div>
   );

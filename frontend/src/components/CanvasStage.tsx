@@ -287,7 +287,7 @@ export function CanvasStage() {
   return (
     <div
       ref={viewportRef}
-      className={`relative h-full overflow-hidden bg-[#e8e2d6] ${
+      className={`timenotes-canvas-stage relative h-full overflow-hidden bg-[#e8e2d6] dark:bg-[#080808] ${
         panMode ? 'cursor-grab' : tool === 'text' || tool === 'code' || tool === 'sticker' || tool === 'image' || tool === 'audio' || tool === 'video' || tool === 'model' ? 'cursor-crosshair' : ''
       }`}
       style={{ touchAction: drawingMode || panMode ? 'none' : 'manipulation' }}

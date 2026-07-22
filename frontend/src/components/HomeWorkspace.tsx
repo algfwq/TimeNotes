@@ -341,7 +341,7 @@ export function HomeWorkspace() {
   return (
     <div
       ref={rootRef}
-      className={`relative h-full overflow-y-auto ${dragActive ? 'bg-[#2f6fed]/5' : ''}`}
+      className={`timenotes-home relative h-full overflow-y-auto ${dragActive ? 'bg-[#2f6fed]/5' : ''}`}
     >
       {dragActive ? (
         <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center">
