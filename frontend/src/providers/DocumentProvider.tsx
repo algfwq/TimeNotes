@@ -5,6 +5,8 @@ import * as NotebookService from '../../bindings/changeme/notebookservice';
 import { Events } from '@wailsio/runtime';
 import { base64ByteLength, base64ToBytes, bytesToBase64, dataUrlToBase64 } from '../lib/base64';
 import { createId } from '../lib/ids';
+import { logFrontend } from '../lib/logger';
+import { isMobile } from '../lib/platform';
 import { createSeedDocument } from '../data/seed';
 import {
   announceOutboundResourceTransfer,
@@ -49,7 +51,8 @@ interface DocumentContextValue {
   setTool: (tool: ToolMode) => void;
   updateToolStyle: <K extends keyof ToolStyleState>(tool: K, patch: Partial<ToolStyleState[K]>) => void;
   switchTab: (tabId: string) => void;
-  closeTab: (tabId: string) => void;
+  /** 桌面同步关闭；移动端会先 await 落盘再关标签（返回 Promise）。 */
+  closeTab: (tabId: string) => void | Promise<void>;
   renameTab: (tabId: string, title: string) => void;
   openReadTab: () => void;
   setActivePage: (pageId: string) => void;
@@ -1444,30 +1447,57 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
     )));
   }, []);
 
+  // 同一 path 串行保存：避免自动保存 / 关页 / 手动保存并发写同一 .tnote。
+  // 移动端分片会话尤其不能并行；桌面单次 SaveNote 也受益于去重竞态。
+  const saveChainRef = useRef(new Map<string, Promise<unknown>>());
+  const runSaveExclusive = useCallback(async <T,>(path: string, task: () => Promise<T>): Promise<T> => {
+    const prev = saveChainRef.current.get(path) ?? Promise.resolve();
+    let resolveGate: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      resolveGate = resolve;
+    });
+    const chained = prev.catch(() => undefined).then(() => gate);
+    saveChainRef.current.set(path, chained);
+    try {
+      await prev.catch(() => undefined);
+      return await task();
+    } finally {
+      resolveGate();
+      if (saveChainRef.current.get(path) === chained) {
+        saveChainRef.current.delete(path);
+      }
+    }
+  }, []);
+
   const saveTabIfDirty = useCallback(async (tab: WorkspaceTab, force = false) => {
     if (tab.mode !== 'edit' || !tab.sourcePath) {
       return false;
     }
+    const path = tab.sourcePath;
     const hash = documentSaveHash(tab.document);
     if (!force && tab.lastSavedHash === hash) {
       return false;
     }
-    setTabs((currentTabs) => currentTabs.map((current) => (
-      current.id === tab.id ? { ...current, saveInProgress: true, lastSaveError: undefined } : current
-    )));
-    try {
-      const note = createPackageForTab(tab);
-      // 移动端大素材（尤其视频）经 JSBridge 整包 SaveNote 会失败；分片 Stage 后再保存。
-      // 桌面 isMobile()===false，saveNotePackage 内部仍走原始 SaveNote。
-      const { saveNotePackage } = await import('../lib/mobileSave');
-      await saveNotePackage(tab.sourcePath, note);
-      markTabSaved(tab.id, hash);
-      return true;
-    } catch (error) {
-      markTabSaveFailed(tab.id, error);
-      throw error;
-    }
-  }, [createPackageForTab, markTabSaveFailed, markTabSaved]);
+
+    return runSaveExclusive(path, async () => {
+      setTabs((currentTabs) => currentTabs.map((current) => (
+        current.id === tab.id ? { ...current, saveInProgress: true, lastSaveError: undefined } : current
+      )));
+      try {
+        // 在第一个 await 之前同步打包，避免关页后 Y.Doc 被销毁。
+        const note = createPackageForTab(tab);
+        // 移动端大素材（尤其视频）经 JSBridge 整包 SaveNote 会失败；分片 Stage 后再保存。
+        // 桌面 isMobile()===false，saveNotePackage 内部仍走原始 SaveNote。
+        const { saveNotePackage } = await import('../lib/mobileSave');
+        await saveNotePackage(path, note);
+        markTabSaved(tab.id, hash);
+        return true;
+      } catch (error) {
+        markTabSaveFailed(tab.id, error);
+        throw error;
+      }
+    });
+  }, [createPackageForTab, markTabSaveFailed, markTabSaved, runSaveExclusive]);
 
   const saveActiveTab = useCallback(async () => {
     const active = tabs.find((tab) => tab.id === activeTabId);
@@ -1568,14 +1598,51 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
   }, [saveTabIfDirty, tabs]);
 
   const closeTab = useCallback(
-    (tabId: string) => {
+    async (tabId: string) => {
       if (tabs.length <= 1) {
         return;
       }
       const closingTab = tabs.find((tab) => tab.id === tabId);
       // 关闭编辑标签页前先自动保存发生真实变更的内容。
       if (closingTab?.mode === 'edit' && closingTab.sourcePath) {
-        void saveTabIfDirty(closingTab).catch(() => {});
+        if (isMobile()) {
+          // Android 分片保存慢且失败曾被 fire-and-forget 吞掉；关页前必须 await。
+          setAutoSaveState('saving');
+          try {
+            await saveTabIfDirty(closingTab);
+            setAutoSaveState('saved');
+            window.setTimeout(() => setAutoSaveState('idle'), 1500);
+          } catch (error) {
+            setAutoSaveState('error');
+            logFrontend('error', 'mobile_close_tab_save_failed', {
+              tabId,
+              path: closingTab.sourcePath,
+              error: String(error),
+            });
+            // 仍关闭标签，避免 UI 卡死；状态栏会短暂显示「保存失败」。
+            window.setTimeout(() => setAutoSaveState('idle'), 2500);
+          }
+        } else {
+          // 桌面：关页仍立即返回（不 await）；失败要可观测，不再空 catch。
+          // 快照在 saveTabIfDirty 内同步打好，与同 path 队列一起降低竞态。
+          void saveTabIfDirty(closingTab)
+            .then((saved) => {
+              if (!saved) {
+                return;
+              }
+              setAutoSaveState('saved');
+              window.setTimeout(() => setAutoSaveState('idle'), 1500);
+            })
+            .catch((error) => {
+              setAutoSaveState('error');
+              logFrontend('error', 'desktop_close_tab_save_failed', {
+                tabId,
+                path: closingTab.sourcePath,
+                error: String(error),
+              });
+              window.setTimeout(() => setAutoSaveState('idle'), 2500);
+            });
+        }
       }
       const index = tabs.findIndex((tab) => tab.id === tabId);
       const nextTabs = tabs.filter((tab) => tab.id !== tabId);

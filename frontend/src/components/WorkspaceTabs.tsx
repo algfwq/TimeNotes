@@ -60,7 +60,8 @@ export function WorkspaceTabs() {
                     icon={<IconClose />}
                     onClick={(event) => {
                       event.stopPropagation();
-                      closeTab(tab.id);
+                      // 移动端 closeTab 会先 await 保存；桌面仍同步返回。
+                      void closeTab(tab.id);
                     }}
                   />
                 </Tooltip>
