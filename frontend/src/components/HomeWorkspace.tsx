@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import html2canvas from 'html2canvas';
-import { Button, Dropdown, Input, Modal, Toast } from '@douyinfe/semi-ui';
+import { Button, Dropdown, Input, Modal, TextArea, Toast } from '@douyinfe/semi-ui';
 import {
   IconCloud,
   IconDelete,
@@ -11,6 +11,7 @@ import {
   IconImage,
   IconPlus,
   IconUpload,
+  IconUserGroup,
 } from '@douyinfe/semi-icons';
 import { Dialogs } from '@wailsio/runtime';
 import { Events } from '@wailsio/runtime';
@@ -18,6 +19,7 @@ import * as NotebookService from '../../bindings/changeme/notebookservice';
 import type { NotebookMeta } from '../../bindings/changeme/models';
 import { logFrontend } from '../lib/logger';
 import { isMobile } from '../lib/platform';
+import { useCollaboration } from '../providers/CollaborationProvider';
 import { useDocument } from '../providers/DocumentProvider';
 import { assetDataUrl } from '../lib/files';
 import type { NoteElement, NotePackage } from '../types';
@@ -35,6 +37,7 @@ const noteFilter = [{ DisplayName: 'TimeNotes 文件', Pattern: '*.tnote' }];
 
 export function HomeWorkspace() {
   const { loadPackage, tabs, switchTab, openNotebookPath } = useDocument();
+  const { joinInviteInNewDocument } = useCollaboration();
   const [notebooks, setNotebooks] = useState<NotebookMeta[]>([]);
   const [loading, setLoading] = useState(true);
   const [createVisible, setCreateVisible] = useState(false);
@@ -46,6 +49,10 @@ export function HomeWorkspace() {
   const [blogConnectVisible, setBlogConnectVisible] = useState(false);
   const [blogConn, setBlogConn] = useState<BlogConnection | null>(null);
   const [blogSync, setBlogSync] = useState<Record<string, BlogSyncEntry>>({});
+  const [joinCollabVisible, setJoinCollabVisible] = useState(false);
+  const [joinInviteLink, setJoinInviteLink] = useState('');
+  const [joinUserName, setJoinUserName] = useState(() => (isMobile() ? '手机用户' : '本机用户'));
+  const [joinBusy, setJoinBusy] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   const loadNotebooks = useCallback(async () => {
@@ -205,6 +212,28 @@ export function HomeWorkspace() {
       logFrontend('warn', 'open_dialog_unavailable', { error: String(error) });
     }
   }, [openExternalNote]);
+
+  const resetJoinCollabForm = useCallback(() => {
+    setJoinInviteLink('');
+    setJoinUserName(isMobile() ? '手机用户' : '本机用户');
+    setJoinBusy(false);
+  }, []);
+
+  const handleJoinCollab = useCallback(() => {
+    if (!joinInviteLink.trim()) {
+      Toast.warning('请粘贴邀请链接');
+      return;
+    }
+    setJoinBusy(true);
+    try {
+      joinInviteInNewDocument(joinInviteLink, joinUserName);
+      setJoinCollabVisible(false);
+      resetJoinCollabForm();
+    } catch (error) {
+      Toast.error(String(error instanceof Error ? error.message : error));
+      setJoinBusy(false);
+    }
+  }, [joinInviteInNewDocument, joinInviteLink, joinUserName, resetJoinCollabForm]);
 
   const handleRename = useCallback(async () => {
     if (!renameTarget || !renameName.trim()) {
@@ -370,7 +399,7 @@ export function HomeWorkspace() {
               <div className="mt-1 text-xs text-black/40">创建空白手账本</div>
             </button>
 
-            {/* 导入 / 打开卡片 */}
+            {/* 导入 / 打开 / 加入联机卡片 */}
             <div className="flex flex-col gap-3 rounded-xl border border-black/10 bg-white/60 p-5">
               <Button
                 block
@@ -387,6 +416,15 @@ export function HomeWorkspace() {
                 onClick={handleOpenExternal}
               >
                 打开外部
+              </Button>
+              <Button
+                block
+                icon={<IconUserGroup />}
+                theme="solid"
+                type="primary"
+                onClick={() => setJoinCollabVisible(true)}
+              >
+                加入联机
               </Button>
               <div className="mt-1 text-center text-xs text-black/35">
                 或拖拽 .tnote 到此
@@ -491,6 +529,46 @@ export function HomeWorkspace() {
             ? ' 已上云的 Blog 副本不会被删除。'
             : ''}
         </p>
+      </Modal>
+
+      {/* 快速加入联机 Modal */}
+      <Modal
+        title="加入联机协作"
+        visible={joinCollabVisible}
+        okText="加入"
+        cancelText="取消"
+        confirmLoading={joinBusy}
+        onCancel={() => {
+          setJoinCollabVisible(false);
+          resetJoinCollabForm();
+        }}
+        onOk={handleJoinCollab}
+      >
+        <div className="flex flex-col gap-3">
+          <div>
+            <div className="mb-1 text-xs text-black/45">邀请链接</div>
+            <TextArea
+              autoFocus
+              autosize={{ minRows: 3, maxRows: 6 }}
+              placeholder="粘贴协作者发来的邀请链接"
+              value={joinInviteLink}
+              onChange={setJoinInviteLink}
+            />
+          </div>
+          <div>
+            <div className="mb-1 text-xs text-black/45">你的显示名称</div>
+            <Input
+              prefix={<IconUserGroup />}
+              placeholder="显示给其他协作者的名称"
+              value={joinUserName}
+              onChange={setJoinUserName}
+              onEnterPress={handleJoinCollab}
+            />
+          </div>
+          <p className="m-0 text-xs text-black/40">
+            将在新标签页中打开空白手账并请求加入房间，等待房主同意后即可协作。
+          </p>
+        </div>
       </Modal>
 
       <BlogConnectModal

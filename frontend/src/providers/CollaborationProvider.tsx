@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import type * as Y from 'yjs';
 import { Modal, Notification, Toast } from '@douyinfe/semi-ui';
-import { CollaborationClient } from '../lib/collaborationClient';
+import { CollaborationClient, parseInviteLink } from '../lib/collaborationClient';
+import { isMobile } from '../lib/platform';
 import { useDocument } from './DocumentProvider';
 import type { ChatMessage, PresenceUser } from '../types';
 import type { VoiceState } from '../lib/voiceClient';
@@ -12,6 +14,9 @@ interface ConnectOptions {
   userName: string;
   forceRelay?: boolean;
   iceServers?: RTCIceServer[];
+  /** 绑定到指定标签页；用于首页新建页后立刻联机，避免 React 状态尚未切换。 */
+  tabId?: string;
+  yDoc?: Y.Doc;
 }
 
 interface CursorPosition {
@@ -31,6 +36,8 @@ interface CollaborationContextValue {
   isHost: boolean;
   canManagePages: boolean;
   connect: (options: ConnectOptions) => void;
+  /** 解析邀请链接，新开空白编辑页并加入联机。 */
+  joinInviteInNewDocument: (inviteLink: string, userName?: string) => void;
   disconnect: (reason?: DisconnectReason) => void;
   sendChat: (text: string) => void;
   kickPeer: (clientId: string) => void;
@@ -54,7 +61,7 @@ const sessionUserStorageKey = 'timenotes.sessionUserId';
 // CollaborationProvider 是 UI 和 CollaborationClient 的边界：
 // React 状态负责展示在线成员、聊天、延迟和本机身份，真正的网络连接只保存在 clientRef。
 export function CollaborationProvider({ children }: { children: React.ReactNode }) {
-  const { yDoc, activeTabId, activePageId, selectedElementId, editingElementId } = useDocument();
+  const { yDoc, activeTabId, activePageId, selectedElementId, editingElementId, openCollaborationGuestTab } = useDocument();
   const clientRef = useRef<CollaborationClient | null>(null);
   // 协作只绑定发起联机时的编辑标签页，切换到其他文档时主动断开，避免 Y.Doc 串到错误文件。
   const collaborationTabIdRef = useRef<string | null>(null);
@@ -94,9 +101,11 @@ export function CollaborationProvider({ children }: { children: React.ReactNode 
   }, []);
 
   const connect = useCallback(
-    ({ url, roomId, roomKey, userName, forceRelay: nextForceRelay = forceRelay, iceServers }: ConnectOptions) => {
+    ({ url, roomId, roomKey, userName, forceRelay: nextForceRelay = forceRelay, iceServers, tabId, yDoc: yDocOverride }: ConnectOptions) => {
       // 新连接总是先关闭旧连接；同一页面重复点击“发起/加入”不会保留旧 peer 和计时器。
       disconnect('reconnect');
+      const boundTabId = tabId ?? activeTabId;
+      const boundYDoc = yDocOverride ?? yDoc;
       const user = {
         ...localUser,
         name: userName || localUser.name || '本机',
@@ -108,14 +117,14 @@ export function CollaborationProvider({ children }: { children: React.ReactNode 
       setLocalUser(user);
       setMessages([]);
       setForceRelayState(nextForceRelay);
-      collaborationTabIdRef.current = activeTabId;
+      collaborationTabIdRef.current = boundTabId;
       // 底层客户端直接持有当前活动标签页的 Y.Doc，后续文档 update 不再经过 React props 转发。
       clientRef.current = new CollaborationClient({
         url,
         roomId,
         roomKey,
         user,
-        yDoc,
+        yDoc: boundYDoc,
         forceRelay: nextForceRelay,
         iceServers,
         onStatus: setStatus,
@@ -196,6 +205,29 @@ export function CollaborationProvider({ children }: { children: React.ReactNode 
     [activePageId, activeTabId, disconnect, editingElementId, forceRelay, localUser, selectedElementId, yDoc],
   );
 
+  const joinInviteInNewDocument = useCallback(
+    (inviteLink: string, userName?: string) => {
+      // 先解析邀请链接，避免无效链接时仍创建空白标签页。
+      const parsed = parseInviteLink(inviteLink);
+      const mobile = isMobile();
+      const name = userName?.trim() || (mobile ? '手机用户' : '本机用户');
+      const { tabId, yDoc: guestYDoc } = openCollaborationGuestTab('联机协作');
+      connect({
+        url: parsed.wsUrl,
+        roomId: parsed.roomId,
+        roomKey: parsed.roomKey,
+        userName: name,
+        // 移动端默认走应用层中转，与协作面板行为一致。
+        forceRelay: mobile ? true : forceRelay,
+        iceServers: parsed.iceServers,
+        tabId,
+        yDoc: guestYDoc,
+      });
+      Toast.success('正在加入邀请房间');
+    },
+    [connect, forceRelay, openCollaborationGuestTab],
+  );
+
   const updateCursor = useCallback((cursor?: CursorPosition | null) => {
     // 光标属于 awareness/presence，不写入文档模型；本地状态仅用于即时隐藏和展示。
     const nextCursor = cursor ?? null;
@@ -262,6 +294,7 @@ export function CollaborationProvider({ children }: { children: React.ReactNode 
         startMic,
         stopMic,
         connect,
+        joinInviteInNewDocument,
         disconnect,
         sendChat,
         kickPeer,
@@ -269,7 +302,7 @@ export function CollaborationProvider({ children }: { children: React.ReactNode 
         setForceRelay,
       };
     },
-    [connect, disconnect, forceRelay, kickPeer, latencyMs, localUser, messages, peers, sendChat, setForceRelay, status, updateCursor, micEnabled, isSpeaking, speakingPeers, startMic, stopMic],
+    [connect, disconnect, forceRelay, joinInviteInNewDocument, kickPeer, latencyMs, localUser, messages, peers, sendChat, setForceRelay, status, updateCursor, micEnabled, isSpeaking, speakingPeers, startMic, stopMic],
   );
 
   return <CollaborationContext.Provider value={value}>{children}</CollaborationContext.Provider>;

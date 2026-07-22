@@ -69,6 +69,8 @@ interface DocumentContextValue {
   openNotebookPath: (path: string) => Promise<void>;
   saveActiveTab: () => Promise<void>;
   createNewDocument: () => Promise<void>;
+  /** 新建未保存的空白编辑页，供首页快速加入联机等场景使用。 */
+  openCollaborationGuestTab: (title?: string) => { tabId: string; yDoc: Y.Doc };
   openHomeTab: () => void;
   updateElement: (id: string, patch: Partial<NoteElement>, options?: DocumentUpdateOptions) => void;
   addElement: (type: ElementType, patch?: Partial<NoteElement>) => void;
@@ -2386,6 +2388,20 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
     }
   }, [clearSelection, loadPackage]);
 
+  const openCollaborationGuestTab = useCallback((title = '联机协作') => {
+    // 加入邀请时不创建本地手账文件，只开空白编辑页承接远端 Yjs 状态。
+    const guestDocument = { ...createSeedDocument(), title };
+    const tab = createTab(guestDocument, 'edit');
+    const tabYDoc = new Y.Doc();
+    tabYDocsRef.current.set(tab.id, tabYDoc);
+    setTabs((current) => [...current, tab]);
+    setActiveTabId(tab.id);
+    clearSelection();
+    setToolState('select');
+    setPendingPlacement(undefined);
+    return { tabId: tab.id, yDoc: tabYDoc };
+  }, [clearSelection]);
+
   const openHomeTab = useCallback(() => {
     const existing = tabs.find((tab) => tab.id === 'home');
     if (existing) {
@@ -2481,6 +2497,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       openNotebookPath,
       saveActiveTab,
       createNewDocument,
+      openCollaborationGuestTab,
       openHomeTab,
       updateElement,
       addElement,
@@ -2531,6 +2548,7 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
       canUndo,
       createNewDocument,
       createPackage,
+      openCollaborationGuestTab,
       openNotebookPath,
       saveActiveTab,
       openHomeTab,
