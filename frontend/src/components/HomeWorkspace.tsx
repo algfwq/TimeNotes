@@ -226,6 +226,7 @@ export function HomeWorkspace() {
     }
     setJoinBusy(true);
     try {
+      // 与协作面板「通过邀请链接加入」同一路径；移动端 forceRelay 在 joinInviteInNewDocument 内处理。
       joinInviteInNewDocument(joinInviteLink, joinUserName);
       setJoinCollabVisible(false);
       resetJoinCollabForm();
@@ -531,13 +532,15 @@ export function HomeWorkspace() {
         </p>
       </Modal>
 
-      {/* 快速加入联机 Modal */}
+      {/* 快速加入联机 Modal（桌面/移动同一套流程，仅弹层宽度适配窄屏） */}
       <Modal
         title="加入联机协作"
         visible={joinCollabVisible}
         okText="加入"
         cancelText="取消"
         confirmLoading={joinBusy}
+        width={isMobile() ? Math.min(480, Math.max(300, window.innerWidth - 24)) : 448}
+        style={isMobile() ? { maxWidth: 'calc(100vw - 16px)' } : undefined}
         onCancel={() => {
           setJoinCollabVisible(false);
           resetJoinCollabForm();
@@ -548,7 +551,7 @@ export function HomeWorkspace() {
           <div>
             <div className="mb-1 text-xs text-black/45">邀请链接</div>
             <TextArea
-              autoFocus
+              autoFocus={!isMobile()}
               autosize={{ minRows: 3, maxRows: 6 }}
               placeholder="粘贴协作者发来的邀请链接"
               value={joinInviteLink}

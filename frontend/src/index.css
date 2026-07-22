@@ -725,6 +725,58 @@ textarea {
   z-index: 1000;
 }
 
+/* 仅移动端：Semi Cropper 角点默认 10px，触控几乎点不中；桌面保持原尺寸。 */
+html.platform-mobile .semi-cropper {
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+html.platform-mobile .semi-cropper-box-corner {
+  width: 28px !important;
+  height: 28px !important;
+}
+
+html.platform-mobile .semi-cropper-box-corner-tl {
+  top: -14px !important;
+  left: -14px !important;
+}
+
+html.platform-mobile .semi-cropper-box-corner-tr {
+  top: -14px !important;
+  right: -14px !important;
+}
+
+html.platform-mobile .semi-cropper-box-corner-tm {
+  top: -14px !important;
+  margin-left: -14px !important;
+}
+
+html.platform-mobile .semi-cropper-box-corner-ml {
+  left: -14px !important;
+  margin-top: -14px !important;
+}
+
+html.platform-mobile .semi-cropper-box-corner-mr {
+  right: -14px !important;
+  margin-top: -14px !important;
+}
+
+html.platform-mobile .semi-cropper-box-corner-bl {
+  bottom: -14px !important;
+  left: -14px !important;
+}
+
+html.platform-mobile .semi-cropper-box-corner-bm {
+  bottom: -14px !important;
+  margin-left: -14px !important;
+}
+
+html.platform-mobile .semi-cropper-box-corner-br {
+  bottom: -14px !important;
+  right: -14px !important;
+}
+
 .timenotes-left-tabs,
 .timenotes-right-tabs {
   height: 100%;

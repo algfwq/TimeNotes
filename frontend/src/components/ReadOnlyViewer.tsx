@@ -37,7 +37,14 @@ export function ReadOnlyViewer() {
   const { document, activePage, setActivePage, getResourceAsset } = useDocument();
   const resourceProgress = useResourceProgressMap();
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
   const panStartRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  const scaleRef = useRef(0.8);
+  const pinchRef = useRef<{ active: boolean; startDist: number; startScale: number }>({
+    active: false,
+    startDist: 0,
+    startScale: 0.8,
+  });
   const sidesheetOpenRef = useRef(false);
 
   const [scale, setScale] = useState(0.8);
@@ -45,6 +52,10 @@ export function ReadOnlyViewer() {
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [spreadIndex, setSpreadIndex] = useState(0);
   const [flip, setFlip] = useState<FlipState | null>(null);
+
+  useEffect(() => {
+    scaleRef.current = scale;
+  }, [scale]);
 
   const firstPage = document.pages[0];
   const samplePage = firstPage ?? ({ width: 800, height: 1100 } as NotePage);
@@ -188,13 +199,20 @@ export function ReadOnlyViewer() {
   }, [goToSpread, spreadIndex]);
 
   const startPan = (e: ReactPointerEvent) => {
-    if (sidesheetOpenRef.current) return;
+    if (sidesheetOpenRef.current || pinchRef.current.active) return;
+    // 双指缩放时不要抢单指 pan；鼠标/手写笔/单指均可拖动画布。
+    if (e.pointerType !== 'mouse' && e.isPrimary === false) return;
     e.preventDefault();
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
     panStartRef.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
   };
 
   const movePan = (e: ReactPointerEvent) => {
-    if (sidesheetOpenRef.current) return;
+    if (sidesheetOpenRef.current || pinchRef.current.active) return;
     if (!panStartRef.current) return;
     setPan({
       x: panStartRef.current.panX + e.clientX - panStartRef.current.x,
@@ -202,7 +220,14 @@ export function ReadOnlyViewer() {
     });
   };
 
-  const endPan = () => {
+  const endPan = (e?: ReactPointerEvent) => {
+    if (e) {
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
+    }
     panStartRef.current = null;
   };
 
@@ -211,6 +236,55 @@ export function ReadOnlyViewer() {
     e.preventDefault();
     setScale((s) => Number(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, s + (e.deltaY > 0 ? -0.06 : 0.06))).toFixed(2)));
   };
+
+  // 触控双指捏合缩放（与编辑画布一致）；桌面仍主要靠滚轮/滑条。
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    const onTouchStart = (event: TouchEvent) => {
+      if (sidesheetOpenRef.current) return;
+      if (event.touches.length === 2) {
+        pinchRef.current = {
+          active: true,
+          startDist: touchDistance(event.touches[0], event.touches[1]),
+          startScale: scaleRef.current,
+        };
+        panStartRef.current = null;
+      }
+    };
+
+    const onTouchMove = (event: TouchEvent) => {
+      if (sidesheetOpenRef.current) return;
+      const pinch = pinchRef.current;
+      if (event.touches.length === 2 && pinch.active && pinch.startDist > 0) {
+        event.preventDefault();
+        const dist = touchDistance(event.touches[0], event.touches[1]);
+        const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, pinch.startScale * (dist / pinch.startDist)));
+        setScale(Number(next.toFixed(2)));
+      }
+    };
+
+    const onTouchEnd = (event: TouchEvent) => {
+      if (event.touches.length < 2) {
+        pinchRef.current = { active: false, startDist: 0, startScale: scaleRef.current };
+      }
+      if (event.touches.length === 0) {
+        panStartRef.current = null;
+      }
+    };
+
+    stage.addEventListener('touchstart', onTouchStart, { passive: true });
+    stage.addEventListener('touchmove', onTouchMove, { passive: false });
+    stage.addEventListener('touchend', onTouchEnd, { passive: true });
+    stage.addEventListener('touchcancel', onTouchEnd, { passive: true });
+    return () => {
+      stage.removeEventListener('touchstart', onTouchStart);
+      stage.removeEventListener('touchmove', onTouchMove);
+      stage.removeEventListener('touchend', onTouchEnd);
+      stage.removeEventListener('touchcancel', onTouchEnd);
+    };
+  }, []);
 
   const pageElementsMap = useMemo(() => {
     const map = new Map<string, NoteElement[]>();
@@ -301,11 +375,13 @@ export function ReadOnlyViewer() {
       </div>
 
       <div
+        ref={stageRef}
         className="relative min-h-0 flex-1 overflow-hidden"
-        style={{ cursor: 'grab' }}
+        style={{ cursor: 'grab', touchAction: 'none' }}
         onPointerDown={startPan}
         onPointerMove={movePan}
         onPointerUp={endPan}
+        onPointerCancel={endPan}
         onPointerLeave={endPan}
         onWheel={handleWheel}
       >
@@ -687,6 +763,12 @@ function pointsToPolyline(points: number[]) {
     values.push(`${points[index]},${points[index + 1]}`);
   }
   return values.join(' ');
+}
+
+function touchDistance(a: Touch, b: Touch) {
+  const dx = a.clientX - b.clientX;
+  const dy = a.clientY - b.clientY;
+  return Math.hypot(dx, dy);
 }
 
 function objectPosition(style: Record<string, string | number | boolean>) {
