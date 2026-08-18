@@ -14,9 +14,9 @@ android {
         applicationId "com.wails.app"
         minSdk 21
         targetSdk 34
-        // versionCode: major*100 + minor*10 + patch  → 2.9.0 = 290
-        versionCode 290
-        versionName "2.9.0"
+        // versionCode: major*100 + minor*10 + patch  → 3.0.0 = 300
+        versionCode 300
+        versionName "3.0.0"
 
         ndk {
             // 生产 APK 仅打包 armv8 / arm64-v8a

@@ -175,6 +175,44 @@ const maxFileChannelBufferedBytes = 2 * 1024 * 1024;
 const maxRelaySocketBufferedBytes = 1024 * 1024;
 const relaySocketBackpressureRetryMs = 40;
 
+// 服务器专属控制消息类型：auth_ok/join 流程/踢人/房间关闭等只能来自服务器 WebSocket。
+// P2P DataChannel 上的同名消息一律丢弃，防止恶意协作者伪造 auth_ok 篡改角色或清空文档。
+const SERVER_ONLY_TYPES = new Set([
+  'auth_ok',
+  'join_pending',
+  'join_request',
+  'join_decision',
+  'join_rejected',
+  'peer_joined',
+  'peer_left',
+  'peer_kicked',
+  'host_changed',
+  'room_closed',
+  'compaction_request',
+  'doc_update_rejected',
+  'error',
+]);
+
+// 网络帧解析防护：服务器或对端发来的畸形 JSON 不应让 message 事件回调抛未捕获异常。
+function parseEnvelopeSafe(data: unknown): Envelope | undefined {
+  try {
+    const parsed = JSON.parse(typeof data === 'string' ? data : String(data)) as Envelope;
+    return parsed && typeof parsed === 'object' ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// 去重集合上限：超限后整体重置，防止长会话内存无限增长。
+const seenIdSetLimit = 4096;
+
+function rememberSeenId(set: Set<string>, id: string) {
+  if (set.size >= seenIdSetLimit) {
+    set.clear();
+  }
+  set.add(id);
+}
+
 // CollaborationClient 是前端协作的网络内核：
 // - WebSocket 负责鉴权、房间成员、信令、持久化和应用层中转；
 // - WebRTC DataChannel 负责成功打洞后的 P2P 文档、在线状态和聊天传输；
@@ -186,6 +224,7 @@ export class CollaborationClient {
   private peers = new Map<string, PeerConnection>();
   private peerUsers = new Map<string, PresenceUser>();
   // 同一个 update/chat 会同时可能从 P2P 和服务端中转到达，必须按 id 去重。
+  // 长会话下去重集会无限增长，超过上限后整组重置（老 id 已无重复到达可能）。
   private seenUpdates = new Set<string>();
   private seenChats = new Set<string>();
   // 同一浏览器用户断线重连时 user.id 可能复用，connectionId 用于隔离每次连接生命周期。
@@ -305,7 +344,7 @@ export class CollaborationClient {
       sentAt: new Date().toISOString(),
       local: true,
     };
-    this.seenChats.add(message.id);
+    rememberSeenId(this.seenChats, message.id);
     this.options.onChat(message);
     const payload = { messageId: message.id, text: trimmed, user: this.options.user, relay: this.needsRelay('chat') || this.isP2PFileTransferActive() };
     const env = this.makeEnvelope('chat', payload);
@@ -375,7 +414,12 @@ export class CollaborationClient {
         }),
       );
     });
-    socket.addEventListener('message', (event) => this.handleEnvelope(JSON.parse(String(event.data)), 'relay'));
+    socket.addEventListener('message', (event) => {
+      const env = parseEnvelopeSafe(event.data);
+      if (env) {
+        this.handleEnvelope(env, 'relay');
+      }
+    });
     socket.addEventListener('close', () => {
       if (this.closing) {
         return;
@@ -392,6 +436,9 @@ export class CollaborationClient {
   // 所有网络消息统一解析成 Envelope，再按 type 分发，方便 P2P 与 relay 复用同一套处理逻辑。
   private handleEnvelope(env: Envelope, source: Transport) {
     if (!env || env.v !== 1) {
+      return;
+    }
+    if (source === 'p2p' && SERVER_ONLY_TYPES.has(env.type)) {
       return;
     }
     switch (env.type) {
@@ -432,7 +479,7 @@ export class CollaborationClient {
         this.applyFileResourceChunk(env.from ?? 'relay', env.payload as FileResourceChunkPayload);
         break;
       case 'file_resource_complete':
-        this.applyFileResourceComplete(env.from ?? 'relay', env.payload as FileResourceCompletePayload);
+        void this.applyFileResourceComplete(env.from ?? 'relay', env.payload as FileResourceCompletePayload);
         break;
       case 'presence':
         this.applyPresence((env.payload as { user?: PresenceUser })?.user, source);
@@ -460,6 +507,11 @@ export class CollaborationClient {
         }
         break;
       case 'relay':
+        // relay 包装只应来自服务器 WebSocket（sendRelayEnvelope 仅走 sendSocket）；
+        // P2P 通道上的 relay 消息若在这里解包会以 relay 来源处理，绕过上面的服务器专属类型过滤。
+        if (source === 'p2p') {
+          break;
+        }
         this.handleRelay(env);
         break;
       case 'error':
@@ -785,7 +837,7 @@ export class CollaborationClient {
     // 协作者退出后重新加入时 updateSeq 会从 0 开始，如果 updateId 只用 user.id + seq，
     // 其他客户端会把新连接的编辑误判为旧连接已处理过的 update。connectionId 用于隔离每次连接生命周期。
     const updateId = `${this.options.user.id}:${this.connectionId}:${++this.updateSeq}`;
-    this.seenUpdates.add(updateId);
+    rememberSeenId(this.seenUpdates, updateId);
     const payload: DocUpdatePayload = {
       updateId,
       updateBase64: bytesToBase64(update),
@@ -820,7 +872,7 @@ export class CollaborationClient {
       return;
     }
     const updateId = `${this.options.user.id}:${this.connectionId}:state:${++this.updateSeq}`;
-    this.seenUpdates.add(updateId);
+    rememberSeenId(this.seenUpdates, updateId);
     const env = this.makeEnvelope('doc_update', {
       updateId,
       updateBase64: bytesToBase64(Y.encodeStateAsUpdate(this.options.yDoc)),
@@ -835,7 +887,7 @@ export class CollaborationClient {
     if (!payload?.updateBase64 || this.seenUpdates.has(payload.updateId)) {
       return;
     }
-    this.seenUpdates.add(payload.updateId);
+    rememberSeenId(this.seenUpdates, payload.updateId);
     Y.applyUpdate(this.options.yDoc, base64ToBytes(payload.updateBase64), remoteOrigin);
   }
 
@@ -844,6 +896,20 @@ export class CollaborationClient {
       return;
     }
     if (this.availableFileTransferKeys.has(this.fileTransferDedupeKeyFromPayload(payload))) {
+      return;
+    }
+    // 对端声明的传输参数不可信：总大小、分片数、MIME、文件名都校验后才建会话。
+    if (!isValidIncomingTransfer(payload)) {
+      return;
+    }
+    // 单个对端的并发会话数设限，防止伪造 transfer 刷内存。
+    let peerSessions = 0;
+    this.incomingFileTransfers.forEach((session) => {
+      if (session.peerId === peerId) {
+        peerSessions += 1;
+      }
+    });
+    if (peerSessions >= maxIncomingSessionsPerPeer) {
       return;
     }
     const sessionKey = this.fileSessionKey(peerId, payload.transferId);
@@ -875,7 +941,7 @@ export class CollaborationClient {
     this.appendFileChunk(peerId, session.start.transferId, bytes);
   }
 
-  private applyFileResourceComplete(peerId: string, payload?: FileResourceCompletePayload) {
+  private async applyFileResourceComplete(peerId: string, payload?: FileResourceCompletePayload) {
     if (!payload?.transferId || peerId === this.options.user.id) {
       return;
     }
@@ -884,11 +950,20 @@ export class CollaborationClient {
     if (!session || session.receivedChunks < session.start.totalChunks) {
       return;
     }
+    // 实际收到的字节数必须与声明一致，防止稀疏 index 凑满 receivedChunks 就宣告完成。
+    if (session.receivedBytes !== session.start.totalBytes) {
+      this.incomingFileTransfers.delete(sessionKey);
+      return;
+    }
     const dataBase64 = encodeFileTransferChunks(session.chunks);
+    if (!(await verifyIncomingTransferHash(session.start, dataBase64))) {
+      this.incomingFileTransfers.delete(sessionKey);
+      return;
+    }
     announceCompletedResourceTransfer({
       key: session.start.key,
       group: session.start.group,
-      asset: session.start.asset,
+      asset: sanitizeIncomingAsset(session.start.asset),
       signature: session.start.signature,
       transferVersion: session.start.transferVersion,
       dataBase64,
@@ -911,7 +986,7 @@ export class CollaborationClient {
     }
     announceResourceTransferProgress(this.fileProgress(session.start, session.receivedBytes, session.receivedChunks));
     if (session.receivedChunks >= session.start.totalChunks) {
-      this.applyFileResourceComplete(peerId, { transferId, key: session.start.key });
+      void this.applyFileResourceComplete(peerId, { transferId, key: session.start.key });
     }
   }
 
@@ -1058,7 +1133,7 @@ export class CollaborationClient {
     if (!payload?.messageId || !payload.text || this.seenChats.has(payload.messageId)) {
       return;
     }
-    this.seenChats.add(payload.messageId);
+    rememberSeenId(this.seenChats, payload.messageId);
     this.options.onChat({
       id: payload.messageId,
       text: payload.text,
@@ -1223,7 +1298,10 @@ export class CollaborationClient {
         this.voiceClient?.handleVoiceChunk(peer.id, event.data as ArrayBuffer);
         return;
       }
-      this.handleEnvelope(JSON.parse(String(event.data)), 'p2p');
+      const env = parseEnvelopeSafe(event.data);
+      if (env) {
+        this.handleEnvelope(env, 'p2p');
+      }
     };
   }
 
@@ -1637,7 +1715,8 @@ export function parseInviteLink(value: string): InviteInfo {
   const fragmentParams = new URLSearchParams(link.hash.replace(/^#/, ''));
   const serverUrl = fragmentParams.get('server') || link.searchParams.get('server') || '';
   const roomId = fragmentParams.get('roomId') || link.searchParams.get('roomId') || '';
-  const roomKey = fragmentParams.get('roomKey') || link.searchParams.get('roomKey') || '';
+  // roomKey 只从 fragment 读取：query 会被代理/服务器记录并出现在 Referer 中，不接受弱传输形式。
+  const roomKey = fragmentParams.get('roomKey') || '';
   if (!serverUrl || !roomId || !roomKey) {
     throw new Error('邀请链接缺少服务器、房间或密钥信息');
   }
@@ -1725,6 +1804,87 @@ function encodeFileTransferChunks(chunks: Array<string | Uint8Array | undefined>
   }
   return bytesToBase64(concatUint8Arrays(presentChunks.map((chunk) => (typeof chunk === 'string' ? base64ToBytes(chunk) : chunk))));
 }
+
+// ===== 传入文件传输的信任边界 =====
+// 对端资产声明不可信：以下常量与校验决定一个 transfer 是否被接受。
+
+const maxIncomingTransferBytes = 256 * 1024 * 1024;
+const maxIncomingSessionsPerPeer = 4;
+
+// 各资源组允许的 MIME 前缀/精确值白名单；组外 MIME 直接拒绝。
+const incomingMimeAllowlist: Record<string, string[]> = {
+  assets: ['image/'],
+  stickers: ['image/'],
+  fonts: ['font/', 'application/font-', 'application/octet-stream'],
+  audios: ['audio/', 'application/octet-stream'],
+  videos: ['video/', 'application/octet-stream'],
+  models: ['model/', 'application/octet-stream'],
+};
+
+function mimeAllowed(group: string, mimeType: string) {
+  const allow = incomingMimeAllowlist[group];
+  if (!allow) {
+    return false;
+  }
+  const normalized = (mimeType || '').toLowerCase();
+  return allow.some((prefix) => normalized.startsWith(prefix));
+}
+
+// 仅保留文件名部分：对端提供的 name/path 可能携带路径分隔符，落到 .tnote 打包或本地图径都有穿越风险。
+function incomingFileBasename(value: string) {
+  const parts = (value || '').split(/[\\/]/).filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1].slice(0, 128) : 'resource';
+}
+
+function isValidIncomingTransfer(start: FileResourceStartPayload) {
+  if (!Number.isFinite(start.totalBytes) || start.totalBytes <= 0 || start.totalBytes > maxIncomingTransferBytes) {
+    return false;
+  }
+  if (!Number.isFinite(start.totalChunks) || start.totalChunks <= 0 || start.totalChunks > 100000) {
+    return false;
+  }
+  if (!Number.isFinite(start.chunkSize) || start.chunkSize <= 0 || start.chunkSize > fileTransferChunkBytes * 8) {
+    return false;
+  }
+  // 分片数必须与声明尺寸自洽（向上取整），否则拒绝接收。
+  if (Math.ceil(start.totalBytes / start.chunkSize) !== start.totalChunks) {
+    return false;
+  }
+  if (!mimeAllowed(start.group, start.asset?.mimeType ?? '')) {
+    return false;
+  }
+  return true;
+}
+
+// 重组完成后重算 SHA-256 并与对端声明的 hash 比对，不匹配即丢弃。
+// crypto.subtle 仅在 secure context 可用（Android WebView http 部署会缺失），此时退化为尺寸校验。
+async function verifyIncomingTransferHash(start: FileResourceStartPayload, dataBase64: string) {
+  const claimed = (start.asset?.hash ?? '').trim();
+  if (!claimed || !crypto?.subtle?.digest) {
+    return true;
+  }
+  try {
+    const bytes = base64ToBytes(dataBase64);
+    const digest = await crypto.subtle.digest('SHA-256', bytes as unknown as ArrayBuffer);
+    const hex = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+    return hex === claimed.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
+// 对端 asset 元数据进入本地文档前清洗：只保留 basename，截断超长字段。
+function sanitizeIncomingAsset(asset: AssetMeta): AssetMeta {
+  return {
+    ...asset,
+    name: incomingFileBasename(asset.name ?? ''),
+    path: incomingFileBasename(asset.path ?? ''),
+    dataUrl: undefined,
+    coverDataUrl: undefined,
+    posterDataUrl: undefined,
+  };
+}
+
 
 function concatUint8Arrays(chunks: Uint8Array[]) {
   const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);

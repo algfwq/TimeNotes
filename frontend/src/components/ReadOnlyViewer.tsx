@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from 'react';
+import DOMPurify from 'dompurify';
 import { Button, Slider, Typography } from '@douyinfe/semi-ui';
 import { IconChevronLeft, IconChevronRight, IconRefresh } from '@douyinfe/semi-icons';
 import type { AssetMeta, NoteElement, NotePage, ResourceTransferProgress } from '../types';
@@ -18,6 +19,17 @@ const SPINE_WIDTH = 40;
 const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 2.4;
 const FLIP_DURATION = 680;
+
+// 富文本内容可能来自协作者注入的 yDoc 或外部 .tnote 文件，注入前必须过白名单过滤。
+// Tiptap 产物含 style 属性与 data-* 属性，DOMPurify 默认允许；img 的 src 仅放行 data:。
+function sanitizeRichTextContent(content?: string) {
+  if (!content) {
+    return '';
+  }
+  return DOMPurify.sanitize(content, {
+    ALLOWED_URI_REGEXP: /^(?:data:image\/|mailto:|tel:|https?:)/i,
+  });
+}
 
 interface SpreadPages {
   left: NotePage | null;
@@ -679,7 +691,7 @@ function ReadOnlyElement({
         onPointerDownCapture={handleLinkPointerDown}
         onClickCapture={handleLinkClick}
         onWheel={(event) => event.stopPropagation()}
-        dangerouslySetInnerHTML={{ __html: element.content ?? '' }}
+        dangerouslySetInnerHTML={{ __html: sanitizeRichTextContent(element.content) }}
       />
     );
   }

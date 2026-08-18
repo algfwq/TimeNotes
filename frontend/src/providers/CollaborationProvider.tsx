@@ -104,6 +104,19 @@ export function CollaborationProvider({ children }: { children: React.ReactNode 
     ({ url, roomId, roomKey, userName, forceRelay: nextForceRelay = forceRelay, iceServers, tabId, yDoc: yDocOverride }: ConnectOptions) => {
       // 新连接总是先关闭旧连接；同一页面重复点击“发起/加入”不会保留旧 peer 和计时器。
       disconnect('reconnect');
+      // 生产构建连到非本机的明文 ws:// 时提示一次：房间密钥和文档内容会明文经过网络。
+      if (import.meta.env.PROD) {
+        try {
+          const wsUrl = new URL(url);
+          const host = wsUrl.hostname;
+          const isLoopback = host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]';
+          if (wsUrl.protocol === 'ws:' && !isLoopback) {
+            Toast.warning('当前使用未加密的 ws:// 连接，协作内容可能被同网络窃听；建议改用 wss:// 服务器');
+          }
+        } catch {
+          // url 格式异常由后续连接流程报错，这里不重复处理。
+        }
+      }
       const boundTabId = tabId ?? activeTabId;
       const boundYDoc = yDocOverride ?? yDoc;
       const user = {

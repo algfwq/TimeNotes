@@ -1,7 +1,7 @@
 {
   "name": "react-ts-latest",
   "private": true,
-  "version": "2.9.0",
+  "version": "3.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -22,6 +22,7 @@
     "@types/markdown-it": "^14.1.2",
     "@types/prismjs": "^1.26.6",
     "@wailsio/runtime": "latest",
+    "dompurify": "^3.4.13",
     "html2canvas": "^1.4.1",
     "konva": "^10.2.5",
     "markdown-it": "^14.2.0",

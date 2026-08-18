@@ -72,8 +72,12 @@ async function flushFrontendLogs() {
 
 function collectRuntimeSnapshot() {
   const memory = (performance as any).memory;
+  // href 可能带 #roomKey=... 邀请 fragment，query 同理；只记录 origin+pathname，防止密钥进日志。
+  const location = new URL(window.location.href);
+  location.hash = '';
+  location.search = '';
   return {
-    href: window.location.href,
+    href: location.toString(),
     visibility: document.visibilityState,
     elements: document.querySelectorAll('[data-element-id]').length,
     images: document.images.length,
