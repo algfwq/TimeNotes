@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { Tooltip } from '@douyinfe/semi-ui';
 import { useTheme } from '../providers/ThemeProvider';
 
@@ -10,7 +10,6 @@ export function ThemeToggle({ compact = false }: { compact?: boolean }) {
   const { theme, toggleTheme } = useTheme();
   const isDark = theme === 'dark';
   const btnRef = useRef<HTMLButtonElement>(null);
-  const [bump, setBump] = useState(false);
   const bumpTimer = useRef<number | null>(null);
 
   useEffect(() => {
@@ -22,16 +21,21 @@ export function ThemeToggle({ compact = false }: { compact?: boolean }) {
   }, []);
 
   const handleToggle = () => {
-    const rect = btnRef.current?.getBoundingClientRect();
+    const button = btnRef.current;
+    const rect = button?.getBoundingClientRect();
     const origin = rect
       ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
       : undefined;
 
-    setBump(true);
-    if (bumpTimer.current !== null) {
-      window.clearTimeout(bumpTimer.current);
+    if (button) {
+      button.classList.add('theme-toggle--bump');
+      if (bumpTimer.current !== null) {
+        window.clearTimeout(bumpTimer.current);
+      }
+      bumpTimer.current = window.setTimeout(() => {
+        button.classList.remove('theme-toggle--bump');
+      }, 420);
     }
-    bumpTimer.current = window.setTimeout(() => setBump(false), 420);
 
     toggleTheme(origin);
 
@@ -51,13 +55,13 @@ export function ThemeToggle({ compact = false }: { compact?: boolean }) {
     <button
       ref={btnRef}
       type="button"
-      className={`theme-toggle ${isDark ? 'theme-toggle--dark' : 'theme-toggle--light'}${bump ? ' theme-toggle--bump' : ''}`}
+      data-theme-toggle=""
+      className={`theme-toggle ${isDark ? 'theme-toggle--dark' : 'theme-toggle--light'}`}
       style={{ width: size, height: size }}
       aria-label={label}
       aria-pressed={isDark}
       title={label}
       onPointerDown={(event) => {
-        // Instant press feedback (Apple: respond on down, not click).
         event.currentTarget.classList.add('theme-toggle--pressed');
       }}
       onPointerUp={(event) => {

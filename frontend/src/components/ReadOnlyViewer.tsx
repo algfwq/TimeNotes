@@ -343,7 +343,7 @@ export function ReadOnlyViewer() {
   const leftSlotWidth = displayedLeft?.width ?? samplePage.width;
 
   return (
-    <div ref={wrapRef} className="reading-mode-stage flex h-full min-h-0 flex-col dark:bg-[#0f0e0c]">
+    <div ref={wrapRef} className="reading-mode-stage flex h-full min-h-0 flex-col dark:bg-[#161513]">
       <div className="book-toolbar flex min-h-12 shrink-0 flex-wrap items-center justify-between gap-3 px-4 py-2">
         <div>
           <Typography.Text strong>{document.title}</Typography.Text>

@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { flushSync } from 'react-dom';
 import {
   applyDocumentTheme,
   getSystemTheme,
@@ -19,36 +20,113 @@ type ThemeContextValue = {
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
-type DocumentWithViewTransition = Document & {
-  startViewTransition?: (update: () => void) => { finished: Promise<void> };
+type ViewTransition = {
+  finished: Promise<void>;
+  ready: Promise<void>;
+  skipTransition: () => void;
 };
 
-function runThemeTransition(next: ThemeMode, origin?: { x: number; y: number }) {
+type DocumentWithViewTransition = Document & {
+  startViewTransition?: (update: () => void) => ViewTransition;
+};
+
+const REVEAL_EASE = 'cubic-bezier(0.22, 1, 0.36, 1)';
+
+let activeThemeTransition: ViewTransition | null = null;
+
+function resolveRevealOrigin(origin?: { x: number; y: number }) {
+  if (origin && Number.isFinite(origin.x) && Number.isFinite(origin.y)) {
+    return origin;
+  }
+  const toggle = document.querySelector<HTMLElement>('[data-theme-toggle]');
+  if (toggle) {
+    const rect = toggle.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  }
+  return { x: window.innerWidth - 28, y: window.innerHeight - 24 };
+}
+
+function coverRadius(x: number, y: number) {
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  return Math.ceil(Math.hypot(Math.max(x, width - x), Math.max(y, height - y)));
+}
+
+function animateThemeReveal(next: ThemeMode, x: number, y: number) {
+  const radius = coverRadius(x, y);
+  const toDark = next === 'dark';
+  const frames = toDark
+    ? [
+        { clipPath: `circle(0px at ${x}px ${y}px)` },
+        { clipPath: `circle(${radius}px at ${x}px ${y}px)` },
+      ]
+    : [
+        { clipPath: `circle(${radius}px at ${x}px ${y}px)` },
+        { clipPath: `circle(0px at ${x}px ${y}px)` },
+      ];
+
+  document.documentElement.animate(frames, {
+    duration: toDark ? 460 : 400,
+    easing: REVEAL_EASE,
+    fill: 'both',
+    pseudoElement: toDark ? '::view-transition-new(root)' : '::view-transition-old(root)',
+  });
+}
+
+function clearThemeTransition(root: HTMLElement) {
+  delete root.dataset.themeTransition;
+}
+
+function runThemeTransition(next: ThemeMode, origin: { x: number; y: number } | undefined, commitReact: () => void) {
   const root = document.documentElement;
-  const reduced = prefersReducedMotion();
+  const commit = () => {
+    applyDocumentTheme(next);
+    flushSync(commitReact);
+  };
+
   const doc = document as DocumentWithViewTransition;
-
-  const commit = () => applyDocumentTheme(next);
-
-  if (reduced || typeof doc.startViewTransition !== 'function') {
+  if (prefersReducedMotion() || typeof doc.startViewTransition !== 'function') {
     commit();
     return;
   }
 
-  const x = origin?.x ?? window.innerWidth - 28;
-  const y = origin?.y ?? window.innerHeight - 24;
-  root.style.setProperty('--theme-reveal-x', `${x}px`);
-  root.style.setProperty('--theme-reveal-y', `${y}px`);
+  if (activeThemeTransition) {
+    try {
+      activeThemeTransition.skipTransition();
+    } catch {
+      // A skipped transition still settles in `finished`.
+    }
+  }
+
+  const { x, y } = resolveRevealOrigin(origin);
   root.dataset.themeTransition = next === 'dark' ? 'to-dark' : 'to-light';
 
-  const transition = doc.startViewTransition(() => {
+  let transition: ViewTransition;
+  try {
+    transition = doc.startViewTransition(() => {
+      commit();
+    });
+  } catch {
+    clearThemeTransition(root);
     commit();
-  });
+    return;
+  }
+
+  activeThemeTransition = transition;
+
+  void transition.ready
+    .then(() => {
+      animateThemeReveal(next, x, y);
+    })
+    .catch(() => {
+      // ready rejects when the transition is skipped.
+    });
 
   void transition.finished.finally(() => {
-    delete root.dataset.themeTransition;
-    root.style.removeProperty('--theme-reveal-x');
-    root.style.removeProperty('--theme-reveal-y');
+    if (activeThemeTransition === transition) {
+      activeThemeTransition = null;
+    }
+    clearThemeTransition(root);
   });
 }
 
@@ -56,8 +134,6 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [preference, setPreference] = useState<ThemePreference>(() => readThemePreference());
   const [theme, setThemeState] = useState<ThemeMode>(() => resolveTheme(readThemePreference()));
 
-  // Keep document theme in sync for system preference changes only.
-  // Manual toggles apply inside startViewTransition so the reveal can capture before/after.
   useEffect(() => {
     if (preference !== 'system') {
       return;
@@ -82,10 +158,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const toggleTheme = useCallback(
     (origin?: { x: number; y: number }) => {
       const next: ThemeMode = theme === 'dark' ? 'light' : 'dark';
-      setPreference(next);
       writeThemePreference(next);
-      setThemeState(next);
-      runThemeTransition(next, origin);
+      runThemeTransition(next, origin, () => {
+        setPreference(next);
+        setThemeState(next);
+      });
     },
     [theme],
   );

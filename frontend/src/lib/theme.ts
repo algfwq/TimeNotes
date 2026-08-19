@@ -50,7 +50,7 @@ export function applyDocumentTheme(mode: ThemeMode) {
     body.classList.add('semi-always-dark');
     body.classList.remove('semi-always-light');
   } else {
-    body.removeAttribute('theme-mode');
+    body.setAttribute('theme-mode', 'light');
     body.classList.remove('semi-always-dark');
     body.classList.add('semi-always-light');
   }

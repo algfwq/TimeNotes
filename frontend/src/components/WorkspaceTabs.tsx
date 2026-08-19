@@ -22,7 +22,7 @@ export function WorkspaceTabs() {
     <>
       <div
         data-workspace-tabs
-        className="timenotes-workspace-tabs flex h-9 w-full min-w-0 items-center gap-1 overflow-x-auto overflow-y-hidden border-t border-black/5 bg-[#f7f4ed] px-3 dark:border-[#e8c56a]/20 dark:bg-[#161310]"
+        className="timenotes-workspace-tabs flex h-9 w-full min-w-0 items-center gap-1 overflow-x-auto overflow-y-hidden border-t border-black/5 bg-[#f7f4ed] px-3 dark:border-white/[0.06] dark:bg-[#181716]"
         style={{ scrollbarGutter: 'stable' }}
       >
         {tabs.map((tab) => {
@@ -37,8 +37,8 @@ export function WorkspaceTabs() {
               tabIndex={0}
               className={`flex h-7 max-w-56 shrink-0 items-center gap-2 rounded-[6px] border px-2 text-sm transition ${
                 active
-                  ? 'border-[#2f6fed] bg-white text-[#1f5fd2] shadow-sm dark:border-[#e8c56a]/75 dark:bg-[#211e19] dark:text-[#e8c56a]'
-                  : 'border-transparent bg-white/45 text-black/60 hover:bg-white dark:bg-[#e8c56a]/06 dark:text-[#eed082]/80 dark:hover:bg-[#e8c56a]/14'
+                  ? 'border-[#2f6fed] bg-white text-[#1f5fd2] shadow-sm dark:border-white/20 dark:bg-[#2a2826] dark:text-[#ece7de]'
+                  : 'border-transparent bg-white/45 text-black/60 hover:bg-white dark:bg-white/[0.04] dark:text-white/60 dark:hover:bg-white/[0.08]'
               }`}
               onClick={() => switchTab(tab.id)}
               onContextMenu={(event) => {
@@ -107,7 +107,7 @@ function TabContextMenu({ state, onRename }: { state: { x: number; y: number; ta
   }
   return (
     <div
-      className="fixed z-[900] min-w-36 rounded-[8px] border border-black/10 bg-white py-1 text-sm shadow-xl dark:border-[#e8c56a]/28 dark:bg-[#1c1a15] dark:text-[#f0eadd]"
+      className="fixed z-[900] min-w-36 rounded-[8px] border border-black/10 bg-white py-1 text-sm shadow-xl dark:border-white/10 dark:bg-[#242220] dark:text-[#ece7de]"
       style={{ left: state.x, top: state.y }}
       onClick={(event) => event.stopPropagation()}
       onContextMenu={(event) => event.preventDefault()}

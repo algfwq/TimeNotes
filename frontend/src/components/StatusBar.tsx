@@ -37,7 +37,7 @@ export function StatusBar({ compactChrome = false }: { compactChrome?: boolean }
   };
 
   return (
-    <div className={`timenotes-statusbar flex min-w-0 items-center justify-between overflow-hidden text-xs text-black/58 dark:text-[#eed082]/75 ${compactChrome ? 'h-10 gap-2 px-2' : 'h-12 gap-3 px-4'}`}>
+    <div className={`timenotes-statusbar flex min-w-0 items-center justify-between overflow-hidden text-xs text-black/58 dark:text-white/55 ${compactChrome ? 'h-10 gap-2 px-2' : 'h-12 gap-3 px-4'}`}>
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
         {autoSaveState !== 'idle' ? (
           <Tag size="small" color={autoSaveState === 'saving' ? 'blue' : autoSaveState === 'saved' ? 'green' : 'red'}>
