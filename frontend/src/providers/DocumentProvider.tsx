@@ -12,6 +12,7 @@ import {
   announceOutboundResourceTransfer,
   announceResourceTransferInvalidated,
   subscribeCompletedResourceTransfer,
+  subscribeResourceTransferInvalidated,
   subscribeResourceTransferProgress,
   subscribeResourceTransportReady,
 } from '../lib/resourceTransferBus';
@@ -1307,10 +1308,15 @@ export function DocumentProvider({ children }: { children: React.ReactNode }) {
         activeYDoc.getMap<CollaborationResourceValue>(collaborationResourceMapName),
       );
     });
+    // 传输被拒（hash 不符/残缺/超时）时清掉进度条，避免 UI 永远停在 99%。
+    const unsubscribeInvalidated = subscribeResourceTransferInvalidated((invalidation) => {
+      removeResourceProgress(`${invalidation.group}:${invalidation.assetId}`);
+    });
     return () => {
       unsubscribeProgress();
       unsubscribeComplete();
       unsubscribeReady();
+      unsubscribeInvalidated();
     };
   }, [activeYDoc, bumpResourceCacheVersion, document, updateActiveTab]);
 

@@ -26,6 +26,17 @@
   --tn-chrome: 255 255 255;
   --tn-muted: 47 42 36;
   --tn-border: 0 0 0;
+  --tn-accent: 47 111 237;
+  --tn-accent-soft: rgba(47, 111, 237, 0.12);
+  --tn-chrome-text: rgb(var(--tn-ink));
+  --tn-chrome-muted: rgba(47, 42, 36, 0.58);
+  --tn-chrome-faint: rgba(47, 42, 36, 0.4);
+  --tn-chrome-surface: rgba(255, 255, 255, 0.72);
+  --tn-chrome-surface-strong: rgba(255, 255, 255, 0.92);
+  --tn-chrome-hover: rgba(255, 255, 255, 0.9);
+  --tn-chrome-border: rgba(0, 0, 0, 0.1);
+  --tn-chrome-accent: rgb(31, 95, 210);
+  --tn-chrome-accent-soft: rgba(47, 111, 237, 0.1);
   --tn-shadow-page: 0 30px 90px rgba(87, 70, 45, 0.22);
   --theme-reveal-x: 50%;
   --theme-reveal-y: 50%;
@@ -40,20 +51,31 @@
 
 html.theme-dark,
 html[data-theme="dark"] {
-  /* Vivid black-gold chrome (true metallic gold, not ochre). */
-  --tn-paper: 14 14 14;
-  --tn-ink: 250 246 236;
-  --tn-linen: 7 7 7;
-  --tn-canvas: 8 8 8;
-  --tn-panel: 16 16 16;
-  --tn-chrome: 12 12 12;
-  --tn-muted: 255 228 140;
-  --tn-border: 255 215 0;
-  --tn-gold: 255 215 0;
-  --tn-gold-bright: 255 232 100;
-  --tn-gold-soft: 255 224 102;
-  --tn-gold-dim: 204 160 0;
-  --tn-shadow-page: 0 30px 90px rgba(0, 0, 0, 0.72);
+  /* 墨玉暖金：带暖棕底色的深灰层次 + 柔和琥珀金点缀 */
+  --tn-paper: 23 21 18;
+  --tn-ink: 240 234 221;
+  --tn-linen: 13 12 10;
+  --tn-canvas: 15 14 12;
+  --tn-panel: 24 22 19;
+  --tn-chrome: 18 17 14;
+  --tn-muted: 232 209 154;
+  --tn-border: 232 197 106;
+  --tn-gold: 232 197 106;
+  --tn-gold-bright: 244 218 148;
+  --tn-gold-soft: 238 208 130;
+  --tn-gold-dim: 180 146 70;
+  --tn-accent: 232 197 106;
+  --tn-accent-soft: rgba(232, 197, 106, 0.14);
+  --tn-chrome-text: rgb(var(--tn-ink));
+  --tn-chrome-muted: rgba(240, 234, 221, 0.62);
+  --tn-chrome-faint: rgba(240, 234, 221, 0.42);
+  --tn-chrome-surface: rgba(255, 255, 255, 0.055);
+  --tn-chrome-surface-strong: rgba(33, 31, 26, 0.96);
+  --tn-chrome-hover: rgba(232, 197, 106, 0.1);
+  --tn-chrome-border: rgba(232, 197, 106, 0.2);
+  --tn-chrome-accent: rgb(232, 197, 106);
+  --tn-chrome-accent-soft: rgba(232, 197, 106, 0.14);
+  --tn-shadow-page: 0 30px 90px rgba(0, 0, 0, 0.66);
   color-scheme: dark;
 }
 
@@ -163,9 +185,9 @@ body {
 html.theme-dark body,
 html[data-theme="dark"] body {
   background:
-    radial-gradient(120% 80% at 50% -10%, rgba(255, 215, 0, 0.1), transparent 52%),
-    linear-gradient(90deg, rgba(255, 215, 0, 0.05) 1px, transparent 1px),
-    linear-gradient(0deg, rgba(255, 215, 0, 0.05) 1px, transparent 1px),
+    radial-gradient(120% 80% at 50% -10%, rgba(232, 197, 106, 0.07), transparent 52%),
+    linear-gradient(90deg, rgba(232, 197, 106, 0.04) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(232, 197, 106, 0.04) 1px, transparent 1px),
     rgb(var(--tn-linen));
   background-size: auto, 28px 28px, 28px 28px, auto;
 }
@@ -1194,15 +1216,15 @@ html.platform-mobile .semi-cropper-box-corner-br {
 }
 
 .theme-toggle--dark {
-  border-color: rgba(255, 215, 0, 0.55);
+  border-color: rgba(232, 197, 106, 0.45);
   background:
-    radial-gradient(120% 120% at 70% 28%, rgba(255, 232, 100, 0.42), transparent 52%),
-    linear-gradient(180deg, #1a1a1a, #0a0a0a);
-  color: #ffd700;
+    radial-gradient(120% 120% at 70% 28%, rgba(244, 218, 148, 0.32), transparent 52%),
+    linear-gradient(180deg, #221f1a, #131109);
+  color: #e8c56a;
   box-shadow:
-    0 1px 0 rgba(255, 232, 100, 0.28) inset,
-    0 8px 18px rgba(0, 0, 0, 0.5),
-    0 0 18px rgba(255, 215, 0, 0.18);
+    0 1px 0 rgba(244, 218, 148, 0.18) inset,
+    0 8px 18px rgba(0, 0, 0, 0.44),
+    0 0 18px rgba(232, 197, 106, 0.14);
 }
 
 .theme-toggle--pressed {
@@ -1225,7 +1247,7 @@ html.platform-mobile .semi-cropper-box-corner-br {
 }
 
 .theme-toggle--dark .theme-toggle__glow {
-  background: radial-gradient(circle at 50% 50%, rgba(255, 215, 0, 0.55), transparent 60%);
+  background: radial-gradient(circle at 50% 50%, rgba(232, 197, 106, 0.5), transparent 60%);
   opacity: 0.88;
   transform: scale(1);
 }
@@ -1392,59 +1414,59 @@ html[data-theme-transition="to-light"]::view-transition-new(root) {
   }
 }
 
-/* ---------- Dark chrome surfaces (vivid black-gold) ---------- */
+/* ---------- Dark chrome surfaces (墨玉暖金) ---------- */
 
+/* 深色 chrome 中的底色、面板与层次：由 --tn-* 变量统一驱动 */
 html.dark .timenotes-chrome-header,
 html.dark .timenotes-chrome-footer {
-  background:
-    linear-gradient(180deg, rgba(22, 22, 22, 0.96), rgba(10, 10, 10, 0.94)) !important;
-  border-color: rgba(255, 215, 0, 0.28) !important;
-  backdrop-filter: blur(18px) saturate(150%);
-  box-shadow: 0 1px 0 rgba(255, 232, 100, 0.14) inset;
+  background: var(--tn-chrome-surface-strong) !important;
+  border-color: var(--tn-chrome-border) !important;
+  backdrop-filter: blur(18px) saturate(140%);
+  box-shadow: 0 1px 0 rgba(244, 218, 148, 0.08) inset;
 }
 
 html.dark .timenotes-chrome-sider {
-  background:
-    linear-gradient(180deg, #141414 0%, #0f0f0f 100%) !important;
-  border-color: rgba(255, 215, 0, 0.22) !important;
+  background: rgb(var(--tn-panel)) !important;
+  border-color: var(--tn-chrome-border) !important;
 }
 
 html.dark .timenotes-canvas-stage {
   background:
-    radial-gradient(90% 70% at 50% 0%, rgba(255, 215, 0, 0.09), transparent 58%),
-    #080808 !important;
+    radial-gradient(90% 70% at 50% 0%, rgba(232, 197, 106, 0.05), transparent 58%),
+    rgb(var(--tn-canvas)) !important;
 }
 
 html.dark .timenotes-workspace-tabs {
-  background: #101010 !important;
-  border-color: rgba(255, 215, 0, 0.18) !important;
+  background: rgb(var(--tn-chrome)) !important;
+  border-color: rgba(232, 197, 106, 0.14) !important;
 }
 
 html.dark .book-toolbar {
-  border-bottom-color: rgba(255, 215, 0, 0.28);
-  background: linear-gradient(180deg, rgba(22, 22, 22, 0.97), rgba(10, 10, 10, 0.94));
-  color: rgba(250, 246, 236, 0.92);
-  box-shadow: 0 1px 0 rgba(255, 232, 100, 0.14) inset, 0 8px 20px rgba(0, 0, 0, 0.5);
+  border-bottom-color: var(--tn-chrome-border);
+  background: var(--tn-chrome-surface-strong);
+  color: var(--tn-chrome-text);
+  box-shadow: 0 1px 0 rgba(244, 218, 148, 0.08) inset, 0 8px 20px rgba(0, 0, 0, 0.4);
 }
 
 html.dark .book-flip-perspective {
-  background: #080808;
+  background: rgb(var(--tn-canvas));
 }
 
 html.dark .reading-mode-stage {
-  background: #080808;
+  background: rgb(var(--tn-canvas));
 }
 
 html.dark .timenotes-home {
   background:
-    radial-gradient(80% 50% at 50% 0%, rgba(255, 215, 0, 0.1), transparent 55%),
+    radial-gradient(80% 50% at 50% 0%, rgba(232, 197, 106, 0.06), transparent 55%),
     transparent;
 }
 
-/*
- * Soften light-only utilities inside chrome only.
- * Do NOT target .timenotes-canvas-stage paper content — notebook pages stay warm.
- */
+/* 深色 chrome 内的语义表面变量：组件硬编码的浅色工具类在此被整体重映射 */
+:is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar, .timenotes-statusbar) {
+  --tn-chrome-text: rgb(var(--tn-ink));
+}
+
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar, .timenotes-statusbar) .text-black\/35,
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar, .timenotes-statusbar) .text-black\/40,
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar, .timenotes-statusbar) .text-black\/45,
@@ -1454,13 +1476,13 @@ html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chr
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar, .timenotes-statusbar) .text-black\/60,
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar, .timenotes-statusbar) .text-black\/65,
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar, .timenotes-statusbar) .text-black\/70 {
-  color: rgba(255, 228, 140, 0.72) !important;
+  color: var(--tn-chrome-muted) !important;
 }
 
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .border-black\/5,
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .border-black\/10,
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .border-black\/15 {
-  border-color: rgba(255, 215, 0, 0.22) !important;
+  border-color: var(--tn-chrome-border) !important;
 }
 
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .bg-white,
@@ -1472,40 +1494,40 @@ html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chr
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .bg-white\/80,
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .bg-white\/88,
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .bg-white\/90 {
-  background-color: rgba(22, 22, 22, 0.96) !important;
+  background-color: var(--tn-chrome-surface-strong) !important;
 }
 
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .hover\:bg-white:hover,
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .hover\:bg-white\/75:hover,
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .hover\:bg-black\/5:hover {
-  background-color: rgba(255, 215, 0, 0.12) !important;
+  background-color: var(--tn-chrome-hover) !important;
 }
 
 html.dark :is(.timenotes-chrome-sider, .timenotes-home) .bg-\[\#f8f4ea\],
 html.dark :is(.timenotes-chrome-header, .timenotes-home) .bg-\[\#f7f4ed\],
 html.dark :is(.timenotes-chrome-sider, .timenotes-home) .bg-\[\#e8e2d6\],
 html.dark :is(.timenotes-chrome-sider, .timenotes-home) .bg-\[\#e8e2d6\]\/60 {
-  background-color: #141414 !important;
+  background-color: rgb(var(--tn-panel)) !important;
 }
 
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .bg-black\/5,
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .bg-black\/10 {
-  background-color: rgba(255, 215, 0, 0.12) !important;
+  background-color: var(--tn-chrome-surface) !important;
 }
 
-/* Active / accent blues become vivid gold in dark chrome only. */
+/* Active / accent blues become warm gold in dark chrome only. */
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home, .book-toolbar) .border-\[\#2f6fed\],
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home) .border-\[\#2f6fed\]\/20,
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home) .border-\[\#2f6fed\]\/30,
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home) .border-\[\#2f6fed\]\/35,
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home) .border-\[\#2f6fed\]\/60 {
-  border-color: rgba(255, 215, 0, 0.7) !important;
+  border-color: rgba(232, 197, 106, 0.62) !important;
 }
 
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home) .text-\[\#2f6fed\],
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home) .text-\[\#1f5fd2\],
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home) .text-\[\#7eb0ff\] {
-  color: #ffd700 !important;
+  color: var(--tn-chrome-accent) !important;
 }
 
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home) .bg-\[\#2f6fed\]\/10,
@@ -1513,11 +1535,20 @@ html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chr
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home) .bg-\[\#2f6fed\]\/20,
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home) .hover\:bg-\[\#2f6fed\]\/20:hover,
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home) .hover\:bg-\[\#2f6fed\]\/25:hover {
-  background-color: rgba(255, 215, 0, 0.16) !important;
+  background-color: var(--tn-chrome-accent-soft) !important;
 }
 
 html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home) .ring-\[\#2f6fed\]\/20 {
-  --tw-ring-color: rgba(255, 215, 0, 0.35) !important;
+  --tw-ring-color: rgba(232, 197, 106, 0.32) !important;
+}
+
+/* 云同步徽标等暖色 chip 在深色下转为暗底金字 */
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home) .bg-\[\#f2cf72\]\/20 {
+  background-color: rgba(232, 197, 106, 0.12) !important;
+}
+
+html.dark :is(.timenotes-chrome-header, .timenotes-chrome-footer, .timenotes-chrome-sider, .timenotes-home) .text-\[\#9b8422\] {
+  color: rgb(238, 208, 130) !important;
 }
 
 /* Keep notebook paper itself warm/light — only chrome goes dark. */
@@ -1525,27 +1556,27 @@ html.dark .shadow-page {
   box-shadow: var(--tn-shadow-page);
 }
 
-/* Semi primary buttons: vivid gold on black. */
+/* Semi primary buttons: warm gold on dark. */
 html.dark .semi-button-primary,
 html.dark .semi-button.semi-button-primary {
-  background-color: #ffd700 !important;
-  border-color: #ffe864 !important;
-  color: #111111 !important;
+  background-color: rgb(232, 197, 106) !important;
+  border-color: rgb(244, 218, 148) !important;
+  color: #1c1811 !important;
 }
 
 html.dark .semi-button-primary:not(.semi-button-disabled):hover,
 html.dark .semi-button.semi-button-primary:not(.semi-button-disabled):hover {
-  background-color: #ffe864 !important;
-  border-color: #fff1a0 !important;
+  background-color: rgb(244, 218, 148) !important;
+  border-color: rgb(250, 228, 168) !important;
 }
 
 html.dark .semi-tabs-tab-active,
 html.dark .semi-tabs-tab.semi-tabs-tab-active {
-  color: #ffd700 !important;
+  color: rgb(232, 197, 106) !important;
 }
 
 html.dark .semi-tabs-bar .semi-tabs-ink-bar {
-  background-color: #ffd700 !important;
+  background-color: rgb(232, 197, 106) !important;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1568,10 +1599,9 @@ html.dark .semi-tabs-bar .semi-tabs-ink-bar {
   }
 }
 
-/* macOS 深色模式适配 — 覆盖 Tailwind 硬编码的浅色背景和边框颜色 */
-@media (prefers-color-scheme: dark) {
-  body {
-    background: #1a1a1e;
-    color: #e5e5e5;
-  }
+/* 主题切换（圆形揭示）期间抑制元素级 transition，避免与视图动画叠加产生抖动 */
+html[data-theme-transition] *,
+html[data-theme-transition] *::before,
+html[data-theme-transition] *::after {
+  transition: none !important;
 }

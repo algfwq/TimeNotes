@@ -148,7 +148,7 @@ export function AppShell() {
       style={{ display: 'grid', gridTemplateRows: `auto minmax(0, 1fr) ${footerH}px` }}
     >
       <FontFaceDefinitions />
-      <Header className="timenotes-chrome-header z-20 min-w-0 shrink-0 overflow-hidden border-b border-black/10 bg-white/88 backdrop-blur dark:border-[#ffd700]/30 dark:bg-[#0c0c0c]/94">
+      <Header className="timenotes-chrome-header z-20 min-w-0 shrink-0 overflow-hidden border-b border-black/10 bg-white/88 backdrop-blur dark:border-[#e8c56a]/30 dark:bg-[#15130f]/94">
         <TopBar compactChrome={shell.compactChrome} />
         <WorkspaceTabs />
       </Header>
@@ -160,7 +160,7 @@ export function AppShell() {
         ) : activeTabMode === 'edit' ? (
           <>
             <Sider
-              className="timenotes-chrome-sider flex min-h-0 shrink-0 flex-col overflow-hidden border-r border-black/10 bg-[#f8f4ea] dark:border-[#ffd700]/25 dark:bg-[#121212]"
+              className="timenotes-chrome-sider flex min-h-0 shrink-0 flex-col overflow-hidden border-r border-black/10 bg-[#f8f4ea] dark:border-[#e8c56a]/25 dark:bg-[#181612]"
               style={{ width: clampedLeft, minWidth: shell.minLeft }}
             >
               <LeftLibrary />
@@ -185,7 +185,7 @@ export function AppShell() {
                   touchFriendly={mobileHost}
                 />
                 <Sider
-                  className="timenotes-chrome-sider flex min-h-0 shrink-0 flex-col overflow-hidden border-l border-black/10 bg-[#f8f4ea] dark:border-[#ffd700]/25 dark:bg-[#121212]"
+                  className="timenotes-chrome-sider flex min-h-0 shrink-0 flex-col overflow-hidden border-l border-black/10 bg-[#f8f4ea] dark:border-[#e8c56a]/25 dark:bg-[#181612]"
                   style={{ width: clampedRight, minWidth: shell.minRight }}
                 >
                   <InspectorPanel />
@@ -199,7 +199,7 @@ export function AppShell() {
           </Content>
         )}
       </Layout>
-      <Footer className={`timenotes-chrome-footer shrink-0 border-t border-black/10 bg-white/80 px-0 py-0 dark:border-[#ffd700]/30 dark:bg-[#0c0c0c]/94 ${shell.compactChrome ? 'h-10' : 'h-12'}`}>
+      <Footer className={`timenotes-chrome-footer shrink-0 border-t border-black/10 bg-white/80 px-0 py-0 dark:border-[#e8c56a]/30 dark:bg-[#15130f]/94 ${shell.compactChrome ? 'h-10' : 'h-12'}`}>
         <StatusBar compactChrome={shell.compactChrome} />
       </Footer>
     </Layout>
@@ -281,7 +281,7 @@ function ResizeHandle({
       role="separator"
       aria-orientation="vertical"
       title="拖拽调整面板宽度"
-      className={`${hit} shrink-0 cursor-col-resize touch-none bg-transparent hover:bg-[#2f6fed]/25 active:bg-[#2f6fed]/35`}
+      className={`${hit} shrink-0 cursor-col-resize touch-none bg-transparent hover:bg-[#2f6fed]/25 active:bg-[#2f6fed]/35 dark:hover:bg-[#e8c56a]/25 dark:active:bg-[#e8c56a]/35`}
       onPointerDown={startDrag}
     />
   );

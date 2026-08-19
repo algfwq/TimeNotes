@@ -171,8 +171,13 @@ func main() {
 
 	var singleInstance *application.SingleInstanceOptions
 	if !isMobile {
+		// 联机多开测试：TIMENOTES_INSTANCE=client2/... 使用独立单实例锁。
+		uniqueID := "com.timenotes.app"
+		if instance := os.Getenv("TIMENOTES_INSTANCE"); instance != "" {
+			uniqueID = "com.timenotes.app." + instance
+		}
 		singleInstance = &application.SingleInstanceOptions{
-			UniqueID: "com.timenotes.app",
+			UniqueID: uniqueID,
 			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
 				if mainWindow != nil {
 					mainWindow.EmitEvent("app:file-open-requested", data)

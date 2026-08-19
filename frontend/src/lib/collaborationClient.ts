@@ -2,6 +2,7 @@ import * as Y from 'yjs';
 import { base64ByteLength, base64ToBytes, bytesToBase64 } from './base64';
 import {
   announceCompletedResourceTransfer,
+  announceResourceTransferInvalidated,
   announceResourceTransferProgress,
   announceResourceTransportReady,
   subscribeOutboundResourceTransfer,
@@ -9,6 +10,7 @@ import {
   type OutboundResourceTransfer,
   type ResourceTransferInvalidation,
 } from './resourceTransferBus';
+import { logFrontend } from './logger';
 import type { AssetMeta, ChatMessage, PresenceUser, ResourceGroup } from '../types';
 import { VoiceClient, type VoiceSignal, type VoiceState } from './voiceClient';
 
@@ -146,6 +148,8 @@ interface IncomingFileTransfer {
   chunks: Array<string | Uint8Array | undefined>;
   receivedBytes: number;
   receivedChunks: number;
+  // 最近一次收到分片的时间；超时会话由定时清扫回收，防止对端中途消失后占住并发名额。
+  lastActivityAt: number;
 }
 
 const remoteOrigin = 'timenotes-collaboration-remote';
@@ -163,17 +167,24 @@ const fileChannelBackpressureRetryMs = 80;
 // 有 peer 时先给 WebRTC file 通道一个短窗口，避免 auth_ok 后立刻公告资源必然落到 relay。
 const p2pFileReadyWaitMs = 3000;
 const p2pFileReadyPollMs = 50;
-const fileTransferChunkBytes = 16 * 1024;
+const fileTransferChunkBytes = 64 * 1024;
 const fileTransferChunkBase64Chars = Math.floor(fileTransferChunkBytes / 3) * 4;
-const fileTransferChunkIntervalMs = 12;
+// P2P 不做固定限速：吞吐由 DataChannel bufferedAmount 高水位（背压）决定，
+// 拥塞时以 8ms 粒度重试；relay 由 WebSocket bufferedAmount 高水位决定。
+const fileChannelCongestionRetryMs = 8;
+// 传入会话空闲超过该时长视为对端已消失，回收并发名额。
+const incomingFileSessionTimeoutMs = 60_000;
+const incomingFileSweepIntervalMs = 15_000;
+// 校验失败素材的重传冷却：防止"失败→自动重发→再失败"的带宽空转循环。
+const rejectedTransferCooldownMs = 5 * 60_000;
 const cursorPresenceFlushMs = 120;
 const serverPresenceMinIntervalMs = 1000;
 const latencyProbeIntervalMs = 3000;
 const maxAutomaticSnapshotBytes = 2 * 1024 * 1024;
 const maxDataChannelBufferedBytes = 8 * 1024 * 1024;
-const maxFileChannelBufferedBytes = 2 * 1024 * 1024;
-const maxRelaySocketBufferedBytes = 1024 * 1024;
-const relaySocketBackpressureRetryMs = 40;
+const maxFileChannelBufferedBytes = 4 * 1024 * 1024;
+const maxRelaySocketBufferedBytes = 4 * 1024 * 1024;
+const relaySocketBackpressureRetryMs = 10;
 
 // 服务器专属控制消息类型：auth_ok/join 流程/踢人/房间关闭等只能来自服务器 WebSocket。
 // P2P DataChannel 上的同名消息一律丢弃，防止恶意协作者伪造 auth_ok 篡改角色或清空文档。
@@ -235,6 +246,7 @@ export class CollaborationClient {
   private presenceTimer?: number;
   private pendingPresenceTimer?: number;
   private latencyTimer?: number;
+  private incomingFileSweepTimer?: number;
   private pendingDocTimer?: number;
   private pendingResourceTimer?: number;
   private pendingResourceArchiveTimer?: number;
@@ -681,6 +693,14 @@ export class CollaborationClient {
       return;
     }
     const dedupeKey = this.fileTransferDedupeKey(transfer);
+    // 冷却期内被拒过的素材不再入队（invalidateFileTransferAvailability 写入）。
+    const rejectedAt = this.rejectedTransferKeys.get(transfer.key);
+    if (rejectedAt && Date.now() - rejectedAt < rejectedTransferCooldownMs) {
+      return;
+    }
+    if (rejectedAt) {
+      this.rejectedTransferKeys.delete(transfer.key);
+    }
     this.availableFileTransferKeys.add(dedupeKey);
     if (this.pendingFileTransferKeys.has(dedupeKey) || this.activeFileTransferKeys.has(dedupeKey)) {
       return;
@@ -756,18 +776,21 @@ export class CollaborationClient {
     }
     for (let index = 0; index < totalChunks; index += 1) {
       const chunkBase64 = dataBase64.slice(index * fileTransferChunkBase64Chars, Math.min(dataBase64.length, (index + 1) * fileTransferChunkBase64Chars));
-      const chunkBytes = base64ByteLength(chunkBase64);
       if (route === 'p2p') {
-        await this.waitForFileBackpressure();
-        if (!this.canUseP2PFileTransfer() || !this.canSendToAllPeers('file')) {
-          // P2P 中途断开时重启为完整中转传输，避免对端拿到半份文件后一直停在临时控件。
-          await this.sendFileTransfer(transfer, 'relay');
-          return;
-        }
-        const chunk = base64ToBytes(chunkBase64);
-        if (!this.sendBinaryToAllPeers('file', chunk)) {
-          await this.sendFileTransfer(transfer, 'relay');
-          return;
+        // 拥塞（bufferedAmount 高水位）时原地重试同一片；只有 file 通道真正断开才整体转中转。
+        // 旧逻辑把"缓冲满"误判为"通道死了"，大文件会反复废弃重来——又慢又停进度。
+        let sent = false;
+        while (!sent) {
+          if (!this.canUseP2PFileTransfer() || !this.connected) {
+            await this.sendFileTransfer(transfer, 'relay');
+            return;
+          }
+          await this.waitForFileBackpressure();
+          const chunk = base64ToBytes(chunkBase64);
+          sent = this.sendBinaryToAllPeers('file', chunk);
+          if (!sent) {
+            await sleep(fileChannelCongestionRetryMs);
+          }
         }
         this.markP2PFileTransferActive();
       } else {
@@ -778,22 +801,25 @@ export class CollaborationClient {
             key: transfer.key,
             index,
             chunkBase64,
-            chunkBytes,
+            chunkBytes: base64ByteLength(chunkBase64),
             relay: true,
           } satisfies FileResourceChunkPayload),
         );
       }
-      if (index < totalChunks - 1) {
-        await sleep(fileTransferChunkIntervalMs);
-      }
     }
     const completeEnv = this.makeEnvelope('file_resource_complete', { transferId, key: transfer.key, relay: route === 'relay' } satisfies FileResourceCompletePayload);
-    if (route === 'p2p' && this.canUseP2PFileTransfer() && this.sendToAllPeers('file', completeEnv)) {
-      return;
-    } else {
-      await this.waitForRelaySocketBackpressure();
-      this.sendRelayEnvelope(completeEnv);
+    if (route === 'p2p') {
+      // 刚发完最后一片时 buffer 可能仍在高水位，先等背压重试几次，通道真断才走中转兜底。
+      for (let attempt = 0; attempt < 3 && this.canUseP2PFileTransfer() && this.connected; attempt += 1) {
+        await this.waitForFileBackpressure();
+        if (this.sendToAllPeers('file', completeEnv)) {
+          return;
+        }
+        await sleep(fileChannelCongestionRetryMs);
+      }
     }
+    await this.waitForRelaySocketBackpressure();
+    this.sendRelayEnvelope(completeEnv);
   }
 
   // 服务端已有快照时，清理其他客户端的协作用快照，但保留本地当前的 entry。
@@ -920,6 +946,7 @@ export class CollaborationClient {
       chunks: [],
       receivedBytes: 0,
       receivedChunks: 0,
+      lastActivityAt: Date.now(),
     });
     announceResourceTransferProgress(this.fileProgress(payload, 0, 0));
   }
@@ -932,8 +959,10 @@ export class CollaborationClient {
   }
 
   private async applyFileBinaryChunk(peerId: string, data: ArrayBuffer | Blob) {
-    const sessions = Array.from(this.incomingFileTransfers.values()).filter((session) => session.peerId === peerId);
-    const session = sessions.find((item) => item.receivedChunks < item.start.totalChunks);
+    // P2P 二进制分片不带 transferId（省开销），按"最近活跃的未完成会话"归属：
+    // 发送端串行出队（sendingFileTransfer），同一时刻对每个对端只有一个活跃传输。
+    const sessions = Array.from(this.incomingFileTransfers.values()).filter((session) => session.peerId === peerId && session.receivedChunks < session.start.totalChunks);
+    const session = sessions.sort((a, b) => b.lastActivityAt - a.lastActivityAt)[0];
     if (!session) {
       return;
     }
@@ -950,14 +979,20 @@ export class CollaborationClient {
     if (!session || session.receivedChunks < session.start.totalChunks) {
       return;
     }
-    // 实际收到的字节数必须与声明一致，防止稀疏 index 凑满 receivedChunks 就宣告完成。
-    if (session.receivedBytes !== session.start.totalBytes) {
-      this.incomingFileTransfers.delete(sessionKey);
+    // start.totalBytes 来自对端 asset.size 元数据，存在两种口径：文件导入=原始字节，
+    // 粘贴/裁剪=createAssetFromDataUrl 的 dataUrl.length（比字节大约 33%）。
+    // 分片收满（上面的 receivedChunks 判断）才是"收齐"信号；尺寸只挡数量级异常
+    //（低于两种口径下限的 95%），完整性由 SHA-256 判定。
+    const sizeFloorBytes = Math.floor(session.start.totalBytes * 0.95);
+    const sizeFloorDataUrl = Math.floor(sizeFloorBytes / 1.4);
+    if (session.receivedBytes < Math.min(sizeFloorBytes, sizeFloorDataUrl)) {
+      this.rejectIncomingTransfer(session, sessionKey, 'incomplete');
       return;
     }
     const dataBase64 = encodeFileTransferChunks(session.chunks);
     if (!(await verifyIncomingTransferHash(session.start, dataBase64))) {
-      this.incomingFileTransfers.delete(sessionKey);
+      await this.diagnoseRejectedHash(session);
+      this.rejectIncomingTransfer(session, sessionKey, 'hash_mismatch');
       return;
     }
     announceCompletedResourceTransfer({
@@ -972,6 +1007,49 @@ export class CollaborationClient {
     this.incomingFileTransfers.delete(sessionKey);
   }
 
+  // 传输被拒时清掉进度条并公告失效：房主端 invalidateFileTransferAvailability 会移除"已传输"标记，
+  // 下次资源公告重新走传输，而不是让接收端永远停在 99%。
+  private rejectIncomingTransfer(session: IncomingFileTransfer, sessionKey: string, reason: string) {
+    this.incomingFileTransfers.delete(sessionKey);
+    logFrontend('warn', `素材传输被拒绝 key=${session.start.key} reason=${reason}`);
+    announceResourceTransferInvalidated({
+      key: session.start.key,
+      group: session.start.group,
+      assetId: session.start.asset.id,
+    });
+  }
+
+  // 诊断：被拒时把双口径 hash 前缀带进日志，便于口径漂移排查。
+  private async diagnoseRejectedHash(session: IncomingFileTransfer) {
+    try {
+      const present = session.chunks.filter((c): c is string | Uint8Array => c !== undefined);
+      let b64 = '';
+      if (present.every((c): c is string => typeof c === 'string')) {
+        b64 = present.join('');
+      } else if (present.length > 0) {
+        let total = 0;
+        present.forEach((c) => { total += c.length; });
+        const all = new Uint8Array(total);
+        let off = 0;
+        present.forEach((c) => {
+          const bytes = typeof c === 'string' ? base64ToBytes(c) : c;
+          all.set(bytes, off);
+          off += bytes.length;
+        });
+        b64 = bytesToBase64(all);
+      }
+      const bytes = base64ToBytes(b64);
+      const hexOf = async (input: ArrayBuffer | Uint8Array) => {
+        const d = await crypto.subtle.digest('SHA-256', input as unknown as ArrayBuffer);
+        return Array.from(new Uint8Array(d)).map((b) => b.toString(16).padStart(2, '0')).join('');
+      };
+      const mime = session.start.asset.mimeType || 'application/octet-stream';
+      logFrontend('warn', `hash诊断 claimed=${session.start.asset.hash.slice(0, 20)} bytes=${(await hexOf(bytes)).slice(0, 20)} dataurl=${(await hexOf(new TextEncoder().encode(`data:${mime};base64,${b64}`))).slice(0, 20)} b64len=${b64.length} chunkKinds=${present.slice(0, 3).map((c) => (typeof c === 'string' ? 's' : 'u') + c.length).join(',')}`);
+    } catch {
+      // 诊断失败不影响主流程
+    }
+  }
+
   private appendFileChunk(peerId: string, transferId: string, chunk: string | Uint8Array, index?: number, byteLength?: number) {
     const sessionKey = this.fileSessionKey(peerId, transferId);
     const session = this.incomingFileTransfers.get(sessionKey);
@@ -984,6 +1062,7 @@ export class CollaborationClient {
       session.receivedChunks += 1;
       session.receivedBytes += byteLength ?? (typeof chunk === 'string' ? base64ByteLength(chunk) : chunk.length);
     }
+    session.lastActivityAt = Date.now();
     announceResourceTransferProgress(this.fileProgress(session.start, session.receivedBytes, session.receivedChunks));
     if (session.receivedChunks >= session.start.totalChunks) {
       void this.applyFileResourceComplete(peerId, { transferId, key: session.start.key });
@@ -1039,7 +1118,16 @@ export class CollaborationClient {
         this.incomingFileTransfers.delete(key);
       }
     });
+    // 记录拒绝时间并清掉缓存的重传队列：同一素材短期内不再自动重发，
+    // 否则"校验失败→重发→再失败"会形成带宽空转的循环。
+    this.rejectedTransferKeys.set(invalidation.key, Date.now());
+    this.pendingResourceUpdates = this.pendingResourceUpdates.filter(
+      (env) => !(env as { payload?: { key?: string } }).payload?.key || ((env as { payload?: { key?: string } }).payload as { key?: string }).key !== invalidation.key,
+    );
   }
+
+  // 校验失败素材的冷却表：冷却期内资源公告跳过该 key，之后允许再试（可能是暂时性损坏）。
+  private rejectedTransferKeys = new Map<string, number>();
 
   private fileTransferDedupeKey(transfer: OutboundResourceTransfer) {
     return `${transfer.key}:${transfer.signature}:${transfer.transferVersion ?? ''}`;
@@ -1091,6 +1179,23 @@ export class CollaborationClient {
       window.clearInterval(this.presenceTimer);
     }
     this.presenceTimer = window.setInterval(() => this.publishPresence(), 1500);
+    this.startIncomingFileSweeper();
+  }
+
+  // 清扫超时的传入传输会话：对端中途消失时释放并发名额，避免后续素材传输被卡。
+  private startIncomingFileSweeper() {
+    if (this.incomingFileSweepTimer) {
+      window.clearInterval(this.incomingFileSweepTimer);
+    }
+    this.incomingFileSweepTimer = window.setInterval(() => {
+      const now = Date.now();
+      Array.from(this.incomingFileTransfers.entries()).forEach(([key, session]) => {
+        if (now - session.lastActivityAt > incomingFileSessionTimeoutMs) {
+          logFrontend('warn', `素材传输超时清理 key=${session.start.key} received=${session.receivedChunks}/${session.start.totalChunks}`);
+          this.rejectIncomingTransfer(session, key, 'timeout');
+        }
+      });
+    }, incomingFileSweepIntervalMs);
   }
 
   // 光标移动比普通 presence 高频，所以 schedulePresence 会按最小间隔节流。
@@ -1505,7 +1610,7 @@ export class CollaborationClient {
   private async waitForFileBackpressure() {
     while (this.connected && this.canUseP2PFileTransfer() && !this.canSendToAllPeers('file')) {
       this.markP2PFileTransferActive();
-      await sleep(fileChannelBackpressureRetryMs);
+      await sleep(fileChannelCongestionRetryMs);
     }
   }
 
@@ -1601,6 +1706,10 @@ export class CollaborationClient {
     if (this.latencyTimer) {
       window.clearInterval(this.latencyTimer);
       this.latencyTimer = undefined;
+    }
+    if (this.incomingFileSweepTimer) {
+      window.clearInterval(this.incomingFileSweepTimer);
+      this.incomingFileSweepTimer = undefined;
     }
     if (this.pendingDocTimer) {
       window.clearTimeout(this.pendingDocTimer);
@@ -1843,11 +1952,13 @@ function isValidIncomingTransfer(start: FileResourceStartPayload) {
   if (!Number.isFinite(start.totalChunks) || start.totalChunks <= 0 || start.totalChunks > 100000) {
     return false;
   }
-  if (!Number.isFinite(start.chunkSize) || start.chunkSize <= 0 || start.chunkSize > fileTransferChunkBytes * 8) {
+  // 兼容旧版 16KB 与新版 64KB 分片的发送端；上限取两者较大值的 4 倍，超界视为异常声明。
+  if (!Number.isFinite(start.chunkSize) || start.chunkSize <= 0 || start.chunkSize > 256 * 1024) {
     return false;
   }
-  // 分片数必须与声明尺寸自洽（向上取整），否则拒绝接收。
-  if (Math.ceil(start.totalBytes / start.chunkSize) !== start.totalChunks) {
+  // 发送端按实际 dataBase64 长度切片，totalBytes 只是 asset.size 元数据（可能略有偏差），
+  // 严格的分片数等式会在元数据陈旧时误拒整个传输；这里只挡数量级异常（声明尺寸连一片都装不下/超过上限）。
+  if (start.totalChunks > Math.ceil((start.totalBytes + start.chunkSize) / start.chunkSize) + 1) {
     return false;
   }
   if (!mimeAllowed(start.group, start.asset?.mimeType ?? '')) {
@@ -1857,17 +1968,26 @@ function isValidIncomingTransfer(start: FileResourceStartPayload) {
 }
 
 // 重组完成后重算 SHA-256 并与对端声明的 hash 比对，不匹配即丢弃。
+// App 内存在两种合法 hash 口径：文件导入按原始字节（hashBlob），粘贴/裁剪按整个 dataURL
+// 字符串（hashText）——匹配任一口径即视为完整，伪造者必须同时伪造两种原文，安全性等价。
 // crypto.subtle 仅在 secure context 可用（Android WebView http 部署会缺失），此时退化为尺寸校验。
 async function verifyIncomingTransferHash(start: FileResourceStartPayload, dataBase64: string) {
-  const claimed = (start.asset?.hash ?? '').trim();
+  const claimed = (start.asset?.hash ?? '').trim().toLowerCase();
   if (!claimed || !crypto?.subtle?.digest) {
     return true;
   }
   try {
     const bytes = base64ToBytes(dataBase64);
-    const digest = await crypto.subtle.digest('SHA-256', bytes as unknown as ArrayBuffer);
-    const hex = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
-    return hex === claimed.toLowerCase();
+    const hexOf = async (input: ArrayBuffer | Uint8Array) => {
+      const digest = await crypto.subtle.digest('SHA-256', input as unknown as ArrayBuffer);
+      return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+    };
+    if ((await hexOf(bytes)) === claimed) {
+      return true;
+    }
+    // dataURL 口径：前缀来自对端声明的 mimeType，与发送端 hashText(dataUrl) 的原文一致。
+    const dataUrl = `data:${start.asset?.mimeType || 'application/octet-stream'};base64,${dataBase64}`;
+    return (await hexOf(new TextEncoder().encode(dataUrl))) === claimed;
   } catch {
     return false;
   }
