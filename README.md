@@ -1,6 +1,4 @@
-<p align="center">
-  <img src="[https://www.caellab.com/2026/timenotes/logo-48.png](./build/appicon.png)" alt="TimeNotes Logo" width="128" />
-</p>
+![https://www.caellab.com/2026/timenotes/logo-48.png](./build/appicon.png)
 
 # [TimeNotes](https://www.caellab.com/2026/timenotes/)
 
