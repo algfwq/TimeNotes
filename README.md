@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="[https://www.caellab.com/2026/timenotes/logo-48.png](https://www.caellab.com/2026/timenotes/logo-48.png)" alt="TimeNotes Logo" width="128" />
+  <img src="[https://www.caellab.com/2026/timenotes/logo-48.png](./build/appicon.png)" alt="TimeNotes Logo" width="128" />
 </p>
 
-<h1 align="center">[TimeNotes](https://www.caellab.com/2026/timenotes/)</h1>
+# [TimeNotes](https://www.caellab.com/2026/timenotes/)
 
 <p align="center">
   自由画布，无限创作——从文字手绘到音视频、3D 模型与代码块，一切元素随心摆放，打造你的专属数字手账。
